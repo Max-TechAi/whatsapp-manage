@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Business API - Console</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --panel: rgba(17, 24, 39, 0.7);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --accent: #10b981;
+      --accent-hover: #059669;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background: radial-gradient(circle at top right, #1e1b4b, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    header {
+      background: rgba(11, 15, 25, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 2rem;
+      height: 2rem;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      border-radius: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #fff, #9ca3af);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      color: var(--accent);
+      padding: 0.375rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 0.5rem;
+      height: 0.5rem;
+      background-color: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.5; }
+      50% { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.5; }
+    }
+
+    main {
+      flex: 1;
+      padding: 2rem;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 2rem;
+    }
+
+    .nav-panel {
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 1.5rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      height: fit-content;
+    }
+
+    .nav-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.875rem 1.25rem;
+      border-radius: 0.75rem;
+      text-align: left;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn:hover {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+    }
+
+    .nav-btn.active {
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      color: #818cf8;
+    }
+
+    .content-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+
+    .card {
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 2rem;
+    }
+
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 1.5rem;
+      border-left: 3px solid var(--primary);
+      padding-left: 0.75rem;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+    }
+
+    label {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    input, select, textarea {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 0.875rem 1rem;
+      color: #fff;
+      font-size: 0.95rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 1px var(--primary);
+    }
+
+    .btn {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 0.75rem;
+      padding: 0.875rem 1.5rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.2);
+    }
+
+    .btn:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-accent {
+      background: var(--accent);
+      box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);
+    }
+
+    .btn-accent:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.2);
+    }
+
+    .btn-danger:hover {
+      background: #dc2626;
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      color: var(--text);
+      box-shadow: none;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .badge {
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.375rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .badge-primary { background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); }
+    .badge-accent { background: rgba(16, 185, 129, 0.15); color: var(--accent); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+    /* Custom Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+
+    th, td {
+      padding: 1rem 1.25rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    td {
+      font-size: 0.95rem;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.01);
+    }
+
+    /* Terminal Console */
+    .terminal-container {
+      background: #020617;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.875rem;
+      height: 450px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      scroll-behavior: smooth;
+    }
+
+    .terminal-line {
+      display: flex;
+      gap: 1rem;
+      line-height: 1.5;
+    }
+
+    .terminal-time {
+      color: #64748b;
+      flex-shrink: 0;
+    }
+
+    .terminal-tag {
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .terminal-msg {
+      color: #cbd5e1;
+      word-break: break-all;
+    }
+
+    /* Tab Layouts */
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .qr-container {
+      background: white;
+      padding: 1.5rem;
+      border-radius: 1rem;
+      width: fit-content;
+      margin: 1.5rem auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    .qr-image {
+      width: 250px;
+      height: 250px;
+    }
+
+    .qr-status {
+      margin-top: 1rem;
+      color: #0b0f19;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .token-display {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px dashed var(--border);
+      padding: 1rem;
+      border-radius: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      word-break: break-all;
+      margin-top: 1rem;
+      color: var(--accent);
+    }
+
+    .actions-row {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .auth-banner {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px dashed rgba(245, 158, 11, 0.2);
+      padding: 1rem;
+      border-radius: 0.75rem;
+      color: var(--warning);
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo-container">
+      <div class="logo-icon">WA</div>
+      <h1>WhatsApp Business API - Developer Console</h1>
+    </div>
+    <div id="wsStatusBadge" class="status-badge" style="color: var(--danger); border-color: rgba(239,68,68,0.2); background: rgba(239,68,68,0.1)">
+      <div id="wsStatusDot" class="status-dot" style="background-color: var(--danger); box-shadow: 0 0 8px var(--danger);"></div>
+      <span id="wsStatusText">Disconnected</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left Navigation -->
+    <div class="nav-panel">
+      <button class="nav-btn active" onclick="switchTab('auth')">🔐 Authentication</button>
+      <button class="nav-btn" onclick="switchTab('sessions')">📱 Sessions & QR Connect</button>
+      <button class="nav-btn" onclick="switchTab('messages')">✉️ Send Messages</button>
+      <button class="nav-btn" onclick="switchTab('terminal')">🖥️ Real-time WebSockets</button>
+    </div>
+
+    <!-- Right Panels -->
+    <div class="content-panel">
+
+      <!-- 🔐 AUTH TAB -->
+      <div id="tab-auth" class="tab-content active">
+        <div class="card">
+          <div class="card-title">Register Organization & Admin</div>
+          <form id="registerForm" onsubmit="handleRegister(event)">
+            <div class="grid-2">
+              <div class="input-group">
+                <label>Email Address</label>
+                <input type="email" id="regEmail" placeholder="admin@company.com" required value="admin@business.local">
+              </div>
+              <div class="input-group">
+                <label>Password</label>
+                <input type="password" id="regPassword" placeholder="••••••••" required value="admin123456">
+              </div>
+            </div>
+            <div class="grid-2">
+              <div class="input-group">
+                <label>Display Name</label>
+                <input type="text" id="regName" placeholder="Admin Name" required value="System Administrator">
+              </div>
+              <div class="input-group">
+                <label>Organization Name</label>
+                <input type="text" id="regOrgName" placeholder="Business Name" required value="Primary Organization">
+              </div>
+            </div>
+            <button type="submit" class="btn">Register & Get Started</button>
+          </form>
+        </div>
+
+        <div style="margin-top: 2rem;"></div>
+
+        <div class="card">
+          <div class="card-title">Login</div>
+          <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="grid-2">
+              <div class="input-group">
+                <label>Email Address</label>
+                <input type="email" id="loginEmail" placeholder="admin@company.com" required value="admin@business.local">
+              </div>
+              <div class="input-group">
+                <label>Password</label>
+                <input type="password" id="loginPassword" placeholder="••••••••" required value="admin123456">
+              </div>
+            </div>
+            <button type="submit" class="btn btn-accent">Login</button>
+          </form>
+        </div>
+
+        <div style="margin-top: 2rem;"></div>
+
+        <div class="card" id="tokenCard" style="display: none;">
+          <div class="card-title">Active Token (Session storage)</div>
+          <p class="token-display" id="tokenDisplay"></p>
+          <div style="margin-top: 1rem; display: flex; gap: 1rem;">
+            <button onclick="clearToken()" class="btn btn-danger">Clear Token</button>
+            <button onclick="connectWS()" class="btn btn-secondary">Reconnect WS</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 📱 SESSIONS TAB -->
+      <div id="tab-sessions" class="tab-content">
+        <div id="sessionAuthWarning" class="auth-banner">
+          ⚠️ You need to authenticate (Register/Login) first to manage sessions.
+        </div>
+
+        <div class="card">
+          <div class="card-title">Create WhatsApp Device Session</div>
+          <form id="createSessionForm" onsubmit="handleCreateSession(event)">
+            <div class="input-group" style="max-width: 400px;">
+              <label>Session Name</label>
+              <input type="text" id="sessionNameInput" placeholder="e.g. Sales Mobile" required value="Main WhatsApp Number">
+            </div>
+            <button type="submit" class="btn">Create Session</button>
+          </form>
+        </div>
+
+        <div style="margin-top: 2rem;"></div>
+
+        <div class="card">
+          <div class="card-title">Active WhatsApp Sessions</div>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Session Name</th>
+                  <th>ID</th>
+                  <th>Phone Number</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="sessionsTableBody">
+                <tr>
+                  <td colspan="5" style="text-align: center; color: var(--text-muted);">No active sessions found. Create one above.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="qrModal" class="card" style="display: none; margin-top: 2rem; border-color: rgba(99, 102, 241, 0.4);">
+          <div class="card-title">Scan QR Code with WhatsApp</div>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Go to WhatsApp -> Linked Devices -> Link a Device and scan the QR below.</p>
+          <div class="qr-container">
+            <img id="qrImage" class="qr-image" src="" alt="QR Code">
+            <div id="qrStatusText" class="qr-status">Initializing...</div>
+          </div>
+          <div style="display: flex; justify-content: center; gap: 1rem; margin-top: 1rem;">
+            <button onclick="closeQrModal()" class="btn btn-secondary">Close QR Panel</button>
+            <button onclick="refreshActiveSessions()" class="btn">Check Connection Status</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ✉️ MESSAGES TAB -->
+      <div id="tab-messages" class="tab-content">
+        <div id="msgAuthWarning" class="auth-banner">
+          ⚠️ You need to authenticate first to send messages.
+        </div>
+
+        <div class="card">
+          <div class="card-title">Send WhatsApp Test Message</div>
+          <form id="sendMessageForm" onsubmit="handleSendMessage(event)">
+            <div class="grid-2">
+              <div class="input-group">
+                <label>Select Connected Session</label>
+                <select id="msgSessionSelect" required>
+                  <option value="">-- No sessions available --</option>
+                </select>
+              </div>
+              <div class="input-group">
+                <label>Recipient WhatsApp Number (JID or Phone)</label>
+                <input type="text" id="msgRecipient" placeholder="e.g. 123456789@s.whatsapp.net or 123456789" required>
+              </div>
+            </div>
+            <div class="input-group">
+              <label>Message Text</label>
+              <textarea id="msgBody" rows="4" placeholder="Hello from Antigravity WhatsApp API!" required></textarea>
+            </div>
+            <button type="submit" class="btn">Send Message</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- 🖥️ TERMINAL TAB -->
+      <div id="tab-terminal" class="tab-content">
+        <div class="card">
+          <div class="card-title">Real-time WebSocket Events</div>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">Logs events from the server in real-time (messages received, connection status, sync metrics).</p>
+          <div id="terminalConsole" class="terminal-container">
+            <div class="terminal-line">
+              <span class="terminal-time">[SYSTEM]</span>
+              <span class="terminal-tag" style="color: var(--primary);">SYSTEM</span>
+              <span class="terminal-msg">Welcome to the Real-time Event Monitor. Logs will stream here.</span>
+            </div>
+          </div>
+          <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
+            <button onclick="clearTerminal()" class="btn btn-secondary">Clear Terminal</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    let token = localStorage.getItem('token') || '';
+    let ws = null;
+    let qrPollInterval = null;
+
+    // Initialize UI on load
+    window.addEventListener('load', () => {
+      checkAuthStatus();
+      if (token) {
+        connectWS();
+        refreshActiveSessions();
+      }
+    });
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+      
+      document.getElementById(`tab-${tabId}`).classList.add('active');
+      const clickedBtn = Array.from(document.querySelectorAll('.nav-btn')).find(b => b.textContent.toLowerCase().includes(tabId));
+      if (clickedBtn) clickedBtn.classList.add('active');
+    }
+
+    function logTerminal(tag, message, color = '#cbd5e1') {
+      const consoleEl = document.getElementById('terminalConsole');
+      const line = document.createElement('div');
+      line.className = 'terminal-line';
+      
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'terminal-time';
+      timeSpan.textContent = new Date().toLocaleTimeString();
+      
+      const tagSpan = document.createElement('span');
+      tagSpan.className = 'terminal-tag';
+      tagSpan.style.color = color;
+      tagSpan.textContent = `[${tag.toUpperCase()}]`;
+      
+      const msgSpan = document.createElement('span');
+      msgSpan.className = 'terminal-msg';
+      msgSpan.textContent = typeof message === 'object' ? JSON.stringify(message) : message;
+
+      line.appendChild(timeSpan);
+      line.appendChild(tagSpan);
+      line.appendChild(msgSpan);
+      consoleEl.appendChild(line);
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+
+    function clearTerminal() {
+      document.getElementById('terminalConsole').innerHTML = '';
+      logTerminal('SYSTEM', 'Terminal cleared.', 'var(--primary)');
+    }
+
+    function checkAuthStatus() {
+      const bannerSessions = document.getElementById('sessionAuthWarning');
+      const bannerMsgs = document.getElementById('msgAuthWarning');
+      const tokenCard = document.getElementById('tokenCard');
+      const tokenDisplay = document.getElementById('tokenDisplay');
+
+      if (token) {
+        bannerSessions.style.display = 'none';
+        bannerMsgs.style.display = 'none';
+        tokenCard.style.display = 'block';
+        tokenDisplay.textContent = token;
+      } else {
+        bannerSessions.style.display = 'flex';
+        bannerMsgs.style.display = 'flex';
+        tokenCard.style.display = 'none';
+        tokenDisplay.textContent = '';
+      }
+    }
+
+    function setToken(newToken) {
+      token = newToken;
+      localStorage.setItem('token', token);
+      checkAuthStatus();
+      connectWS();
+      refreshActiveSessions();
+    }
+
+    function clearToken() {
+      token = '';
+      localStorage.removeItem('token');
+      checkAuthStatus();
+      if (ws) ws.close();
+      logTerminal('SYSTEM', 'Token cleared.', 'var(--danger)');
+    }
+
+    // Auth Calls
+    async function handleRegister(event) {
+      event.preventDefault();
+      const email = document.getElementById('regEmail').value;
+      const password = document.getElementById('regPassword').value;
+      const displayName = document.getElementById('regName').value;
+      const orgName = document.getElementById('regOrgName').value;
+
+      try {
+        const response = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, displayName, orgName })
+        });
+        const data = await response.json();
+        
+        if (response.ok) {
+          logTerminal('AUTH', 'Registration successful!', 'var(--accent)');
+          setToken(data.tokens.accessToken);
+          switchTab('sessions');
+        } else {
+          logTerminal('AUTH_ERROR', data.error || 'Failed to register', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('AUTH_ERROR', err.message, 'var(--danger)');
+      }
+    }
+
+    async function handleLogin(event) {
+      event.preventDefault();
+      const email = document.getElementById('loginEmail').value;
+      const password = document.getElementById('loginPassword').value;
+
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await response.json();
+        
+        if (response.ok) {
+          logTerminal('AUTH', 'Login successful!', 'var(--accent)');
+          setToken(data.tokens.accessToken);
+          switchTab('sessions');
+        } else {
+          logTerminal('AUTH_ERROR', data.error || 'Failed to login', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('AUTH_ERROR', err.message, 'var(--danger)');
+      }
+    }
+
+    // Sessions Calls
+    async function refreshActiveSessions() {
+      if (!token) return;
+      try {
+        const response = await fetch('/api/sessions', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const resData = await response.json();
+
+        if (response.ok) {
+          const sessionsList = resData.data || [];
+          populateSessionsTable(sessionsList);
+          populateSessionSelect(sessionsList);
+        } else {
+          logTerminal('SESSIONS', resData.error || 'Failed to load sessions', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('SESSIONS', err.message, 'var(--danger)');
+      }
+    }
+
+    function populateSessionsTable(sessionsList) {
+      const tbody = document.getElementById('sessionsTableBody');
+      if (sessionsList.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No active sessions found. Create one above.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = sessionsList.map(session => {
+        let statusBadgeClass = 'badge-primary';
+        if (session.status === 'connected') statusBadgeClass = 'badge-accent';
+        if (session.status === 'qr_pending' || session.status === 'connecting') statusBadgeClass = 'badge-warning';
+        if (session.status === 'disconnected' || session.status === 'banned') statusBadgeClass = 'badge-danger';
+
+        const linkButton = session.status !== 'connected' 
+          ? `<button class="btn btn-accent btn-sm" onclick="showQrModal('${session.id}')">Link Device</button>` 
+          : '';
+
+        return `
+          <tr>
+            <td style="font-weight:600;">${session.sessionName}</td>
+            <td style="font-family: monospace; font-size: 0.85rem;">${session.id}</td>
+            <td>${session.phoneNumber || '<i>Pending Link</i>'}</td>
+            <td><span class="badge ${statusBadgeClass}">${session.status}</span></td>
+            <td>
+              <div class="actions-row">
+                ${linkButton}
+                <button class="btn btn-secondary btn-sm" onclick="restartSession('${session.id}')">Restart</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteSession('${session.id}')">Delete</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function populateSessionSelect(sessionsList) {
+      const select = document.getElementById('msgSessionSelect');
+      const connected = sessionsList.filter(s => s.status === 'connected');
+      
+      if (connected.length === 0) {
+        select.innerHTML = '<option value="">-- No connected sessions --</option>';
+        return;
+      }
+
+      select.innerHTML = connected.map(s => `<option value="${s.id}">${s.sessionName} (${s.phoneNumber})</option>`).join('');
+    }
+
+    async function handleCreateSession(event) {
+      event.preventDefault();
+      const sessionName = document.getElementById('sessionNameInput').value;
+
+      try {
+        const response = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ sessionName })
+        });
+        const resData = await response.json();
+
+        if (response.ok) {
+          logTerminal('SESSIONS', `Session "${sessionName}" created successfully!`, 'var(--accent)');
+          document.getElementById('sessionNameInput').value = '';
+          refreshActiveSessions();
+          showQrModal(resData.data.id);
+        } else {
+          logTerminal('SESSIONS_ERROR', resData.error || 'Failed to create session', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('SESSIONS_ERROR', err.message, 'var(--danger)');
+      }
+    }
+
+    async function showQrModal(sessionId) {
+      const modal = document.getElementById('qrModal');
+      const qrImage = document.getElementById('qrImage');
+      const statusText = document.getElementById('qrStatusText');
+
+      modal.style.display = 'block';
+      statusText.textContent = 'Fetching QR Code...';
+      qrImage.src = '';
+
+      if (qrPollInterval) clearInterval(qrPollInterval);
+
+      // Poll QR code endpoint
+      const pollQr = async () => {
+        try {
+          const response = await fetch(`/api/sessions/${sessionId}/qr`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (response.status === 204) {
+            statusText.textContent = 'Session connected or active! You can close this panel.';
+            qrImage.src = '';
+            refreshActiveSessions();
+            clearInterval(qrPollInterval);
+            return;
+          }
+
+          const resData = await response.json();
+          if (response.ok && resData.data.qr) {
+            qrImage.src = resData.data.qr; // base64 string
+            statusText.textContent = `Status: ${resData.data.status} (Scan with WhatsApp)`;
+          } else {
+            statusText.textContent = `Status: ${resData.data.status || 'Loading...'}`;
+          }
+        } catch (err) {
+          statusText.textContent = 'Failed to fetch QR';
+        }
+      };
+
+      pollQr();
+      qrPollInterval = setInterval(pollQr, 5000);
+    }
+
+    function closeQrModal() {
+      document.getElementById('qrModal').style.display = 'none';
+      if (qrPollInterval) clearInterval(qrPollInterval);
+    }
+
+    async function restartSession(sessionId) {
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}/restart`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await response.json();
+        
+        if (response.ok) {
+          logTerminal('SESSIONS', `Restart initiated for ${sessionId}`, 'var(--warning)');
+          refreshActiveSessions();
+        } else {
+          logTerminal('SESSIONS_ERROR', data.error || 'Failed to restart', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('SESSIONS_ERROR', err.message, 'var(--danger)');
+      }
+    }
+
+    async function deleteSession(sessionId) {
+      if (!confirm('Are you sure you want to permanently delete this session?')) return;
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await response.json();
+        
+        if (response.ok) {
+          logTerminal('SESSIONS', `Session ${sessionId} deleted.`, 'var(--danger)');
+          refreshActiveSessions();
+          closeQrModal();
+        } else {
+          logTerminal('SESSIONS_ERROR', data.error || 'Failed to delete', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('SESSIONS_ERROR', err.message, 'var(--danger)');
+      }
+    }
+
+    // Messaging Calls
+    async function handleSendMessage(event) {
+      event.preventDefault();
+      const sessionId = document.getElementById('msgSessionSelect').value;
+      const recipient = document.getElementById('msgRecipient').value;
+      const body = document.getElementById('msgBody').value;
+
+      if (!sessionId) {
+        logTerminal('MESSAGING_ERROR', 'No active session selected', 'var(--danger)');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/messages`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ sessionId, recipientJid: recipient, body })
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+          logTerminal('MESSAGING', `Message sent successfully! Message JID: ${data.data?.waMessageId || 'Sent'}`, 'var(--accent)');
+          document.getElementById('msgBody').value = '';
+        } else {
+          logTerminal('MESSAGING_ERROR', data.error || 'Failed to send message', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('MESSAGING_ERROR', err.message, 'var(--danger)');
+      }
+    }
+
+    // WebSockets Handler
+    function connectWS() {
+      if (!token) return;
+      if (ws) ws.close();
+
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsHost = window.location.host;
+      const wsUrl = `${wsProtocol}//${wsHost}/ws?token=${token}`;
+
+      logTerminal('WS', `Connecting to WebSocket server...`);
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        logTerminal('WS', 'Connected to WebSocket!', 'var(--accent)');
+        document.getElementById('wsStatusBadge').style.color = 'var(--accent)';
+        document.getElementById('wsStatusBadge').style.borderColor = 'rgba(16, 185, 129, 0.2)';
+        document.getElementById('wsStatusBadge').style.background = 'rgba(16, 185, 129, 0.1)';
+        document.getElementById('wsStatusText').textContent = 'Connected';
+        document.getElementById('wsStatusDot').style.backgroundColor = 'var(--accent)';
+        document.getElementById('wsStatusDot').style.boxShadow = '0 0 8px var(--accent)';
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'connected') {
+            logTerminal('WS_SYSTEM', `Session authenticated. orgId: ${data.orgId}`);
+            // Subscribe to organization events
+            ws.send(JSON.stringify({
+              type: 'subscribe',
+              channels: [`org:${data.orgId}`]
+            }));
+          } else if (data.type === 'subscribed') {
+            logTerminal('WS_SYSTEM', `Listening on channels: ${data.channels.join(', ')}`, 'var(--primary)');
+          } else {
+            // Log incoming messages/events
+            let eventColor = 'var(--primary)';
+            if (data.type === 'message.received') eventColor = '#38bdf8';
+            if (data.type.includes('connected')) eventColor = 'var(--accent)';
+            if (data.type.includes('disconnected')) eventColor = 'var(--danger)';
+
+            logTerminal(`EVENT:${data.type || 'RAW'}`, data, eventColor);
+            
+            // Auto refresh sessions list if session status updates
+            if (data.type.includes('session:')) {
+              refreshActiveSessions();
+            }
+          }
+        } catch (err) {
+          logTerminal('WS_RAW', event.data);
+        }
+      };
+
+      ws.onclose = () => {
+        logTerminal('WS', 'WebSocket connection closed.', 'var(--danger)');
+        document.getElementById('wsStatusBadge').style.color = 'var(--danger)';
+        document.getElementById('wsStatusBadge').style.borderColor = 'rgba(239, 68, 68, 0.2)';
+        document.getElementById('wsStatusBadge').style.background = 'rgba(239, 68, 68, 0.1)';
+        document.getElementById('wsStatusText').textContent = 'Disconnected';
+        document.getElementById('wsStatusDot').style.backgroundColor = 'var(--danger)';
+        document.getElementById('wsStatusDot').style.boxShadow = '0 0 8px var(--danger)';
+      };
+
+      ws.onerror = (err) => {
+        logTerminal('WS_ERROR', 'WebSocket encountered an error.', 'var(--danger)');
+      };
+    }
+  </script>
+</body>
+</html>

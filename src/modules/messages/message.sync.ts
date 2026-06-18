@@ -1,0 +1,282 @@
+/**
+ * Message History Sync — processes Baileys history sync events and bulk-inserts to DB.
+ * Handles deduplication, chat/contact creation, and progress tracking via Redis.
+ */
+
+import { db } from '../../config/database.js';
+import { messages, chats, contacts } from '../../db/schema.js';
+import { eq, and, sql } from 'drizzle-orm';
+import { redis } from '../../config/redis.js';
+import { messageService } from './message.service.js';
+import { chatService } from '../chats/chat.service.js';
+import { contactService } from '../contacts/contact.service.js';
+import { logger } from '../../observability/logger.js';
+import type { BulkInsertResult } from './message.types.js';
+
+/** Redis key for tracking sync progress per session */
+function syncProgressKey(sessionId: string): string {
+  return `sync:progress:${sessionId}`;
+}
+
+export class MessageSyncService {
+  /**
+   * Process a full history sync event from Baileys.
+   * Called when `messaging-history.set` fires during initial device linking.
+   */
+  async processHistorySync(
+    sessionId: string,
+    orgId: string,
+    data: {
+      chats: Array<{
+        id: string;
+        name?: string;
+        unreadCount?: number;
+        conversationTimestamp?: number;
+        muteEndTime?: number;
+        archived?: boolean;
+        pinned?: number;
+      }>;
+      contacts: Array<{
+        id: string;
+        name?: string;
+        notify?: string;
+        imgUrl?: string;
+      }>;
+      messages: Array<{
+        key: { remoteJid: string; fromMe: boolean; id: string; participant?: string };
+        message?: any;
+        messageTimestamp?: number | Long;
+        pushName?: string;
+        status?: number;
+      }>;
+      syncType: number;
+    }
+  ): Promise<{ chats: number; contacts: number; messages: BulkInsertResult }> {
+    logger.info('Processing history sync', {
+      sessionId,
+      chatCount: data.chats.length,
+      contactCount: data.contacts.length,
+      messageCount: data.messages.length,
+      syncType: data.syncType,
+    });
+
+    // Track progress in Redis
+    await redis.hset(syncProgressKey(sessionId), {
+      status: 'processing',
+      startedAt: new Date().toISOString(),
+      totalChats: data.chats.length,
+      totalContacts: data.contacts.length,
+      totalMessages: data.messages.length,
+    });
+
+    // 1. Sync chats first (messages reference them)
+    let chatsSynced = 0;
+    for (const chat of data.chats) {
+      try {
+        await chatService.upsertChat({
+          orgId,
+          sessionId,
+          waChatId: chat.id,
+          chatType: chat.id.endsWith('@g.us') ? 'group' : 'private',
+          name: chat.name ?? null,
+          unreadCount: chat.unreadCount ?? 0,
+          isArchived: chat.archived ?? false,
+          isPinned: (chat.pinned ?? 0) > 0,
+          mutedUntil: chat.muteEndTime
+            ? new Date(chat.muteEndTime * 1000)
+            : null,
+          lastMessageAt: chat.conversationTimestamp
+            ? new Date(Number(chat.conversationTimestamp) * 1000)
+            : null,
+        });
+        chatsSynced++;
+      } catch (err) {
+        logger.warn('Failed to sync chat', { chatId: chat.id, error: (err as Error).message });
+      }
+    }
+
+    // 2. Sync contacts
+    let contactsSynced = 0;
+    for (const contact of data.contacts) {
+      try {
+        await contactService.upsertContact({
+          orgId,
+          sessionId,
+          waId: contact.id,
+          pushName: contact.notify ?? null,
+          displayName: contact.name ?? null,
+          avatarUrl: contact.imgUrl ?? null,
+        });
+        contactsSynced++;
+      } catch (err) {
+        logger.warn('Failed to sync contact', { contactId: contact.id, error: (err as Error).message });
+      }
+    }
+
+    // 3. Bulk insert messages with dedup
+    const messagesToInsert = [];
+    for (const msg of data.messages) {
+      if (!msg.key?.remoteJid || !msg.key?.id) continue;
+
+      const chatId = await chatService.ensureChatExists(orgId, sessionId, msg.key.remoteJid);
+      if (!chatId) continue;
+
+      const { type, content } = extractSyncMessageContent(msg.message);
+      const timestamp = msg.messageTimestamp
+        ? new Date(Number(msg.messageTimestamp) * 1000)
+        : new Date();
+
+      messagesToInsert.push({
+        sessionId,
+        chatId,
+        waMessageId: msg.key.id,
+        senderJid: msg.key.fromMe
+          ? 'me'
+          : msg.key.participant || msg.key.remoteJid,
+        fromMe: msg.key.fromMe ?? false,
+        messageType: type,
+        content,
+        status: mapWAStatus(msg.status),
+        createdAt: timestamp,
+      });
+    }
+
+    const messageResult = await messageService.bulkInsert(orgId, messagesToInsert);
+
+    // Update progress
+    await redis.hset(syncProgressKey(sessionId), {
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+      chatsSynced,
+      contactsSynced,
+      messagesInserted: messageResult.inserted,
+      messagesDuplicated: messageResult.duplicates,
+    });
+
+    // Set TTL on progress key (24 hours)
+    await redis.expire(syncProgressKey(sessionId), 86400);
+
+    logger.info('History sync completed', {
+      sessionId,
+      chatsSynced,
+      contactsSynced,
+      messagesInserted: messageResult.inserted,
+    });
+
+    return {
+      chats: chatsSynced,
+      contacts: contactsSynced,
+      messages: messageResult,
+    };
+  }
+
+  /**
+   * Process incremental message history chunks (messages.upsert type 'append').
+   */
+  async processIncrementalSync(
+    sessionId: string,
+    orgId: string,
+    messageList: Array<any>
+  ): Promise<BulkInsertResult> {
+    const messagesToInsert = [];
+
+    for (const msg of messageList) {
+      if (!msg.key?.remoteJid || !msg.key?.id) continue;
+
+      const chatId = await chatService.ensureChatExists(orgId, sessionId, msg.key.remoteJid);
+      if (!chatId) continue;
+
+      const { type, content } = extractSyncMessageContent(msg.message);
+      const timestamp = msg.messageTimestamp
+        ? new Date(Number(msg.messageTimestamp) * 1000)
+        : new Date();
+
+      messagesToInsert.push({
+        sessionId,
+        chatId,
+        waMessageId: msg.key.id,
+        senderJid: msg.key.fromMe
+          ? 'me'
+          : msg.key.participant || msg.key.remoteJid,
+        fromMe: msg.key.fromMe ?? false,
+        messageType: type,
+        content,
+        status: 'sent' as const,
+        createdAt: timestamp,
+      });
+    }
+
+    return messageService.bulkInsert(orgId, messagesToInsert);
+  }
+
+  /**
+   * Get sync progress for a session.
+   */
+  async getSyncProgress(sessionId: string): Promise<Record<string, string> | null> {
+    const progress = await redis.hgetall(syncProgressKey(sessionId));
+    return Object.keys(progress).length > 0 ? progress : null;
+  }
+}
+
+/**
+ * Extract message type and text content from a Baileys WAMessage.
+ */
+function extractSyncMessageContent(message: any): { type: string; content: string | null } {
+  if (!message) return { type: 'system', content: null };
+
+  if (message.conversation) {
+    return { type: 'text', content: message.conversation };
+  }
+  if (message.extendedTextMessage?.text) {
+    return { type: 'text', content: message.extendedTextMessage.text };
+  }
+  if (message.imageMessage) {
+    return { type: 'image', content: message.imageMessage.caption ?? null };
+  }
+  if (message.videoMessage) {
+    return { type: 'video', content: message.videoMessage.caption ?? null };
+  }
+  if (message.audioMessage) {
+    return { type: 'audio', content: null };
+  }
+  if (message.documentMessage) {
+    return { type: 'document', content: message.documentMessage.fileName ?? null };
+  }
+  if (message.stickerMessage) {
+    return { type: 'sticker', content: null };
+  }
+  if (message.locationMessage) {
+    return {
+      type: 'location',
+      content: message.locationMessage.name ?? `${message.locationMessage.degreesLatitude},${message.locationMessage.degreesLongitude}`,
+    };
+  }
+  if (message.contactMessage) {
+    return { type: 'contact', content: message.contactMessage.displayName ?? null };
+  }
+  if (message.reactionMessage) {
+    return { type: 'reaction', content: message.reactionMessage.text ?? null };
+  }
+  if (message.pollCreationMessage || message.pollCreationMessageV3) {
+    const poll = message.pollCreationMessage || message.pollCreationMessageV3;
+    return { type: 'poll', content: poll.name ?? null };
+  }
+
+  return { type: 'system', content: null };
+}
+
+/**
+ * Map WhatsApp numeric status to our string status.
+ */
+function mapWAStatus(status?: number): string {
+  switch (status) {
+    case 0: return 'pending';
+    case 1: return 'sent';
+    case 2: return 'delivered';
+    case 3: return 'read';
+    case 4: return 'read';
+    default: return 'sent';
+  }
+}
+
+export const messageSyncService = new MessageSyncService();
