@@ -8,11 +8,75 @@ import { messageService } from './message.service.js';
 import { messageSyncService } from './message.sync.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
+import { eventBus } from '../../events/event-bus.js';
+import { chatService } from '../chats/chat.service.js';
+import { sessionManager } from '../sessions/session.manager.js';
 
 export const messageRouter = Router();
 
 // All routes require authentication
 messageRouter.use(authenticate);
+
+/**
+ * POST /api/messages
+ * Send/queue a message to a WhatsApp JID or phone number.
+ */
+messageRouter.post('/', async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const schema = z.object({
+      sessionId: z.string().uuid(),
+      recipientJid: z.string().min(1),
+      body: z.string().min(1),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid message request parameters', details: parsed.error.flatten() });
+    }
+
+    const { sessionId, recipientJid, body } = parsed.data;
+
+    // Validate that session exists and belongs to the user's organization
+    const activeSession = sessionManager.getSession(sessionId);
+    if (!activeSession || activeSession.orgId !== orgId) {
+      return res.status(404).json({ error: 'Active session not found or access denied' });
+    }
+
+    // Standardize recipient JID (e.g. 966500000000 -> 966500000000@s.whatsapp.net)
+    let waChatJid = recipientJid.trim();
+    if (!waChatJid.includes('@')) {
+      waChatJid = `${waChatJid}@s.whatsapp.net`;
+    }
+
+    // Ensure the chat thread exists in the database
+    const chatId = await chatService.ensureChatExists(orgId, sessionId, waChatJid);
+    if (!chatId) {
+      return res.status(500).json({ error: 'Failed to create or resolve chat thread' });
+    }
+
+    // Publish outbound job to the event bus
+    const jobId = await eventBus.publishMessageOutbound(sessionId, orgId, {
+      chatId,
+      waChatJid,
+      type: 'text',
+      content: body,
+    });
+
+    return res.status(202).json({
+      success: true,
+      message: 'Message queued for sending',
+      data: {
+        jobId,
+        chatId,
+        waChatJid,
+      }
+    });
+  } catch (err) {
+    logger.error('Failed to queue outbound message', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to queue message' });
+  }
+});
 
 /**
  * GET /api/chats/:chatId/messages
