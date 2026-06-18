@@ -303,18 +303,18 @@ function renderChatsList(chatList) {
   }
 
   container.innerHTML = chatList.map(c => {
-    const isActive = c.waChatJid === activeChatId ? 'active' : '';
+    const isActive = c.waChatId === activeChatId ? 'active' : '';
     const avatarIcon = c.chatType === 'group' ? '👥' : '👤';
     const lastMsg = c.lastMessagePreview || '<i>No messages</i>';
     const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
     const unread = c.unreadCount > 0 ? `<span class="chat-badge">${c.unreadCount}</span>` : '';
 
     return `
-      <div class="chat-item ${isActive}" onclick="selectChat('${c.id}', '${c.waChatJid}', '${escapeHtml(c.name || c.waChatJid.split('@')[0])}')">
+      <div class="chat-item ${isActive}" onclick="selectChat('${c.id}', '${c.waChatId}', '${escapeHtml(c.name || c.waChatId.split('@')[0])}')">
         <div class="chat-avatar">${avatarIcon}</div>
         <div class="chat-info">
           <div class="chat-header-row">
-            <span class="chat-name">${escapeHtml(c.name || c.waChatJid.split('@')[0])}</span>
+            <span class="chat-name">${escapeHtml(c.name || c.waChatId.split('@')[0])}</span>
             <span class="chat-time">${timestamp}</span>
           </div>
           <div class="chat-meta-row">
@@ -472,8 +472,8 @@ async function markChatAsRead(chatDbId) {
 function handleChatSearch() {
   const query = document.getElementById('chatSearchInput').value.toLowerCase();
   const filtered = chats.filter(c => {
-    const name = (c.name || c.waChatJid.split('@')[0]).toLowerCase();
-    return name.includes(query) || c.waChatJid.toLowerCase().includes(query);
+    const name = (c.name || c.waChatId.split('@')[0]).toLowerCase();
+    return name.includes(query) || c.waChatId.toLowerCase().includes(query);
   });
   renderChatsList(filtered);
 }
