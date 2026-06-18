@@ -26,7 +26,7 @@ export class ContactService {
     metadata?: Record<string, unknown>;
   }): Promise<Contact> {
     // Extract phone number from JID if not provided
-    const phoneNumber = data.phoneNumber ?? data.waId.split('@')[0] ?? null;
+    const phoneNumber = data.phoneNumber ?? data.waId.split('@')[0]?.split(':')[0] ?? null;
 
     const [result] = await db
       .insert(contacts)

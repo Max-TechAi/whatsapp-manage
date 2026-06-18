@@ -91,7 +91,7 @@ export const sessions = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     sessionName: varchar('session_name', { length: 255 }).notNull(),
     /** Linked phone number once connected, null during QR phase */
-    phoneNumber: varchar('phone_number', { length: 20 }),
+    phoneNumber: varchar('phone_number', { length: 50 }),
     status: varchar('status', { length: 30 })
       .notNull()
       .default('initializing'),
@@ -158,7 +158,7 @@ export const contacts = pgTable(
       .references(() => sessions.id, { onDelete: 'cascade' }),
     /** WhatsApp JID, e.g. "1234567890@s.whatsapp.net" */
     waId: varchar('wa_id', { length: 100 }).notNull(),
-    phoneNumber: varchar('phone_number', { length: 20 }),
+    phoneNumber: varchar('phone_number', { length: 50 }),
     /** Name the user chose to display on WhatsApp */
     pushName: varchar('push_name', { length: 255 }),
     /** Locally assigned display name (by agent) */

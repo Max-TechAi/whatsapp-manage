@@ -372,7 +372,7 @@ class SessionManager {
         }
 
         const phoneNumber = socket.user?.id
-          ? normalizeJid(socket.user.id)
+          ? socket.user.id.split('@')[0]?.split(':')[0] || null
           : null;
 
         await db
