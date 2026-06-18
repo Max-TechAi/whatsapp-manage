@@ -110,6 +110,12 @@ export function createChatSyncWorker(): Worker {
 
       let processed = 0;
       for (const chat of chatList) {
+        const waChatId = chat.id ?? chat.waChatId ?? '';
+        // BUG 2: Exclude WhatsApp Status broadcast threads
+        if (waChatId.endsWith('@broadcast') || waChatId === 'status' || chat.type === 'status') {
+          continue;
+        }
+
         try {
           if (action === 'delete') {
             // Find and soft-handle deletion

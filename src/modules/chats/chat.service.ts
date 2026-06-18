@@ -5,7 +5,7 @@
 
 import { db } from '../../config/database.js';
 import { chats, contacts } from '../../db/schema.js';
-import { eq, and, desc, lt, sql, ne } from 'drizzle-orm';
+import { eq, and, desc, lt, sql, ne, notLike } from 'drizzle-orm';
 import { logger } from '../../observability/logger.js';
 import type { Chat, ChatListQuery, ChatListResponse, ChatUpdatePayload } from './chat.types.js';
 
@@ -28,7 +28,12 @@ export class ChatService {
     lastMessagePreview?: string | null;
     lastMessageAt?: Date | null;
     metadata?: Record<string, unknown>;
-  }): Promise<Chat> {
+  }): Promise<Chat | null> {
+    // BUG 2: Exclude WhatsApp Status broadcast threads
+    if (data.waChatId.endsWith('@broadcast') || data.waChatId === 'status') {
+      return null;
+    }
+
     const [result] = await db
       .insert(chats)
       .values({
@@ -73,6 +78,11 @@ export class ChatService {
     sessionId: string,
     waChatJid: string
   ): Promise<string | null> {
+    // BUG 2: Exclude WhatsApp Status broadcast threads
+    if (waChatJid.endsWith('@broadcast') || waChatJid === 'status') {
+      return null;
+    }
+
     try {
       // Try to find existing chat
       const [existing] = await db
@@ -128,7 +138,9 @@ export class ChatService {
     const conditions = [
       eq(chats.orgId, orgId),
       eq(chats.sessionId, query.sessionId),
-      ne(chats.waChatId, 'status@broadcast'),
+      // BUG 2: Filter out any chat ending with @broadcast or named status
+      notLike(chats.waChatId, '%@broadcast'),
+      ne(chats.waChatId, 'status'),
     ];
 
     if (query.archived !== undefined) {
@@ -173,7 +185,7 @@ export class ChatService {
       .where(and(...conditions))
       .orderBy(
         desc(chats.isPinned),
-        desc(chats.lastMessageAt)
+        sql`${chats.lastMessageAt} DESC NULLS LAST`
       )
       .limit(fetchLimit);
 
@@ -191,7 +203,7 @@ export class ChatService {
       sessionId: r.sessionId,
       waChatId: r.waChatId,
       chatType: r.chatType,
-      name: r.name ?? r.contactName ?? r.contactPushName ?? null,
+      name: r.contactPushName ?? r.contactName ?? r.name ?? null,
       avatarUrl: r.avatarUrl,
       unreadCount: r.unreadCount,
       isArchived: r.isArchived,
@@ -255,7 +267,8 @@ export class ChatService {
       sessionId: result.sessionId,
       waChatId: result.waChatId,
       chatType: result.chatType,
-      name: result.name ?? result.contactName ?? result.contactPushName ?? null,
+      // BUG 4: Prioritize name resolution in order: contact.pushname -> contact.name -> chat.name
+      name: result.contactPushName ?? result.contactName ?? result.name ?? null,
       avatarUrl: result.avatarUrl,
       unreadCount: result.unreadCount,
       isArchived: result.isArchived,

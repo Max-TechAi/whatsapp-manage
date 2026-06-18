@@ -295,42 +295,62 @@ async function loadChats() {
 }
 
 function renderChatsList(chatList) {
-  const container = document.getElementById('chatsListContainer');
-  const filteredList = (chatList || []).filter(c => c.waChatId !== 'status@broadcast' && c.waChatId !== 'status');
+  try {
+    const container = document.getElementById('chatsListContainer');
+    
+    // Exclude WhatsApp Status broadcast threads
+    const filteredList = (chatList || []).filter(c => c.waChatId !== 'status@broadcast' && c.waChatId !== 'status' && !c.waChatId.endsWith('@broadcast'));
 
-  if (filteredList.length === 0) {
-    container.innerHTML = `
-      <div style="text-align: center; color: var(--text-muted); padding: 2rem 1rem; font-size: 0.9rem;">
-        No chats synchronized yet. Start a new chat from WhatsApp.
-      </div>
-    `;
-    return;
-  }
+    if (filteredList.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; color: var(--text-muted); padding: 2rem 1rem; font-size: 0.9rem;">
+          No chats synchronized yet. Start a new chat from WhatsApp.
+        </div>
+      `;
+      return;
+    }
 
-  container.innerHTML = filteredList.map(c => {
-    const isActive = c.waChatId === activeChatId ? 'active' : '';
-    const avatarIcon = c.chatType === 'group' ? '👥' : '👤';
-    const lastMsg = c.lastMessagePreview || '<i>No messages</i>';
-    const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
-    const hasUnread = c.unreadCount && Number(c.unreadCount) > 0;
-    const unread = hasUnread ? `<span class="chat-badge">${c.unreadCount}</span>` : '';
+    // Sort conversations by most recent message activity (lastMessageAt DESC), pinned first
+    const sortedList = [...filteredList].sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      return timeB - timeA;
+    });
 
-    return `
-      <div class="chat-item ${isActive}" onclick="selectChat('${c.id}', '${c.waChatId}', '${escapeHtml(c.name || c.waChatId.split('@')[0])}')">
-        <div class="chat-avatar">${avatarIcon}</div>
-        <div class="chat-info">
-          <div class="chat-header-row">
-            <span class="chat-name">${escapeHtml(c.name || c.waChatId.split('@')[0])}</span>
-            <span class="chat-time">${timestamp}</span>
-          </div>
-          <div class="chat-meta-row">
-            <span class="chat-preview">${lastMsg}</span>
-            ${unread}
+    container.innerHTML = sortedList.map(c => {
+      const isActive = c.waChatId === activeChatId ? 'active' : '';
+      const avatarIcon = c.chatType === 'group' ? '👥' : '👤';
+      const lastMsg = c.lastMessagePreview || '<i>No messages</i>';
+      const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
+      // BUG 3: Render unread badge only when unreadCount > 0
+      const hasUnread = typeof c.unreadCount !== 'undefined' && c.unreadCount !== null && Number(c.unreadCount) > 0;
+      const unread = hasUnread ? `<span class="chat-badge">${c.unreadCount}</span>` : '';
+      
+      // Fallback phone number formatted with '+'
+      const displayName = formatPhoneNumberFallback(c.name || c.waChatId.split('@')[0]);
+
+      return `
+        <div class="chat-item ${isActive}" onclick="selectChat('${c.id}', '${c.waChatId}', '${escapeHtml(displayName)}')">
+          <div class="chat-avatar">${avatarIcon}</div>
+          <div class="chat-info">
+            <div class="chat-header-row">
+              <span class="chat-name">${escapeHtml(displayName)}</span>
+              <span class="chat-time">${timestamp}</span>
+            </div>
+            <div class="chat-meta-row">
+              <span class="chat-preview">${lastMsg}</span>
+              ${unread}
+            </div>
           </div>
         </div>
-      </div>
-    `;
-  }).join('');
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Failed to render chat list:', err);
+    document.getElementById('chatsListContainer').innerHTML = `<div style="color: var(--danger); padding: 1rem; font-size: 0.85rem;">Error loading chats</div>`;
+  }
 }
 
 async function selectChat(chatDbId, waChatJid, chatName) {
@@ -389,46 +409,127 @@ function renderMessages(msgList) {
     return;
   }
 
-  // Messages in DB are sorted newest first, reverse to show chronologically
-  const sorted = [...msgList].reverse();
+  try {
+    // Messages in DB are sorted newest first, reverse to show chronologically
+    const sorted = [...msgList].reverse();
 
-  container.innerHTML = sorted.map(m => {
-    const isSelf = m.fromMe;
-    const bubbleClass = isSelf ? 'message-bubble self' : 'message-bubble other';
-    const time = formatTime(new Date(m.createdAt));
-    
-    // Status ticks for self messages
-    let statusTick = '';
-    if (isSelf) {
-      if (m.status === 'read') statusTick = '<span style="color: #4fc3f7;">✓✓</span>';
-      else if (m.status === 'delivered') statusTick = '<span>✓✓</span>';
-      else if (m.status === 'sent') statusTick = '<span>✓</span>';
-    }
+    container.innerHTML = sorted.map(m => {
+      try {
+        const isSelf = m.fromMe;
+        const bubbleClass = isSelf ? 'message-bubble self' : 'message-bubble other';
+        const time = formatTime(new Date(m.createdAt));
+        
+        // Status ticks for self messages
+        let statusTick = '';
+        if (isSelf) {
+          if (m.status === 'read') statusTick = '<span style="color: #4fc3f7;">✓✓</span>';
+          else if (m.status === 'delivered') statusTick = '<span>✓✓</span>';
+          else if (m.status === 'sent') statusTick = '<span>✓</span>';
+        }
 
-    // Render group sender name above bubble if not from self in group chat
-    let senderHeader = '';
-    if (!isSelf && activeChatId.endsWith('@g.us')) {
-      const contactName = contactsMap[m.senderJid];
-      const pushName = m.metadata?.pushName;
-      const phone = m.senderJid.split('@')[0];
-      const displayName = contactName || pushName || phone;
-      senderHeader = `<div class="message-sender" style="font-size: 0.75rem; font-weight: 600; color: #4fc3f7; margin-bottom: 0.2rem; cursor: default;">${escapeHtml(displayName)}</div>`;
-    }
+        // Render group sender name above bubble if not from self in group chat
+        let senderHeader = '';
+        if (!isSelf && activeChatId.endsWith('@g.us')) {
+          const contactName = contactsMap[m.senderJid];
+          const pushName = m.metadata?.pushName;
+          const phone = m.senderJid.split('@')[0];
+          const displayName = formatPhoneNumberFallback(contactName || pushName || phone);
+          senderHeader = `<div class="message-sender" style="font-size: 0.75rem; font-weight: 600; color: #4fc3f7; margin-bottom: 0.2rem; cursor: default;">${escapeHtml(displayName)}</div>`;
+        }
 
-    return `
-      <div class="${bubbleClass}">
-        ${senderHeader}
-        ${formatMessageContent(m.content || '')}
-        <div class="message-meta">
-          <span>${time}</span>
-          ${statusTick}
-        </div>
-      </div>
-    `;
-  }).join('');
+        // Render message body (handles text content vs media files)
+        let bodyHtml = '';
+        if (['image', 'video', 'audio', 'document', 'sticker'].includes(m.messageType)) {
+          if (m.metadata?.mediaStatus === 'failed') {
+            // BUG 6: Handle download failures gracefully with a retry and a "media unavailable" fallback UI
+            bodyHtml = `
+              <div class="media-failed-container" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0;">
+                <span style="color: #ff5252; font-style: italic; font-size: 0.85rem;">⚠️ Media unavailable</span>
+                <button onclick="retryMediaDownload(event, '${m.id}')" class="media-retry-btn" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: var(--text-normal); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer; outline: none; transition: background 0.2s;">Retry</button>
+              </div>
+            `;
+          } else if (m.metadata?.mediaFileId) {
+            const mediaUrl = `/api/media/${m.metadata.mediaFileId}?token=${token}`;
+            if (m.messageType === 'image' || m.messageType === 'sticker') {
+              bodyHtml = `<div class="media-container"><img src="${mediaUrl}" class="chat-image" alt="Image" style="max-width: 250px; border-radius: 8px; margin-top: 5px; cursor: pointer;" onclick="window.open('${mediaUrl}', '_blank')"/></div>`;
+            } else if (m.messageType === 'video') {
+              bodyHtml = `<div class="media-container"><video src="${mediaUrl}" controls class="chat-video" style="max-width: 300px; border-radius: 8px; margin-top: 5px;"></video></div>`;
+            } else if (m.messageType === 'audio') {
+              const isVoiceNote = m.metadata?.ptt === true || (m.mediaMimeType && m.mediaMimeType.includes('ogg')) || m.mediaMimeType === 'audio/ogg';
+              if (isVoiceNote) {
+                bodyHtml = `
+                  <div class="media-container voice-note-container" style="display: flex; align-items: center; gap: 0.75rem; background: rgba(255,255,255,0.05); padding: 0.5rem 0.75rem; border-radius: 12px; margin-top: 5px; min-width: 240px;">
+                    <button onclick="toggleVoiceNotePlay(this)" class="vn-play-btn" style="background: var(--accent-green); color: #0b0f19; border: none; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.8rem; flex-shrink: 0; outline: none;">▶</button>
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 0.2rem;">
+                      <!-- Waveform visualization -->
+                      <div class="vn-waveform" style="display: flex; align-items: center; gap: 2px; height: 16px;">
+                        <span style="height: 40%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 60%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 30%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 80%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 50%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 70%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 90%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 40%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 60%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 30%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 80%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 50%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 70%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 90%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 40%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                        <span style="height: 60%; width: 2px; background: rgba(255,255,255,0.4); border-radius: 1px; transition: background 0.1s;"></span>
+                      </div>
+                      <div style="font-size: 0.65rem; color: var(--text-muted); display: flex; justify-content: space-between;">
+                        <span>Voice Note</span>
+                        <span class="vn-duration">--:--</span>
+                      </div>
+                    </div>
+                    <audio ontimeupdate="updateVnProgress(this)" onloadedmetadata="initVnDuration(this)" style="display: none;">
+                      <source src="${mediaUrl}" type="audio/ogg; codecs=opus">
+                      <source src="/api/media/${m.metadata.mediaFileId}/transcode?token=${token}" type="audio/mpeg">
+                    </audio>
+                  </div>
+                `;
+              } else {
+                bodyHtml = `
+                  <div class="media-container">
+                    <audio src="${mediaUrl}" controls class="chat-audio" style="margin-top: 5px;"></audio>
+                  </div>
+                `;
+              }
+            } else if (m.messageType === 'document') {
+              bodyHtml = `<div class="media-container"><a href="${mediaUrl}" target="_blank" class="chat-document" style="display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; color: #4fc3f7; font-weight: 500; margin-top: 5px;">📄 Download ${escapeHtml(m.content || 'Document')}</a></div>`;
+            }
+          } else {
+            bodyHtml = `<div style="font-style: italic; color: var(--text-muted); padding: 0.25rem 0;">⏳ Media is downloading...</div>`;
+          }
+        } else {
+          bodyHtml = formatMessageContent(m.content || '');
+        }
 
-  // Scroll to bottom
-  container.scrollTop = container.scrollHeight;
+        return `
+          <div class="${bubbleClass}">
+            ${senderHeader}
+            ${bodyHtml}
+            <div class="message-meta">
+              <span>${time}</span>
+              ${statusTick}
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        console.error('Error rendering individual message:', err);
+        return `<div class="message-bubble other" style="color: var(--danger);">[Failed to render message]</div>`;
+      }
+    }).join('');
+
+    // Scroll to bottom
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    console.error('Critical failure inside renderMessages:', err);
+    container.innerHTML = `<div style="text-align: center; color: var(--danger); padding: 1.5rem;">⚠️ Error rendering messages. Please refresh page.</div>`;
+  }
 }
 
 async function handleSendMessageSubmit(e) {
@@ -638,19 +739,28 @@ function connectWS() {
 function handleWsEvent(data) {
   const { type, sessionId, orgId } = data;
 
-  // Real-time message receiver
-  if (type === 'message:new' || type === 'message:received' || type === 'message:sent') {
-    const msgData = data.data?.message;
-    const msgChatId = data.data?.chatId; // DB chat ID
+  // Real-time message receiver (maps new_message trigger and other inbound events)
+  if (type === 'message:new:notify' || type === 'message:new' || type === 'message:received' || type === 'message:sent' || type.startsWith('message:')) {
+    const msgChatId = data.chatId || data.data?.chatId;
 
-    // Refresh active session chats list to update preview and unread badges
-    if (activeSessionId === sessionId) {
+    if (activeSessionId === sessionId && msgChatId) {
+      // In-memory array update for instant chat list updates & sorting
+      const chatObj = chats.find(c => c.id === msgChatId);
+      if (chatObj) {
+        chatObj.lastMessageAt = data.createdAt || new Date().toISOString();
+        if (data.fromMe === false && activeChatDbId !== msgChatId) {
+          chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
+        }
+        renderChatsList(chats);
+      } else {
+        // Fallback: reload chats list from server
+        loadChats();
+      }
+
       // If we are currently chatting with this contact, reload messages and mark as read
       if (activeChatDbId === msgChatId) {
         loadMessages(activeChatDbId);
         markChatAsRead(activeChatDbId);
-      } else {
-        loadChats();
       }
     }
   }
@@ -705,6 +815,120 @@ function formatMessageContent(content) {
     return match;
   });
   return formatted;
+}
+
+function formatPhoneNumberFallback(name) {
+  if (!name) return '';
+  // If name is just digits (like user part of JID), prepend +
+  if (/^\d+$/.test(name)) {
+    return '+' + name;
+  }
+  return name;
+}
+
+function toggleVoiceNotePlay(btn) {
+  try {
+    const container = btn.closest('.voice-note-container');
+    const audio = container.querySelector('audio');
+    if (audio.paused) {
+      // Pause all other audio elements playing
+      document.querySelectorAll('audio').forEach(a => {
+        if (a !== audio) {
+          a.pause();
+          const otherBtn = a.closest('.voice-note-container')?.querySelector('.vn-play-btn');
+          if (otherBtn) otherBtn.textContent = '▶';
+        }
+      });
+      audio.play().then(() => {
+        btn.textContent = '⏸';
+      }).catch(err => console.error('Play failed', err));
+    } else {
+      audio.pause();
+      btn.textContent = '▶';
+    }
+  } catch (err) {
+    console.error('Error toggling voice note play:', err);
+  }
+}
+
+function initVnDuration(audio) {
+  try {
+    const container = audio.closest('.voice-note-container');
+    const durationSpan = container.querySelector('.vn-duration');
+    if (audio.duration && !isNaN(audio.duration)) {
+      const minutes = Math.floor(audio.duration / 60);
+      const seconds = Math.floor(audio.duration % 60);
+      durationSpan.textContent = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    }
+  } catch (err) {
+    console.error('Error loading audio duration:', err);
+  }
+}
+
+function updateVnProgress(audio) {
+  try {
+    const container = audio.closest('.voice-note-container');
+    const durationSpan = container.querySelector('.vn-duration');
+    const playBtn = container.querySelector('.vn-play-btn');
+    
+    if (audio.ended) {
+      playBtn.textContent = '▶';
+    }
+    
+    const current = audio.currentTime;
+    const total = audio.duration || 0;
+    
+    if (total > 0) {
+      const minutes = Math.floor(current / 60);
+      const seconds = Math.floor(current % 60);
+      durationSpan.textContent = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+      
+      // Waveform highlight effect
+      const bars = container.querySelectorAll('.vn-waveform span');
+      const percent = current / total;
+      const highlightCount = Math.floor(bars.length * percent);
+      bars.forEach((bar, idx) => {
+        if (idx < highlightCount) {
+          bar.style.background = 'var(--accent-green)';
+        } else {
+          bar.style.background = 'rgba(255,255,255,0.4)';
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Error updating audio progress:', err);
+  }
+}
+// BUG 6: Handle media download retries from UI
+async function retryMediaDownload(evt, messageId) {
+  try {
+    const btn = evt.target;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Retrying...';
+    }
+
+    const response = await fetch(`/api/media/messages/${messageId}/retry`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    if (response.ok) {
+      if (activeChatDbId) {
+        await loadMessages(activeChatDbId);
+      }
+    } else {
+      const data = await response.json();
+      alert(data.error || 'Failed to retry media download');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+      }
+    }
+  } catch (err) {
+    console.error('Failed to retry media download:', err);
+    alert('An error occurred while retrying download');
+  }
 }
 
 function handleLogout() {

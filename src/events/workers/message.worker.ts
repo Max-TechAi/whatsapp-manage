@@ -7,6 +7,7 @@ import { Worker, Job } from 'bullmq';
 import { workerRedis } from '../../config/redis.js';
 import { messageService } from '../../modules/messages/message.service.js';
 import { chatService } from '../../modules/chats/chat.service.js';
+import { contactService } from '../../modules/contacts/contact.service.js';
 import { eventBus, QUEUES, STREAMS } from '../event-bus.js';
 import { extractMessageContent, getJidType, normalizeJid } from '../../modules/sessions/session.events.js';
 import { logger } from '../../observability/logger.js';
@@ -62,6 +63,37 @@ export function createMessageWorker(): Worker {
         ? 'me'
         : normalizeJid(waMessage.key.participant || waMessage.key.remoteJid);
 
+      // Ensure sender contact is updated in database (saved name/pushname resolution)
+      if (!waMessage.key.fromMe && senderJid !== 'me') {
+        try {
+          await contactService.upsertContact({
+            orgId,
+            sessionId,
+            waId: senderJid,
+            pushName: waMessage.pushName ?? null,
+          });
+        } catch (err) {
+          logger.warn('Failed to upsert sender contact in message worker', { senderJid, error: (err as Error).message });
+        }
+      }
+
+      // BUG 1: Upsert mentioned JIDs to ensure they exist in contacts table for name resolution
+      const mentionedJids = contextInfo?.mentionedJid || [];
+      for (const jid of mentionedJids) {
+        if (jid) {
+          const normalized = normalizeJid(jid);
+          try {
+            await contactService.upsertContact({
+              orgId,
+              sessionId,
+              waId: normalized,
+            });
+          } catch (err) {
+            logger.warn('Failed to upsert mentioned contact in message worker', { jid: normalized, error: (err as Error).message });
+          }
+        }
+      }
+
       // Check if forwarded
       const isForwarded = !!(
         waMessage.message?.extendedTextMessage?.contextInfo?.isForwarded
@@ -89,6 +121,7 @@ export function createMessageWorker(): Worker {
           pushName: waMessage.pushName ?? null,
           broadcast: waMessage.broadcast ?? false,
           ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
+          waMessage, // Store raw message for retry
         },
         createdAt: timestamp,
       });

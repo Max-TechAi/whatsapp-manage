@@ -136,12 +136,22 @@ export class EventBus {
     messageData: any
   ): Promise<void> {
     const queue = this.getQueue(QUEUES.MEDIA_DOWNLOAD);
-    await queue.add('download', {
-      sessionId,
-      orgId,
-      messageId,
-      messageData,
-    });
+    await queue.add(
+      'download',
+      {
+        sessionId,
+        orgId,
+        messageId,
+        messageData,
+      },
+      {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 5000,
+        },
+      }
+    );
   }
 
   /**

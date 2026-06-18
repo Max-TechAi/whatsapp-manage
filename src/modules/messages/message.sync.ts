@@ -11,6 +11,7 @@ import { messageService } from './message.service.js';
 import { chatService } from '../chats/chat.service.js';
 import { contactService } from '../contacts/contact.service.js';
 import { logger } from '../../observability/logger.js';
+import { normalizeJid } from '../sessions/session.events.js';
 import type { BulkInsertResult } from './message.types.js';
 
 /** Redis key for tracking sync progress per session */
@@ -73,7 +74,7 @@ export class MessageSyncService {
     let chatsSynced = 0;
     for (const chat of data.chats) {
       try {
-        await chatService.upsertChat({
+        const result = await chatService.upsertChat({
           orgId,
           sessionId,
           waChatId: chat.id,
@@ -89,7 +90,9 @@ export class MessageSyncService {
             ? new Date(Number(chat.conversationTimestamp) * 1000)
             : null,
         });
-        chatsSynced++;
+        if (result) {
+          chatsSynced++;
+        }
       } catch (err) {
         logger.warn('Failed to sync chat', { chatId: chat.id, error: (err as Error).message });
       }
@@ -113,10 +116,74 @@ export class MessageSyncService {
       }
     }
 
+    // Extract additional contacts (senders and mentioned JIDs) from messages
+    const jidToPushNameMap = new Map<string, string | null>();
+    const mentionedJidsSet = new Set<string>();
+
+    for (const msg of data.messages) {
+      if (!msg.key?.remoteJid || !msg.key?.id) continue;
+      // Skip status and broadcast messages
+      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
+
+      const senderJid = msg.key.fromMe
+        ? 'me'
+        : msg.key.participant || msg.key.remoteJid;
+      
+      if (senderJid && senderJid !== 'me') {
+        const normalized = normalizeJid(senderJid);
+        if (!jidToPushNameMap.has(normalized)) {
+          jidToPushNameMap.set(normalized, msg.pushName ?? null);
+        }
+      }
+
+      const contextInfo = msg.message?.extendedTextMessage?.contextInfo
+        ?? msg.message?.imageMessage?.contextInfo
+        ?? msg.message?.videoMessage?.contextInfo
+        ?? msg.message?.audioMessage?.contextInfo
+        ?? msg.message?.documentMessage?.contextInfo
+        ?? msg.message?.stickerMessage?.contextInfo;
+      
+      const mentionedJids = contextInfo?.mentionedJid || [];
+      for (const jid of mentionedJids) {
+        if (jid) {
+          mentionedJidsSet.add(normalizeJid(jid));
+        }
+      }
+    }
+
+    // Upsert senders
+    for (const [waId, pushName] of jidToPushNameMap.entries()) {
+      try {
+        await contactService.upsertContact({
+          orgId,
+          sessionId,
+          waId,
+          pushName,
+        });
+      } catch (err) {
+        // Ignore
+      }
+    }
+
+    // Upsert mentions
+    for (const waId of mentionedJidsSet) {
+      try {
+        await contactService.upsertContact({
+          orgId,
+          sessionId,
+          waId,
+        });
+      } catch (err) {
+        // Ignore
+      }
+    }
+
     // 3. Bulk insert messages with dedup
     const messagesToInsert = [];
     for (const msg of data.messages) {
       if (!msg.key?.remoteJid || !msg.key?.id) continue;
+      // Skip status and broadcast messages
+      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
 
       const chatId = await chatService.ensureChatExists(orgId, sessionId, msg.key.remoteJid);
       if (!chatId) continue;
@@ -139,6 +206,7 @@ export class MessageSyncService {
         status: mapWAStatus(msg.status),
         metadata: {
           pushName: msg.pushName ?? null,
+          waMessage: msg, // Store raw message for retry
         },
         createdAt: timestamp,
       });
@@ -183,8 +251,72 @@ export class MessageSyncService {
   ): Promise<BulkInsertResult> {
     const messagesToInsert = [];
 
+    // Extract unique senders and mentioned JIDs
+    const jidToPushNameMap = new Map<string, string | null>();
+    const mentionedJidsSet = new Set<string>();
+
     for (const msg of messageList) {
       if (!msg.key?.remoteJid || !msg.key?.id) continue;
+      // Skip status and broadcast messages
+      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
+
+      const senderJid = msg.key.fromMe
+        ? 'me'
+        : msg.key.participant || msg.key.remoteJid;
+      
+      if (senderJid && senderJid !== 'me') {
+        const normalized = normalizeJid(senderJid);
+        if (!jidToPushNameMap.has(normalized)) {
+          jidToPushNameMap.set(normalized, msg.pushName ?? null);
+        }
+      }
+
+      const contextInfo = msg.message?.extendedTextMessage?.contextInfo
+        ?? msg.message?.imageMessage?.contextInfo
+        ?? msg.message?.videoMessage?.contextInfo
+        ?? msg.message?.audioMessage?.contextInfo
+        ?? msg.message?.documentMessage?.contextInfo
+        ?? msg.message?.stickerMessage?.contextInfo;
+      
+      const mentionedJids = contextInfo?.mentionedJid || [];
+      for (const jid of mentionedJids) {
+        if (jid) {
+          mentionedJidsSet.add(normalizeJid(jid));
+        }
+      }
+    }
+
+    // Upsert senders
+    for (const [waId, pushName] of jidToPushNameMap.entries()) {
+      try {
+        await contactService.upsertContact({
+          orgId,
+          sessionId,
+          waId,
+          pushName,
+        });
+      } catch (err) {
+        // Ignore
+      }
+    }
+
+    // Upsert mentions
+    for (const waId of mentionedJidsSet) {
+      try {
+        await contactService.upsertContact({
+          orgId,
+          sessionId,
+          waId,
+        });
+      } catch (err) {
+        // Ignore
+      }
+    }
+
+    for (const msg of messageList) {
+      if (!msg.key?.remoteJid || !msg.key?.id) continue;
+      // Skip status and broadcast messages
+      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
 
       const chatId = await chatService.ensureChatExists(orgId, sessionId, msg.key.remoteJid);
       if (!chatId) continue;
@@ -207,6 +339,7 @@ export class MessageSyncService {
         status: 'sent' as const,
         metadata: {
           pushName: msg.pushName ?? null,
+          waMessage: msg, // Store raw message for retry
         },
         createdAt: timestamp,
       });

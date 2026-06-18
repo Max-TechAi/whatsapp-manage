@@ -4,9 +4,12 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import ffmpeg from 'fluent-ffmpeg';
 import { mediaService } from './media.service.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
+import { messageService } from '../messages/message.service.js';
+import { eventBus } from '../../events/event-bus.js';
 
 export const mediaRouter = Router();
 
@@ -126,6 +129,90 @@ mediaRouter.get('/:id/url', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error('Failed to generate presigned URL', { error: (err as Error).message });
     return res.status(500).json({ error: 'Failed to generate URL' });
+  }
+});
+
+/**
+ * GET /api/media/:id/transcode
+ * Transcode audio/ogg to audio/mpeg (mp3) on the fly.
+ */
+mediaRouter.get('/:id/transcode', async (req: Request, res: Response) => {
+  try {
+    const file = await mediaService.getFileById(req.params.id as string);
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    if (file.orgId !== req.user!.orgId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const stream = await mediaService.download(file.objectKey);
+
+    res.writeHead(200, {
+      'Content-Type': 'audio/mpeg',
+      'Transfer-Encoding': 'chunked',
+      'Cache-Control': 'private, max-age=86400',
+    });
+
+    ffmpeg(stream)
+      .toFormat('mp3')
+      .on('error', (err) => {
+        logger.error('FFmpeg transcoding failed', { error: err.message, fileId: req.params.id });
+        if (!res.headersSent) {
+          res.status(500).end();
+        }
+      })
+      .pipe(res, { end: true });
+  } catch (err) {
+    logger.error('Failed to initiate transcoding', { error: (err as Error).message, fileId: req.params.id });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Failed to transcode file' });
+    }
+  }
+});
+
+/**
+ * POST /api/media/messages/:messageId/retry
+ * Retry media download for a failed message.
+ */
+mediaRouter.post('/messages/:messageId/retry', async (req: Request, res: Response) => {
+  try {
+    const messageId = req.params.messageId as string;
+    const dbMessage = await messageService.getMessageById(req.user!.orgId, messageId);
+    if (!dbMessage) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    const waMessage = (dbMessage.metadata as any)?.waMessage;
+    if (!waMessage) {
+      return res.status(400).json({ error: 'Raw message data not available for retry' });
+    }
+
+    // Reset media status in metadata
+    const updatedMetadata = {
+      ...(dbMessage.metadata as any),
+      mediaStatus: 'downloading',
+    };
+    // Clean up mediaFileId/failed status if present
+    delete updatedMetadata.mediaFileId;
+
+    await messageService.upsertMessage({
+      ...dbMessage,
+      metadata: updatedMetadata,
+    });
+
+    // Enqueue download job again
+    await eventBus.publishMediaDownload(
+      dbMessage.sessionId,
+      req.user!.orgId,
+      dbMessage.id,
+      waMessage
+    );
+
+    return res.json({ success: true, message: 'Media download retried' });
+  } catch (err) {
+    logger.error('Failed to retry media download', { error: (err as Error).message, messageId: req.params.messageId });
+    return res.status(500).json({ error: 'Failed to retry media download' });
   }
 });
 

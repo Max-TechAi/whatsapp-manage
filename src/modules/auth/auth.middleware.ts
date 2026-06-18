@@ -28,14 +28,20 @@ declare global {
  */
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   try {
+    let token: string | undefined;
     const authHeader = req.headers.authorization;
 
-    if (!authHeader?.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'Missing or malformed authorization header' });
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.slice(7); // Strip 'Bearer '
+    } else if (req.query.token) {
+      token = req.query.token as string;
+    }
+
+    if (!token) {
+      res.status(401).json({ error: 'Missing or malformed authorization credentials' });
       return;
     }
 
-    const token = authHeader.slice(7); // Strip 'Bearer '
     req.user = verifyToken(token);
     next();
   } catch (error) {
