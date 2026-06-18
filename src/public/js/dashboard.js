@@ -284,7 +284,7 @@ async function loadChats() {
     const resData = await response.json();
     if (!response.ok) throw new Error(resData.error || 'Failed to load chats');
 
-    chats = resData.data?.chats || [];
+    chats = resData.chats || [];
     renderChatsList(chats);
   } catch (err) {
     console.error(err);
@@ -356,7 +356,7 @@ async function loadMessages(chatDbId) {
   container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Loading chat history...</div>';
 
   try {
-    const response = await fetch(`/api/chats/${chatDbId}/messages?limit=100`, {
+    const response = await fetch(`/api/messages/chats/${chatDbId}/messages?limit=100`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     const resData = await response.json();
