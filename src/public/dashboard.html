@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Business Platform — Inbox & Dashboard</title>
+  <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body>
+
+  <!-- ─── APP HEADER ─────────────────────────────────────────── -->
+  <header class="app-header">
+    <div class="logo-section">
+      <div class="logo-icon">WA</div>
+      <div class="logo-text">WhatsApp Business API</div>
+    </div>
+    
+    <div class="header-actions">
+      <!-- WS Status -->
+      <div class="status-badge">
+        <div id="wsStatusDot" class="status-dot disconnected"></div>
+        <span id="wsStatusText">WebSocket Offline</span>
+      </div>
+
+      <!-- Logged-in indicator -->
+      <div style="font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 0.5rem;">
+        <span>👤</span>
+        <span id="headerUserName" class="text-muted">Agent</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ─── MAIN APP CONTAINER ─────────────────────────────────── -->
+  <div class="app-container">
+    
+    <!-- ─── SIDEBAR NAVIGATION ───────────────────────────────── -->
+    <aside class="app-sidebar">
+      <div class="nav-links">
+        <button id="navBtnInbox" class="nav-link active" onclick="switchTab('inbox')">
+          <span>💬</span> Chat Inbox
+        </button>
+        <button id="navBtnSessions" class="nav-link" onclick="switchTab('sessions')">
+          <span>📱</span> WhatsApp Sessions
+        </button>
+        <button id="navBtnWebhooks" class="nav-link" onclick="switchTab('webhooks')">
+          <span>🔗</span> Webhook Settings
+        </button>
+      </div>
+
+      <div>
+        <button class="nav-link" onclick="handleLogout()" style="color: var(--danger);">
+          <span>🚪</span> Logout
+        </button>
+      </div>
+    </aside>
+
+    <!-- ─── MAIN DISPLAY PANEL ───────────────────────────────── -->
+    <main class="main-content">
+      
+      <!-- ─── AUTH WARNING BANNER ────────────────────────────── -->
+      <div id="authWarning" class="auth-warning-banner" style="display: none;">
+        ⚠️ You are not logged in. Redirecting to auth panel...
+      </div>
+
+      <!-- ─── CHAT INBOX TAB ─────────────────────────────────── -->
+      <div id="tab-inbox" class="tab-content active" style="height: 100%;">
+        <div class="chat-window">
+          
+          <!-- Chats list (left) -->
+          <div class="chats-list-pane">
+            <div class="chats-search">
+              <input type="text" id="chatSearchInput" class="search-input" placeholder="Search chats..." oninput="handleChatSearch()">
+            </div>
+            
+            <!-- Quick session selection inside inbox -->
+            <div style="padding: 0.5rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.5rem;">
+              <span style="font-size: 0.8rem; color: var(--text-muted);">Session:</span>
+              <select id="inboxSessionSelect" style="flex: 1; padding: 0.3rem; background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); color: white; border-radius: 4px; font-size: 0.85rem;" onchange="handleInboxSessionChange()">
+                <option value="">-- No connected session --</option>
+              </select>
+            </div>
+
+            <!-- Chats Scroll Area -->
+            <div class="chats-scroll" id="chatsListContainer">
+              <div style="text-align: center; color: var(--text-muted); padding: 2rem 1rem; font-size: 0.9rem;">
+                Select a connected session to view chats
+              </div>
+            </div>
+          </div>
+
+          <!-- Active Chat Pane (center) -->
+          <div class="active-chat-pane">
+            <div id="chatPlaceholder" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem; color: var(--text-muted);">
+              <span style="font-size: 3rem; margin-bottom: 1rem;">💬</span>
+              <h3>No Active Chat Selected</h3>
+              <p style="font-size: 0.9rem; margin-top: 0.5rem; max-width: 300px;">Select a conversation from the sidebar or link a session to start messaging.</p>
+            </div>
+
+            <!-- Main active message screen (initially hidden) -->
+            <div id="activeChatWrapper" style="display: none; flex: 1; flex-direction: column; overflow: hidden;">
+              <!-- Header -->
+              <div class="active-chat-header">
+                <div class="active-chat-user">
+                  <div class="chat-avatar" id="activeChatAvatar">👤</div>
+                  <div class="active-chat-details">
+                    <span class="active-chat-name" id="activeChatName">Contact Name</span>
+                    <span class="active-chat-jid" id="activeChatJid"> JID JID </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Message Bubbles Scroll pane -->
+              <div class="messages-pane" id="messagesContainer">
+                <!-- Messages render here -->
+              </div>
+
+              <!-- Input text box -->
+              <div class="message-input-pane">
+                <form id="dashboardSendMessageForm" class="message-form" onsubmit="handleSendMessageSubmit(event)">
+                  <input type="text" id="dashboardMessageInput" class="message-input" placeholder="Type a message..." autocomplete="off" required>
+                  <button type="submit" class="btn">Send</button>
+                </form>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ─── SESSIONS TAB ───────────────────────────────────── -->
+      <div id="tab-sessions" class="tab-content">
+        <div class="grid-2">
+          <!-- Create session -->
+          <div class="card">
+            <div class="card-title">Register WhatsApp Device</div>
+            <form id="createSessionForm" onsubmit="handleCreateSession(event)">
+              <div class="input-group">
+                <label>Device / Session Name</label>
+                <input type="text" id="sessionNameInput" placeholder="e.g. Sales Team Phone, Personal Account" required>
+              </div>
+              <button type="submit" class="btn">Link New Device</button>
+            </form>
+          </div>
+
+          <!-- Info guide -->
+          <div class="card">
+            <div class="card-title">How Connecting Works</div>
+            <p style="font-size: 0.95rem; line-height: 1.6; color: var(--text-muted); margin-bottom: 0.75rem;">
+              When you add a device, our system initializes a background WhatsApp virtual browser session. 
+            </p>
+            <p style="font-size: 0.95rem; line-height: 1.6; color: var(--text-muted);">
+              Click <b>"Get QR Code"</b> on your session to display the QR, scan it using WhatsApp on your phone (Linked Devices -> Link a Device), and the system will sync your chats automatically.
+            </p>
+          </div>
+        </div>
+
+        <!-- Sessions List -->
+        <div class="card">
+          <div class="card-title">WhatsApp Session Connections</div>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Session Name</th>
+                  <th>Linked Number</th>
+                  <th>ID / GUID</th>
+                  <th>Connection Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sessionsListBody">
+                <tr>
+                  <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                    Loading sessions connection list...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── WEBHOOKS TAB ───────────────────────────────────── -->
+      <div id="tab-webhooks" class="tab-content">
+        <div class="grid-2">
+          <!-- Webhook Form -->
+          <div class="card">
+            <div class="card-title">Configure Webhook Endpoint</div>
+            <form id="webhookForm" onsubmit="handleSaveWebhook(event)">
+              <div class="input-group">
+                <label>Webhook URL (Endpoint)</label>
+                <input type="url" id="webhookUrl" placeholder="https://yourdomain.com/webhooks/whatsapp" required>
+              </div>
+              <div class="input-group">
+                <label>Secret Key (for HMAC SHA-256 Signing Signature)</label>
+                <input type="text" id="webhookSecret" placeholder="Autogenerated secret key" readonly>
+              </div>
+              
+              <div class="input-group">
+                <label>Event Subscriptions</label>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem;">
+                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
+                    <input type="checkbox" name="webhookEvents" value="message.received" checked> Inbound Message Received
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
+                    <input type="checkbox" name="webhookEvents" value="message.sent" checked> Outbound Message Sent
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
+                    <input type="checkbox" name="webhookEvents" value="session.status" checked> WhatsApp Session Status Update
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
+                    <input type="checkbox" name="webhookEvents" value="webhook.test"> Test Webhook Event
+                  </label>
+                </div>
+              </div>
+              <button type="submit" class="btn">Register Webhook</button>
+            </form>
+          </div>
+
+          <!-- Webhook deliveries logs preview -->
+          <div class="card">
+            <div class="card-title">Active Webhooks & Status</div>
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>URL</th>
+                    <th>Subscribed Events</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="webhooksListBody">
+                  <tr>
+                    <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                      No webhooks configured.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ─── QR MODAL PANEL ─────────────────────────────────────── -->
+  <div id="qrModalOverlay" class="qr-modal-overlay">
+    <div class="qr-modal-card">
+      <div class="card-title" id="qrModalTitle">Link Device QR</div>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">Scan the code using WhatsApp -> Linked Devices on your phone.</p>
+      
+      <div class="qr-box">
+        <img id="qrModalImage" src="" alt="QR Code Loading...">
+      </div>
+      
+      <div id="qrModalStatus" style="font-weight: 500; font-size: 0.95rem; margin-bottom: 1.5rem; color: var(--accent-blue);">
+        Waiting for socket stream...
+      </div>
+
+      <div style="display: flex; justify-content: center; gap: 1rem;">
+        <button class="btn btn-secondary" onclick="closeQrModal()">Close</button>
+        <button class="btn" onclick="checkQrConnectionStatus()">Check Status</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
