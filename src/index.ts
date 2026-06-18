@@ -28,9 +28,11 @@ import { mediaService } from './modules/media/media.service.js';
 import { closePool } from './config/database.js';
 import { closeRedis } from './config/redis.js';
 import { apiRateLimiter } from './security/rate-limiter.js';
+import { createOutboundWorker } from './events/workers/outbound.worker.js';
 
 const env = getEnv();
 const app = express();
+let outboundWorker: any = null;
 
 // ─── Security & Observability Middleware ────────────────────────────────────────
 
@@ -99,7 +101,10 @@ async function startServer(): Promise<void> {
     // 3. Restore WhatsApp sessions
     await sessionManager.restoreAllSessions();
 
-    // 4. Start HTTP Server
+    // 4. Start outbound message worker (runs in API process to access active sockets)
+    outboundWorker = createOutboundWorker();
+
+    // 5. Start HTTP Server
     httpServer.listen(env.PORT, () => {
       logger.info(`HTTP Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);
     });
@@ -126,6 +131,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }, 10000);
 
   try {
+    // 0. Close outbound worker
+    if (outboundWorker) {
+      logger.info('Shutting down outbound worker...');
+      await outboundWorker.close();
+    }
+
     // 1. Close WebSocket server (disconnect all WS clients)
     await wsServer.close();
 
