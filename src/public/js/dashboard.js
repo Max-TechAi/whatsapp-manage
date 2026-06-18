@@ -9,6 +9,7 @@ let chats = [];
 let messagesMap = {}; // cache messages by JID
 let qrPollInterval = null;
 let currentQrSessionId = null;
+let contactsMap = {};
 
 // Auth Guard on start
 if (!token) {
@@ -268,9 +269,11 @@ function handleInboxSessionChange() {
   document.getElementById('chatsListContainer').innerHTML = '';
   document.getElementById('chatPlaceholder').style.display = 'flex';
   document.getElementById('activeChatWrapper').style.display = 'none';
+  contactsMap = {};
   
   if (activeSessionId) {
     loadChats();
+    loadContactsForSession();
   }
 }
 
@@ -293,7 +296,9 @@ async function loadChats() {
 
 function renderChatsList(chatList) {
   const container = document.getElementById('chatsListContainer');
-  if (chatList.length === 0) {
+  const filteredList = (chatList || []).filter(c => c.waChatId !== 'status@broadcast' && c.waChatId !== 'status');
+
+  if (filteredList.length === 0) {
     container.innerHTML = `
       <div style="text-align: center; color: var(--text-muted); padding: 2rem 1rem; font-size: 0.9rem;">
         No chats synchronized yet. Start a new chat from WhatsApp.
@@ -302,12 +307,13 @@ function renderChatsList(chatList) {
     return;
   }
 
-  container.innerHTML = chatList.map(c => {
+  container.innerHTML = filteredList.map(c => {
     const isActive = c.waChatId === activeChatId ? 'active' : '';
     const avatarIcon = c.chatType === 'group' ? '👥' : '👤';
     const lastMsg = c.lastMessagePreview || '<i>No messages</i>';
     const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
-    const unread = c.unreadCount > 0 ? `<span class="chat-badge">${c.unreadCount}</span>` : '';
+    const hasUnread = c.unreadCount && Number(c.unreadCount) > 0;
+    const unread = hasUnread ? `<span class="chat-badge">${c.unreadCount}</span>` : '';
 
     return `
       <div class="chat-item ${isActive}" onclick="selectChat('${c.id}', '${c.waChatId}', '${escapeHtml(c.name || c.waChatId.split('@')[0])}')">
@@ -343,6 +349,13 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   // Toggle wrap
   document.getElementById('chatPlaceholder').style.display = 'none';
   document.getElementById('activeChatWrapper').style.display = 'flex';
+
+  // Instant UI: Clear unread badge locally
+  const chatObj = chats.find(c => c.id === chatDbId);
+  if (chatObj && chatObj.unreadCount > 0) {
+    chatObj.unreadCount = 0;
+    renderChatsList(chats);
+  }
 
   // Load message history
   await loadMessages(chatDbId);
@@ -392,9 +405,20 @@ function renderMessages(msgList) {
       else if (m.status === 'sent') statusTick = '<span>✓</span>';
     }
 
+    // Render group sender name above bubble if not from self in group chat
+    let senderHeader = '';
+    if (!isSelf && activeChatId.endsWith('@g.us')) {
+      const contactName = contactsMap[m.senderJid];
+      const pushName = m.metadata?.pushName;
+      const phone = m.senderJid.split('@')[0];
+      const displayName = contactName || pushName || phone;
+      senderHeader = `<div class="message-sender" style="font-size: 0.75rem; font-weight: 600; color: #4fc3f7; margin-bottom: 0.2rem; cursor: default;">${escapeHtml(displayName)}</div>`;
+    }
+
     return `
       <div class="${bubbleClass}">
-        ${escapeHtml(m.content || '')}
+        ${senderHeader}
+        ${formatMessageContent(m.content || '')}
         <div class="message-meta">
           <span>${time}</span>
           ${statusTick}
@@ -618,15 +642,15 @@ function handleWsEvent(data) {
   if (type === 'message:new' || type === 'message:received' || type === 'message:sent') {
     const msgData = data.data?.message;
     const msgChatId = data.data?.chatId; // DB chat ID
-    const remoteJid = data.data?.sessionId; // wait, let's verify JID
 
     // Refresh active session chats list to update preview and unread badges
     if (activeSessionId === sessionId) {
-      loadChats();
-      
-      // If we are currently chatting with this contact, reload messages
+      // If we are currently chatting with this contact, reload messages and mark as read
       if (activeChatDbId === msgChatId) {
         loadMessages(activeChatDbId);
+        markChatAsRead(activeChatDbId);
+      } else {
+        loadChats();
       }
     }
   }
@@ -641,6 +665,48 @@ function handleWsEvent(data) {
 }
 
 // ─── HELPER UTILS ──────────────────────────────────────────────
+async function loadContactsForSession() {
+  if (!activeSessionId) return;
+  try {
+    const response = await fetch(`/api/contacts?sessionId=${activeSessionId}&limit=1000`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (response.ok && resData.contacts) {
+      contactsMap = {};
+      resData.contacts.forEach(c => {
+        const name = c.displayName || c.pushName || c.phoneNumber || c.waId.split('@')[0];
+        contactsMap[c.waId] = name;
+        const phone = c.waId.split('@')[0];
+        contactsMap[phone] = name;
+        if (c.phoneNumber) {
+          contactsMap[c.phoneNumber] = name;
+        }
+      });
+      // If a chat is already open, reload messages to resolve names instantly
+      if (activeChatDbId) {
+        loadMessages(activeChatDbId);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load contacts for mentions:', err);
+  }
+}
+
+function formatMessageContent(content) {
+  if (!content) return '';
+  let formatted = escapeHtml(content);
+  // Replace mentions (e.g. @905384534139 or @905384534139@s.whatsapp.net) with contact name
+  formatted = formatted.replace(/@(\d+)(?:@s\.whatsapp\.net)?/g, (match, phone) => {
+    const contactName = contactsMap[phone] || contactsMap[phone + '@s.whatsapp.net'];
+    if (contactName) {
+      return `<span style="color: #3b82f6; font-weight: 600;">@${escapeHtml(contactName)}</span>`;
+    }
+    return match;
+  });
+  return formatted;
+}
+
 function handleLogout() {
   localStorage.removeItem('token');
   window.location.href = '/';

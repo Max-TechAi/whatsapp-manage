@@ -21,7 +21,7 @@ contactRouter.get('/', async (req, res) => {
     const schema = z.object({
       sessionId: z.string().uuid(),
       search: z.string().max(100).optional(),
-      limit: z.coerce.number().int().min(1).max(200).default(50),
+      limit: z.coerce.number().int().min(1).max(1000).default(50),
       offset: z.coerce.number().int().min(0).default(0),
     });
 

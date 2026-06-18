@@ -137,6 +137,9 @@ export class MessageSyncService {
         messageType: type,
         content,
         status: mapWAStatus(msg.status),
+        metadata: {
+          pushName: msg.pushName ?? null,
+        },
         createdAt: timestamp,
       });
     }
@@ -202,6 +205,9 @@ export class MessageSyncService {
         messageType: type,
         content,
         status: 'sent' as const,
+        metadata: {
+          pushName: msg.pushName ?? null,
+        },
         createdAt: timestamp,
       });
     }

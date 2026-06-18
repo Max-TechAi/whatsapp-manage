@@ -5,7 +5,7 @@
 
 import { db } from '../../config/database.js';
 import { chats, contacts } from '../../db/schema.js';
-import { eq, and, desc, lt, sql } from 'drizzle-orm';
+import { eq, and, desc, lt, sql, ne } from 'drizzle-orm';
 import { logger } from '../../observability/logger.js';
 import type { Chat, ChatListQuery, ChatListResponse, ChatUpdatePayload } from './chat.types.js';
 
@@ -128,6 +128,7 @@ export class ChatService {
     const conditions = [
       eq(chats.orgId, orgId),
       eq(chats.sessionId, query.sessionId),
+      ne(chats.waChatId, 'status@broadcast'),
     ];
 
     if (query.archived !== undefined) {
