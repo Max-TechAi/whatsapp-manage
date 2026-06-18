@@ -4,7 +4,7 @@
  */
 
 import { db } from '../../config/database.js';
-import { chats } from '../../db/schema.js';
+import { chats, contacts } from '../../db/schema.js';
 import { eq, and, desc, lt, sql } from 'drizzle-orm';
 import { logger } from '../../observability/logger.js';
 import type { Chat, ChatListQuery, ChatListResponse, ChatUpdatePayload } from './chat.types.js';
@@ -141,8 +141,34 @@ export class ChatService {
     }
 
     const rows = await db
-      .select()
+      .select({
+        id: chats.id,
+        orgId: chats.orgId,
+        sessionId: chats.sessionId,
+        waChatId: chats.waChatId,
+        chatType: chats.chatType,
+        name: chats.name,
+        avatarUrl: chats.avatarUrl,
+        unreadCount: chats.unreadCount,
+        isArchived: chats.isArchived,
+        isPinned: chats.isPinned,
+        mutedUntil: chats.mutedUntil,
+        lastMessagePreview: chats.lastMessagePreview,
+        lastMessageAt: chats.lastMessageAt,
+        metadata: chats.metadata,
+        createdAt: chats.createdAt,
+        updatedAt: chats.updatedAt,
+        contactName: contacts.displayName,
+        contactPushName: contacts.pushName,
+      })
       .from(chats)
+      .leftJoin(
+        contacts,
+        and(
+          eq(chats.sessionId, contacts.sessionId),
+          eq(chats.waChatId, contacts.waId)
+        )
+      )
       .where(and(...conditions))
       .orderBy(
         desc(chats.isPinned),
@@ -158,8 +184,27 @@ export class ChatService {
         ? resultRows[resultRows.length - 1].lastMessageAt!.toISOString()
         : null;
 
+    const mappedChats = resultRows.map((r) => ({
+      id: r.id,
+      orgId: r.orgId,
+      sessionId: r.sessionId,
+      waChatId: r.waChatId,
+      chatType: r.chatType,
+      name: r.name ?? r.contactName ?? r.contactPushName ?? null,
+      avatarUrl: r.avatarUrl,
+      unreadCount: r.unreadCount,
+      isArchived: r.isArchived,
+      isPinned: r.isPinned,
+      mutedUntil: r.mutedUntil,
+      lastMessagePreview: r.lastMessagePreview,
+      lastMessageAt: r.lastMessageAt,
+      metadata: r.metadata,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    })) as Chat[];
+
     return {
-      chats: resultRows as Chat[],
+      chats: mappedChats,
       nextCursor,
       hasMore,
     };
@@ -170,11 +215,57 @@ export class ChatService {
    */
   async getChatById(orgId: string, chatId: string): Promise<Chat | null> {
     const [result] = await db
-      .select()
+      .select({
+        id: chats.id,
+        orgId: chats.orgId,
+        sessionId: chats.sessionId,
+        waChatId: chats.waChatId,
+        chatType: chats.chatType,
+        name: chats.name,
+        avatarUrl: chats.avatarUrl,
+        unreadCount: chats.unreadCount,
+        isArchived: chats.isArchived,
+        isPinned: chats.isPinned,
+        mutedUntil: chats.mutedUntil,
+        lastMessagePreview: chats.lastMessagePreview,
+        lastMessageAt: chats.lastMessageAt,
+        metadata: chats.metadata,
+        createdAt: chats.createdAt,
+        updatedAt: chats.updatedAt,
+        contactName: contacts.displayName,
+        contactPushName: contacts.pushName,
+      })
       .from(chats)
+      .leftJoin(
+        contacts,
+        and(
+          eq(chats.sessionId, contacts.sessionId),
+          eq(chats.waChatId, contacts.waId)
+        )
+      )
       .where(and(eq(chats.orgId, orgId), eq(chats.id, chatId)))
       .limit(1);
-    return (result as Chat) ?? null;
+
+    if (!result) return null;
+
+    return {
+      id: result.id,
+      orgId: result.orgId,
+      sessionId: result.sessionId,
+      waChatId: result.waChatId,
+      chatType: result.chatType,
+      name: result.name ?? result.contactName ?? result.contactPushName ?? null,
+      avatarUrl: result.avatarUrl,
+      unreadCount: result.unreadCount,
+      isArchived: result.isArchived,
+      isPinned: result.isPinned,
+      mutedUntil: result.mutedUntil,
+      lastMessagePreview: result.lastMessagePreview,
+      lastMessageAt: result.lastMessageAt,
+      metadata: result.metadata,
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
+    } as Chat;
   }
 
   /**

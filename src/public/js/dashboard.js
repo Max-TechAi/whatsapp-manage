@@ -612,10 +612,10 @@ function connectWS() {
 }
 
 function handleWsEvent(data) {
-  const { event, sessionId, orgId } = data;
+  const { type, sessionId, orgId } = data;
 
   // Real-time message receiver
-  if (event === 'message:new' || event === 'message:received' || event === 'message:sent') {
+  if (type === 'message:new' || type === 'message:received' || type === 'message:sent') {
     const msgData = data.data?.message;
     const msgChatId = data.data?.chatId; // DB chat ID
     const remoteJid = data.data?.sessionId; // wait, let's verify JID
@@ -632,7 +632,7 @@ function handleWsEvent(data) {
   }
 
   // Session Connection status updates
-  if (event === 'session:status') {
+  if (type === 'session:status') {
     loadSessions();
     if (currentQrSessionId === sessionId) {
       checkQrConnectionStatus();

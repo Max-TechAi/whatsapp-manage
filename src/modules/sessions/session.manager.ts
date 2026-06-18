@@ -30,6 +30,7 @@ import { logger } from '../../observability/logger.js';
 import { usePostgresAuthState } from './session.auth-state.js';
 import { SessionEventType, normalizeJid } from './session.events.js';
 import type { ActiveSession, SessionStatus, WhatsAppSession } from './session.types.js';
+import { eventBus, STREAMS } from '../../events/event-bus.js';
 
 /** Maximum number of reconnection attempts before giving up */
 const MAX_RETRIES = 10;
@@ -353,8 +354,13 @@ class SessionManager {
 
           logger.info('QR code generated', { sessionId });
 
-          // TODO: Broadcast QR to WebSocket clients
-          // eventBus.broadcast(orgId, SessionEventType.QR_GENERATED, { sessionId, qrCode: qrDataUrl });
+          // Broadcast QR to WebSocket clients
+          await eventBus.publishToStream(STREAMS.SESSIONS, 'session:status', {
+            sessionId,
+            orgId,
+            status: 'qr_pending',
+            qrCode: qrDataUrl,
+          });
         } catch (error) {
           logger.error('Failed to generate QR data URL', {
             sessionId,
@@ -390,8 +396,13 @@ class SessionManager {
           phoneNumber: phoneNumber ? '[REDACTED]' : null,
         });
 
-        // TODO: Broadcast connection event
-        // eventBus.broadcast(orgId, SessionEventType.CONNECTED, { sessionId });
+        // Broadcast connection event
+        await eventBus.publishToStream(STREAMS.SESSIONS, 'session:status', {
+          sessionId,
+          orgId,
+          status: 'connected',
+          phoneNumber,
+        });
       }
 
       // Connection closed — determine if retryable or terminal
@@ -428,8 +439,12 @@ class SessionManager {
             statusCode,
           });
 
-          // TODO: Broadcast disconnection event
-          // eventBus.broadcast(orgId, SessionEventType.DISCONNECTED, { sessionId, reason });
+          // Broadcast disconnection event
+          await eventBus.publishToStream(STREAMS.SESSIONS, 'session:status', {
+            sessionId,
+            orgId,
+            status: terminalStatus,
+          });
         } else {
           // Retryable disconnection — attempt reconnection with backoff
           const active = this.activeSessions.get(sessionId);
@@ -507,8 +522,10 @@ class SessionManager {
         type,
       });
 
-      // TODO: Publish to message-inbound BullMQ queue
-      // eventBus.publishMessageInbound(sessionId, orgId, messages, type);
+      // Publish to message-inbound BullMQ queue
+      await eventBus.publishMessageInbound(sessionId, orgId, messages, type).catch((err) => {
+        logger.error('Failed to publish inbound messages', { sessionId, error: err.message });
+      });
     });
 
     // ── History Sync ──────────────────────────────────────────────────
@@ -524,8 +541,10 @@ class SessionManager {
         isLatest,
       });
 
-      // TODO: Publish to history sync BullMQ queue
-      // eventBus.publishHistorySync(sessionId, orgId, data);
+      // Publish to history sync BullMQ queue
+      await eventBus.publishHistorySync(sessionId, orgId, data).catch((err) => {
+        logger.error('Failed to publish history sync', { sessionId, error: err.message });
+      });
     });
 
     // ── Chat Events ───────────────────────────────────────────────────
@@ -536,8 +555,10 @@ class SessionManager {
         count: chats.length,
       });
 
-      // TODO: Publish to chat sync BullMQ queue
-      // eventBus.publishChatSync(sessionId, orgId, 'upsert', chats);
+      // Publish to chat sync BullMQ queue
+      await eventBus.publishChatSync(sessionId, orgId, chats, 'upsert').catch((err) => {
+        logger.error('Failed to publish chat upsert', { sessionId, error: err.message });
+      });
     });
 
     socket.ev.on('chats.update', async (updates) => {
@@ -546,8 +567,10 @@ class SessionManager {
         count: updates.length,
       });
 
-      // TODO: Publish to chat sync BullMQ queue
-      // eventBus.publishChatSync(sessionId, orgId, 'update', updates);
+      // Publish to chat sync BullMQ queue
+      await eventBus.publishChatSync(sessionId, orgId, updates, 'update').catch((err) => {
+        logger.error('Failed to publish chat update', { sessionId, error: err.message });
+      });
     });
 
     socket.ev.on('chats.delete', async (deletions) => {
@@ -556,8 +579,10 @@ class SessionManager {
         count: deletions.length,
       });
 
-      // TODO: Publish to chat sync BullMQ queue
-      // eventBus.publishChatSync(sessionId, orgId, 'delete', deletions);
+      // Publish to chat sync BullMQ queue
+      await eventBus.publishChatSync(sessionId, orgId, deletions, 'delete').catch((err) => {
+        logger.error('Failed to publish chat delete', { sessionId, error: err.message });
+      });
     });
 
     // ── Contact Events ────────────────────────────────────────────────
@@ -568,8 +593,10 @@ class SessionManager {
         count: contacts.length,
       });
 
-      // TODO: Publish to contact sync BullMQ queue
-      // eventBus.publishContactSync(sessionId, orgId, 'upsert', contacts);
+      // Publish to contact sync BullMQ queue
+      await eventBus.publishContactSync(sessionId, orgId, contacts).catch((err) => {
+        logger.error('Failed to publish contact upsert', { sessionId, error: err.message });
+      });
     });
 
     socket.ev.on('contacts.update', async (updates) => {
@@ -578,8 +605,10 @@ class SessionManager {
         count: updates.length,
       });
 
-      // TODO: Publish to contact sync BullMQ queue
-      // eventBus.publishContactSync(sessionId, orgId, 'update', updates);
+      // Publish to contact sync BullMQ queue
+      await eventBus.publishContactSync(sessionId, orgId, updates).catch((err) => {
+        logger.error('Failed to publish contact update', { sessionId, error: err.message });
+      });
     });
 
     // ── Presence Updates ──────────────────────────────────────────────
