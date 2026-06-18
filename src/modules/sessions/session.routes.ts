@@ -224,6 +224,56 @@ router.get('/:id/qr', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// ─── GET /:id/groups — Fetch all participating groups ────────────────────
+
+router.get('/:id/groups', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { orgId } = req.user!;
+    const sessionId = req.params.id as string;
+
+    // Validate session ownership
+    const session = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)))
+      .limit(1);
+
+    if (session.length === 0) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    const activeSession = sessionManager.getSession(sessionId);
+    if (!activeSession) {
+      res.status(400).json({ error: 'Session is not active or connected' });
+      return;
+    }
+
+    // Fetch groups from Baileys socket
+    const groupsDict = await activeSession.socket.groupFetchAllParticipating();
+    const groups = Object.values(groupsDict).map((g) => ({
+      id: g.id,
+      subject: g.subject,
+      owner: g.owner,
+      creation: g.creation,
+      desc: g.desc,
+      participantsCount: g.participants?.length || 0,
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: groups,
+    });
+  } catch (error) {
+    logger.error('Failed to fetch groups', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      sessionId: req.params.id,
+      orgId: req.user?.orgId,
+    });
+    res.status(500).json({ error: 'Failed to fetch groups from WhatsApp' });
+  }
+});
+
 // ─── POST /:id/restart — Restart a session ────────────────────────────────
 
 router.post('/:id/restart', async (req: Request, res: Response): Promise<void> => {

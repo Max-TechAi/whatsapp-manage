@@ -574,8 +574,31 @@
               <label>Message Text</label>
               <textarea id="msgBody" rows="4" placeholder="Hello from Antigravity WhatsApp API!" required></textarea>
             </div>
-            <button type="submit" class="btn">Send Message</button>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+              <button type="submit" class="btn">Send Message</button>
+              <button type="button" onclick="fetchGroups()" class="btn btn-secondary">👥 Load Groups</button>
+            </div>
           </form>
+
+          <!-- Group JID Viewer -->
+          <div id="groupsContainer" style="margin-top: 1.5rem; display: none; border-top: 1px solid var(--border-color); padding-top: 1.5rem;">
+            <div style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-main);">Participating Groups</div>
+            <div style="max-height: 250px; overflow-y: auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Group Name / Subject</th>
+                    <th>Group JID (ID)</th>
+                    <th>Participants</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="groupsTableBody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
         </div>
       </div>
 
@@ -956,6 +979,57 @@
       } catch (err) {
         logTerminal('MESSAGING_ERROR', err.message, 'var(--danger)');
       }
+    }
+
+    async function fetchGroups() {
+      const sessionId = document.getElementById('msgSessionSelect').value;
+      if (!sessionId) {
+        logTerminal('MESSAGING_ERROR', 'Please select a session first', 'var(--danger)');
+        return;
+      }
+
+      logTerminal('MESSAGING', `Fetching participating groups...`);
+      const container = document.getElementById('groupsContainer');
+      const tableBody = document.getElementById('groupsTableBody');
+      
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}/groups`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const resData = await response.json();
+
+        if (response.ok && resData.success) {
+          const groups = resData.data;
+          if (groups.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 1rem;">No groups found for this WhatsApp account.</td></tr>';
+          } else {
+            tableBody.innerHTML = groups.map(g => {
+              const safeSubject = (g.subject || 'Unnamed Group').replace(/'/g, "\\'");
+              return `
+                <tr>
+                  <td style="font-weight: 500;">${g.subject || '<i>Unnamed Group</i>'}</td>
+                  <td><code style="font-size: 0.85rem; color: var(--accent);">${g.id}</code></td>
+                  <td>${g.participantsCount}</td>
+                  <td>
+                    <button type="button" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem; margin: 0;" onclick="selectGroup('${g.id}', '${safeSubject}')">Select</button>
+                  </td>
+                </tr>
+              `;
+            }).join('');
+          }
+          container.style.display = 'block';
+          logTerminal('MESSAGING', `Loaded ${groups.length} groups successfully.`, 'var(--accent)');
+        } else {
+          logTerminal('MESSAGING_ERROR', resData.error || 'Failed to fetch groups', 'var(--danger)');
+        }
+      } catch (err) {
+        logTerminal('MESSAGING_ERROR', err.message, 'var(--danger)');
+      }
+    }
+
+    function selectGroup(jid, name) {
+      document.getElementById('msgRecipient').value = jid;
+      logTerminal('MESSAGING', `Selected Group: "${name}" (${jid})`, 'var(--accent)');
     }
 
     // WebSockets Handler
