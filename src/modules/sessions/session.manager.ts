@@ -987,10 +987,8 @@ export async function updateSyncProgress(
   // Update Postgres sessions.metadata atomically using JSONB merge to prevent concurrent race conditions (lost updates)
   if (orgId) {
     try {
-      const progressPayload = {
+      const basePayload = {
         syncStatus,
-        syncTotalMessages,
-        syncProcessedMessages,
         syncStartedAt,
         ...(syncStatus === 'completed' && { historySyncCompleted: true, historySyncCompletedAt: new Date().toISOString() }),
         ...(errorReason && { syncErrorReason: errorReason }),
@@ -999,7 +997,14 @@ export async function updateSyncProgress(
       await db
         .update(sessions)
         .set({
-          metadata: sql`COALESCE(sessions.metadata, '{}'::jsonb) || ${JSON.stringify(progressPayload)}::jsonb`,
+          metadata: sql`
+            COALESCE(sessions.metadata, '{}'::jsonb) || 
+            ${JSON.stringify(basePayload)}::jsonb || 
+            jsonb_build_object(
+              'syncTotalMessages', GREATEST(COALESCE((sessions.metadata->>'syncTotalMessages')::int, 0), ${syncTotalMessages}::int),
+              'syncProcessedMessages', GREATEST(COALESCE((sessions.metadata->>'syncProcessedMessages')::int, 0), ${syncProcessedMessages}::int)
+            )
+          `,
           updatedAt: new Date(),
         })
         .where(eq(sessions.id, sessionId));

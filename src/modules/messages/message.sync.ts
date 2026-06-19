@@ -69,16 +69,15 @@ export class MessageSyncService {
       isLatest: data.isLatest,
     });
 
-    // Track progress in Redis and DB
+    // Track progress in Redis and DB atomically to prevent race conditions from concurrent workers
     const progressKey = `sync:progress:${sessionId}`;
-    const currentProgress = await redis.hgetall(progressKey);
-    let totalMessages = data.messages.length;
-    let processedMessages = 0;
-
-    if (currentProgress && currentProgress.syncTotalMessages) {
-      totalMessages = (parseInt(currentProgress.syncTotalMessages) || 0) + data.messages.length;
-      processedMessages = parseInt(currentProgress.syncProcessedMessages) || 0;
-    }
+    
+    // Atomically increment the total messages expected in Redis
+    const totalMessages = await redis.hincrby(progressKey, 'syncTotalMessages', data.messages.length);
+    
+    // Get the current processed messages count from Redis (could be updated by other concurrent workers)
+    const processedMessagesVal = await redis.hget(progressKey, 'syncProcessedMessages');
+    const processedMessages = parseInt(processedMessagesVal || '0');
 
     await updateSyncProgress(sessionId, 'syncing', processedMessages, totalMessages);
 
@@ -279,16 +278,21 @@ export class MessageSyncService {
 
     const messageResult = await messageService.bulkInsert(orgId, messagesToInsert);
 
-    // Update progress
+    // Update progress atomically to avoid concurrent write race conditions (lost updates)
     // Include duplicates, errors, and skipped messages in processed count to align progress bar with totalMessages
-    processedMessages += messageResult.inserted + messageResult.duplicates + messageResult.errors + skippedMessagesCount;
+    const processedDelta = messageResult.inserted + messageResult.duplicates + messageResult.errors + skippedMessagesCount;
+    const finalProcessedMessages = await redis.hincrby(progressKey, 'syncProcessedMessages', processedDelta);
     
+    // Get the latest atomic total messages count to ensure alignment
+    const finalTotalMessagesVal = await redis.hget(progressKey, 'syncTotalMessages');
+    const finalTotalMessages = parseInt(finalTotalMessagesVal || '0') || totalMessages;
+
     const isCompleted = data.isLatest !== false && (data.syncType === undefined || data.syncType === null || data.syncType === 2 || data.syncType === 3);
     if (isCompleted) {
-      await updateSyncProgress(sessionId, 'completed', totalMessages, totalMessages);
+      await updateSyncProgress(sessionId, 'completed', finalTotalMessages, finalTotalMessages);
       sessionManager.clearSyncTimeout(sessionId);
       
-      // Mark history sync as completed in session metadata atomically using JSONB merge
+      // Mark history sync as completed in session metadata atomically using JSONB merge with GREATEST expression
       try {
         const completionPayload = {
           historySyncCompleted: true,
@@ -298,7 +302,14 @@ export class MessageSyncService {
         await db
           .update(sessions)
           .set({
-            metadata: sql`COALESCE(sessions.metadata, '{}'::jsonb) || ${JSON.stringify(completionPayload)}::jsonb`,
+            metadata: sql`
+              COALESCE(sessions.metadata, '{}'::jsonb) || 
+              ${JSON.stringify(completionPayload)}::jsonb || 
+              jsonb_build_object(
+                'syncTotalMessages', GREATEST(COALESCE((sessions.metadata->>'syncTotalMessages')::int, 0), ${finalTotalMessages}::int),
+                'syncProcessedMessages', GREATEST(COALESCE((sessions.metadata->>'syncProcessedMessages')::int, 0), ${finalTotalMessages}::int)
+              )
+            `,
             updatedAt: new Date(),
           })
           .where(eq(sessions.id, sessionId));
@@ -308,7 +319,7 @@ export class MessageSyncService {
       }
     } else {
       // Just update the processed messages count
-      await updateSyncProgress(sessionId, 'syncing', processedMessages, totalMessages);
+      await updateSyncProgress(sessionId, 'syncing', finalProcessedMessages, finalTotalMessages);
       // Reset inactivity timeout since we got progress
       sessionManager.resetSyncTimeout(sessionId, orgId);
     }
