@@ -768,6 +768,7 @@ function handleWsEvent(data) {
   // Sync event handlers
   if (activeSessionId === sessionId) {
     if (type === 'sync:progress') {
+      if (isHistorySyncCompleted) return; // Prevent overlay from popping back up if sync already completed!
       const { syncProcessedMessages, syncTotalMessages, syncStatus } = data;
       showSyncOverlay(syncStatus, syncProcessedMessages, syncTotalMessages);
       return;

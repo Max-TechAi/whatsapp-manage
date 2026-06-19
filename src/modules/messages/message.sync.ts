@@ -277,30 +277,23 @@ export class MessageSyncService {
       await updateSyncProgress(sessionId, 'completed', totalMessages, totalMessages);
       sessionManager.clearSyncTimeout(sessionId);
       
-      // Mark history sync as completed in session metadata
+      // Mark history sync as completed in session metadata atomically using JSONB merge
       try {
-        const [sessionRecord] = await db
-          .select({ metadata: sessions.metadata })
-          .from(sessions)
-          .where(eq(sessions.id, sessionId))
-          .limit(1);
-        
-        const currentMetadata = (sessionRecord?.metadata || {}) as Record<string, any>;
+        const completionPayload = {
+          historySyncCompleted: true,
+          historySyncCompletedAt: new Date().toISOString(),
+          syncStatus: 'completed',
+        };
         await db
           .update(sessions)
           .set({
-            metadata: {
-              ...currentMetadata,
-              historySyncCompleted: true,
-              historySyncCompletedAt: new Date().toISOString(),
-              syncStatus: 'completed',
-            },
+            metadata: sql`COALESCE(sessions.metadata, '{}'::jsonb) || ${JSON.stringify(completionPayload)}::jsonb`,
             updatedAt: new Date(),
           })
           .where(eq(sessions.id, sessionId));
-        logger.info('Marked history sync as completed in session metadata', { sessionId });
+        logger.info('Marked history sync as completed atomically in session metadata', { sessionId });
       } catch (err) {
-        logger.error('Failed to update session metadata for history sync completion', { sessionId, error: (err as Error).message });
+        logger.error('Failed to update session metadata atomically for history sync completion', { sessionId, error: (err as Error).message });
       }
     } else {
       // Just update the processed messages count

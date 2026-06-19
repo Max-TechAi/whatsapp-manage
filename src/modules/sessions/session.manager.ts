@@ -20,7 +20,7 @@ import type { WASocket, BaileysEventMap, WAMessage } from '@whiskeysockets/baile
 import * as QRCode from 'qrcode';
 import pino from 'pino';
 import { v4 as uuidv4 } from 'uuid';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { Boom } from '@hapi/boom';
 
 import { db } from '../../config/database.js';
@@ -960,18 +960,10 @@ export async function updateSyncProgress(
     orgId = sessionRecord?.orgId;
   }
 
-  // Update Postgres sessions.metadata
+  // Update Postgres sessions.metadata atomically using JSONB merge to prevent concurrent race conditions (lost updates)
   if (orgId) {
     try {
-      const [sessionRecord] = await db
-        .select({ metadata: sessions.metadata })
-        .from(sessions)
-        .where(eq(sessions.id, sessionId))
-        .limit(1);
-      
-      const currentMetadata = (sessionRecord?.metadata || {}) as Record<string, any>;
-      const updatedMetadata = {
-        ...currentMetadata,
+      const progressPayload = {
         syncStatus,
         syncTotalMessages,
         syncProcessedMessages,
@@ -983,12 +975,12 @@ export async function updateSyncProgress(
       await db
         .update(sessions)
         .set({
-          metadata: updatedMetadata,
+          metadata: sql`COALESCE(sessions.metadata, '{}'::jsonb) || ${JSON.stringify(progressPayload)}::jsonb`,
           updatedAt: new Date(),
         })
         .where(eq(sessions.id, sessionId));
     } catch (err) {
-      logger.error('Failed to update session metadata in updateSyncProgress', { sessionId, error: (err as Error).message });
+      logger.error('Failed to update session metadata atomically in updateSyncProgress', { sessionId, error: (err as Error).message });
     }
   }
 
