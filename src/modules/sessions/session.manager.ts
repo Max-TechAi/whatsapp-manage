@@ -928,15 +928,15 @@ class SessionManager {
           return;
         }
 
-        logger.error('Initial history sync timed out (no progress for 5 minutes)', { sessionId });
+        logger.error('Initial history sync timed out (no progress for 2 minutes)', { sessionId });
         await updateSyncProgress(sessionId, 'failed', 0, 0, 'Sync timed out due to inactivity');
       } catch (err) {
         logger.error('Failed to handle sync timeout', { sessionId, error: (err as Error).message });
       }
-    }, 5 * 60 * 1000); // 5 minutes
+    }, 2 * 60 * 1000); // 2 minutes
 
     this.syncTimeouts.set(sessionId, timeout);
-    logger.info('Set/reset initial sync timeout (5 minutes)', { sessionId });
+    logger.info('Set/reset initial sync timeout (2 minutes)', { sessionId });
   }
 }
 
