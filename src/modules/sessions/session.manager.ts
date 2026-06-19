@@ -661,11 +661,11 @@ class SessionManager {
     socket.ev.on('messaging-history.set', async (data) => {
       const { chats, contacts, messages, isLatest } = data;
 
+      const active = this.getSession(sessionId);
+      const isInitial = active?.isInitialSyncConnection ?? false;
+
       // 1. Skip if already completed in DB AND this connection is not the initial sync connection
       try {
-        const active = this.getSession(sessionId);
-        const isInitial = active?.isInitialSyncConnection;
-
         const [sessionRecord] = await db
           .select({ metadata: sessions.metadata })
           .from(sessions)
@@ -681,20 +681,21 @@ class SessionManager {
       }
 
       // 2. Redis circuit breaker: max 100 history sync events per 10 minutes per session
-      try {
-        const rateLimitKey = `sync:limit:${sessionId}`;
-        const syncCount = await redis.incr(rateLimitKey);
-        if (syncCount === 1) {
-          await redis.expire(rateLimitKey, 600); // 10 minutes
+      if (!isInitial) {
+        try {
+          const rateLimitKey = `sync:limit:${sessionId}`;
+          const syncCount = await redis.incr(rateLimitKey);
+          if (syncCount === 1) {
+            await redis.expire(rateLimitKey, 600); // 10 minutes
+          }
+          const limit = 100;
+          if (syncCount > limit) {
+            logger.warn('History sync rate-limit exceeded (circuit breaker triggered)', { sessionId, syncCount, limit });
+            return;
+          }
+        } catch (err) {
+          logger.error('Error applying history sync rate limit', { sessionId, error: (err as Error).message });
         }
-        // Raised limit to 100 for the initial sync window since a large account can emit many sync batches
-        const limit = 100;
-        if (syncCount > limit) {
-          logger.warn('History sync rate-limit exceeded (circuit breaker triggered)', { sessionId, syncCount, limit });
-          return;
-        }
-      } catch (err) {
-        logger.error('Error applying history sync rate limit', { sessionId, error: (err as Error).message });
       }
 
       logger.info('History sync received', {
