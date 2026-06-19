@@ -283,7 +283,7 @@ export class MessageSyncService {
     // Include duplicates, errors, and skipped messages in processed count to align progress bar with totalMessages
     processedMessages += messageResult.inserted + messageResult.duplicates + messageResult.errors + skippedMessagesCount;
     
-    const isCompleted = data.isLatest !== false; // default to true if not specified
+    const isCompleted = data.isLatest !== false && (data.syncType === undefined || data.syncType === null || data.syncType === 2 || data.syncType === 3);
     if (isCompleted) {
       await updateSyncProgress(sessionId, 'completed', totalMessages, totalMessages);
       sessionManager.clearSyncTimeout(sessionId);

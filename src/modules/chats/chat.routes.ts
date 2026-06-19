@@ -10,7 +10,7 @@ import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
 import { messages } from '../../db/schema.js';
 import { sessionManager } from '../sessions/session.manager.js';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, and } from 'drizzle-orm';
 
 export const chatRouter = Router();
 
@@ -118,24 +118,28 @@ chatRouter.post('/:id/read', async (req, res) => {
         logger.warn('Skipping marking chat as read on WhatsApp server because JID is an unresolved LID', { chatId, waChatId: chat.waChatId });
       } else {
         try {
-          // Fetch the last message to pass to chatModify/readMessages
-          const [lastMsg] = await db
+          // Fetch the last inbound message to pass to chatModify/readMessages
+          const [lastInboundMsg] = await db
             .select({
               waMessageId: messages.waMessageId,
-              fromMe: messages.fromMe,
               createdAt: messages.createdAt,
             })
             .from(messages)
-            .where(eq(messages.chatId, chatId))
+            .where(
+              and(
+                eq(messages.chatId, chatId),
+                eq(messages.fromMe, false)
+              )
+            )
             .orderBy(desc(messages.createdAt), desc(messages.id))
             .limit(1);
 
-          if (lastMsg) {
-            // Mark the last message as read
+          if (lastInboundMsg) {
+            // Mark the last inbound message as read
             await session.socket.readMessages([{
               remoteJid: chat.waChatId,
-              id: lastMsg.waMessageId,
-              fromMe: lastMsg.fromMe,
+              id: lastInboundMsg.waMessageId,
+              fromMe: false,
             }]);
             
             // Also modify the chat to mark as read
@@ -144,20 +148,16 @@ chatRouter.post('/:id/read', async (req, res) => {
               lastMessages: [{
                 key: {
                   remoteJid: chat.waChatId,
-                  id: lastMsg.waMessageId,
-                  fromMe: lastMsg.fromMe,
+                  id: lastInboundMsg.waMessageId,
+                  fromMe: false,
                 },
-                messageTimestamp: Math.floor(lastMsg.createdAt.getTime() / 1000),
+                messageTimestamp: Math.floor(lastInboundMsg.createdAt.getTime() / 1000),
               }],
             }, chat.waChatId);
+            logger.info('Marked chat as read on WhatsApp', { chatId, waChatId: chat.waChatId });
           } else {
-            // If no messages exist yet in database, try simple markRead
-            await session.socket.chatModify({
-              markRead: true,
-              lastMessages: [],
-            }, chat.waChatId);
+            logger.info('No inbound messages to mark as read on WhatsApp server', { chatId, waChatId: chat.waChatId });
           }
-          logger.info('Marked chat as read on WhatsApp', { chatId, waChatId: chat.waChatId });
         } catch (err) {
           logger.warn('Failed to mark chat as read on WhatsApp phone', {
             chatId,
