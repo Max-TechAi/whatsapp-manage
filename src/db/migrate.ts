@@ -137,6 +137,11 @@ const SQL_ON_NEW_MESSAGE = `
 CREATE OR REPLACE FUNCTION on_new_message()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- Skip if this is a bulk history sync insert to prevent database lock contention and pg_notify event storms
+  IF current_setting('app.is_history_sync', true) = 'true' THEN
+    RETURN NEW;
+  END IF;
+
   -- Update chat denormalized fields
   UPDATE chats SET
     last_message_preview = LEFT(NEW.content, 200),

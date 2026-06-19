@@ -112,27 +112,32 @@ export class MessageService {
     for (let i = 0; i < messageList.length; i += batchSize) {
       const batch = messageList.slice(i, i + batchSize);
       try {
-        const result = await db
-          .insert(messages)
-          .values(
-            batch.map((msg) => ({
-              orgId,
-              sessionId: msg.sessionId,
-              chatId: msg.chatId,
-              waMessageId: msg.waMessageId,
-              senderJid: msg.senderJid,
-              fromMe: msg.fromMe,
-              messageType: msg.messageType,
-              content: msg.content,
-              status: msg.status ?? 'sent',
-              metadata: msg.metadata ?? {},
-              createdAt: msg.createdAt ?? new Date(),
-            }))
-          )
-          .onConflictDoNothing({
-            target: [messages.sessionId, messages.waMessageId],
-          })
-          .returning({ id: messages.id });
+        const result = await db.transaction(async (tx) => {
+          // Set local setting to bypass the on_new_message trigger logic (skip update chats and pg_notify storms)
+          await tx.execute(sql`SET LOCAL app.is_history_sync = 'true'`);
+          
+          return tx
+            .insert(messages)
+            .values(
+              batch.map((msg) => ({
+                orgId,
+                sessionId: msg.sessionId,
+                chatId: msg.chatId,
+                waMessageId: msg.waMessageId,
+                senderJid: msg.senderJid,
+                fromMe: msg.fromMe,
+                messageType: msg.messageType,
+                content: msg.content,
+                status: msg.status ?? 'sent',
+                metadata: msg.metadata ?? {},
+                createdAt: msg.createdAt ?? new Date(),
+              }))
+            )
+            .onConflictDoNothing({
+              target: [messages.sessionId, messages.waMessageId],
+            })
+            .returning({ id: messages.id });
+        });
 
         inserted += result.length;
       } catch (err) {
