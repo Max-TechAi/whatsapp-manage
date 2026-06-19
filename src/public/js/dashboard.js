@@ -324,9 +324,10 @@ function renderChatsList(chatList) {
       const avatarIcon = c.chatType === 'group' ? '👥' : '👤';
       const lastMsg = c.lastMessagePreview || '<i>No messages</i>';
       const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
-      // BUG 3: Render unread badge only when unreadCount > 0
+      
+      /* BUG 2: Show simple dot indicator for chats with genuinely unread messages, no numeric count */
       const hasUnread = typeof c.unreadCount !== 'undefined' && c.unreadCount !== null && Number(c.unreadCount) > 0;
-      const unread = hasUnread ? `<span class="chat-badge">${c.unreadCount}</span>` : '';
+      const unread = hasUnread ? `<span class="chat-badge-dot" title="${c.unreadCount} unread messages"></span>` : '';
       
       // Fallback phone number formatted with '+'
       const displayName = formatPhoneNumberFallback(c.name || c.waChatId.split('@')[0]);
@@ -755,9 +756,15 @@ function handleWsEvent(data) {
 
     if (activeSessionId === sessionId && msgChatId) {
       // In-memory array update for instant chat list updates & sorting
-      const chatObj = chats.find(c => c.id === msgChatId);
+      const chatObj = chats.find(c => c.id === msgChatId || c.waChatId === msgChatId);
       if (chatObj) {
         chatObj.lastMessageAt = data.createdAt || new Date().toISOString();
+        if (data.message?.content) {
+          chatObj.lastMessagePreview = data.message.content;
+        } else if (data.content) {
+          chatObj.lastMessagePreview = data.content;
+        }
+        
         if (data.fromMe === false && activeChatDbId !== msgChatId) {
           chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
         }
@@ -772,6 +779,22 @@ function handleWsEvent(data) {
         loadMessages(activeChatDbId);
         markChatAsRead(activeChatDbId);
       }
+    }
+  }
+
+  /* BUG 3: Handle in-memory updating, sorting, and re-rendering on chat updates (e.g. from Baileys) */
+  if (type === 'chat:update' || type === 'chat:updated') {
+    const updatedChat = data.chat;
+    if (activeSessionId === sessionId && updatedChat) {
+      const index = chats.findIndex(c => c.id === updatedChat.id || c.waChatId === updatedChat.waChatId);
+      if (index !== -1) {
+        // Merge updated properties
+        chats[index] = { ...chats[index], ...updatedChat };
+      } else {
+        // Insert new chat if it doesn't exist locally
+        chats.push(updatedChat);
+      }
+      renderChatsList(chats);
     }
   }
 

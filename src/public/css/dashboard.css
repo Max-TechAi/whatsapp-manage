@@ -355,6 +355,17 @@ body {
   border-radius: 10px;
 }
 
+/* BUG 2: Simple dot badge instead of numeric count */
+.chat-badge-dot {
+  background-color: var(--accent-green);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 /* Center Pane: Active chat screen */
 .active-chat-pane {
   flex: 1;

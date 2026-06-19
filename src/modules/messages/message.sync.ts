@@ -12,6 +12,7 @@ import { chatService } from '../chats/chat.service.js';
 import { contactService } from '../contacts/contact.service.js';
 import { logger } from '../../observability/logger.js';
 import { normalizeJid } from '../sessions/session.events.js';
+import { saveLidMapping, resolveLidJid } from '../sessions/lid-mapping.js';
 import type { BulkInsertResult } from './message.types.js';
 
 /** Redis key for tracking sync progress per session */
@@ -50,6 +51,10 @@ export class MessageSyncService {
         pushName?: string;
         status?: number;
       }>;
+      lidPnMappings?: Array<{
+        pn: string;
+        lid: string;
+      }>;
       syncType: number;
     }
   ): Promise<{ chats: number; contacts: number; messages: BulkInsertResult }> {
@@ -70,15 +75,33 @@ export class MessageSyncService {
       totalMessages: data.messages.length,
     });
 
+    /* BUG 1: Save LID-to-Phone JID mappings first so they are available when processing chats/messages */
+    if (data.lidPnMappings && Array.isArray(data.lidPnMappings)) {
+      logger.info('Saving history sync LID mappings', { sessionId, count: data.lidPnMappings.length });
+      for (const mapping of data.lidPnMappings) {
+        if (mapping.lid && mapping.pn) {
+          await saveLidMapping(sessionId, mapping.lid, mapping.pn);
+        }
+      }
+    }
+
     // 1. Sync chats first (messages reference them)
     let chatsSynced = 0;
     for (const chat of data.chats) {
       try {
+        const resolvedChatJid = await resolveLidJid(sessionId, chat.id);
+        const normalizedChatJid = normalizeJid(resolvedChatJid);
+
+        // Skip status and broadcast chats
+        if (normalizedChatJid.endsWith('@broadcast') || normalizedChatJid === 'status') {
+          continue;
+        }
+
         const result = await chatService.upsertChat({
           orgId,
           sessionId,
-          waChatId: chat.id,
-          chatType: chat.id.endsWith('@g.us') ? 'group' : 'private',
+          waChatId: normalizedChatJid,
+          chatType: normalizedChatJid.endsWith('@g.us') ? 'group' : 'private',
           name: chat.name ?? null,
           unreadCount: chat.unreadCount ?? 0,
           isArchived: chat.archived ?? false,
@@ -102,10 +125,13 @@ export class MessageSyncService {
     let contactsSynced = 0;
     for (const contact of data.contacts) {
       try {
+        const resolvedWaId = await resolveLidJid(sessionId, contact.id);
+        const normalizedWaId = normalizeJid(resolvedWaId);
+
         await contactService.upsertContact({
           orgId,
           sessionId,
-          waId: contact.id,
+          waId: normalizedWaId,
           pushName: contact.notify ?? null,
           displayName: contact.name ?? null,
           avatarUrl: contact.imgUrl ?? null,
@@ -122,17 +148,26 @@ export class MessageSyncService {
 
     for (const msg of data.messages) {
       if (!msg.key?.remoteJid || !msg.key?.id) continue;
-      // Skip status and broadcast messages
-      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
 
-      const senderJid = msg.key.fromMe
+      const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
+      const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
+
+      // Skip status and broadcast messages
+      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+
+      const rawSender = msg.key.fromMe
         ? 'me'
         : msg.key.participant || msg.key.remoteJid;
       
+      let senderJid = 'me';
+      if (rawSender !== 'me') {
+        const resolvedSender = await resolveLidJid(sessionId, rawSender);
+        senderJid = normalizeJid(resolvedSender);
+      }
+      
       if (senderJid && senderJid !== 'me') {
-        const normalized = normalizeJid(senderJid);
-        if (!jidToPushNameMap.has(normalized)) {
-          jidToPushNameMap.set(normalized, msg.pushName ?? null);
+        if (!jidToPushNameMap.has(senderJid)) {
+          jidToPushNameMap.set(senderJid, msg.pushName ?? null);
         }
       }
 
@@ -146,7 +181,8 @@ export class MessageSyncService {
       const mentionedJids = contextInfo?.mentionedJid || [];
       for (const jid of mentionedJids) {
         if (jid) {
-          mentionedJidsSet.add(normalizeJid(jid));
+          const resolvedMention = await resolveLidJid(sessionId, jid);
+          mentionedJidsSet.add(normalizeJid(resolvedMention));
         }
       }
     }
@@ -182,10 +218,14 @@ export class MessageSyncService {
     const messagesToInsert = [];
     for (const msg of data.messages) {
       if (!msg.key?.remoteJid || !msg.key?.id) continue;
-      // Skip status and broadcast messages
-      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
 
-      const chatId = await chatService.ensureChatExists(orgId, sessionId, msg.key.remoteJid);
+      const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
+      const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
+
+      // Skip status and broadcast messages
+      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+
+      const chatId = await chatService.ensureChatExists(orgId, sessionId, normalizedRemoteJid);
       if (!chatId) continue;
 
       const { type, content } = extractSyncMessageContent(msg.message);
@@ -193,13 +233,21 @@ export class MessageSyncService {
         ? new Date(Number(msg.messageTimestamp) * 1000)
         : new Date();
 
+      const rawSender = msg.key.fromMe
+        ? 'me'
+        : msg.key.participant || msg.key.remoteJid;
+      
+      let senderJid = 'me';
+      if (rawSender !== 'me') {
+        const resolvedSender = await resolveLidJid(sessionId, rawSender);
+        senderJid = normalizeJid(resolvedSender);
+      }
+
       messagesToInsert.push({
         sessionId,
         chatId,
         waMessageId: msg.key.id,
-        senderJid: msg.key.fromMe
-          ? 'me'
-          : msg.key.participant || msg.key.remoteJid,
+        senderJid,
         fromMe: msg.key.fromMe ?? false,
         messageType: type,
         content,
@@ -257,17 +305,26 @@ export class MessageSyncService {
 
     for (const msg of messageList) {
       if (!msg.key?.remoteJid || !msg.key?.id) continue;
-      // Skip status and broadcast messages
-      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
 
-      const senderJid = msg.key.fromMe
+      const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
+      const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
+
+      // Skip status and broadcast messages
+      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+
+      const rawSender = msg.key.fromMe
         ? 'me'
         : msg.key.participant || msg.key.remoteJid;
       
+      let senderJid = 'me';
+      if (rawSender !== 'me') {
+        const resolvedSender = await resolveLidJid(sessionId, rawSender);
+        senderJid = normalizeJid(resolvedSender);
+      }
+      
       if (senderJid && senderJid !== 'me') {
-        const normalized = normalizeJid(senderJid);
-        if (!jidToPushNameMap.has(normalized)) {
-          jidToPushNameMap.set(normalized, msg.pushName ?? null);
+        if (!jidToPushNameMap.has(senderJid)) {
+          jidToPushNameMap.set(senderJid, msg.pushName ?? null);
         }
       }
 
@@ -281,7 +338,8 @@ export class MessageSyncService {
       const mentionedJids = contextInfo?.mentionedJid || [];
       for (const jid of mentionedJids) {
         if (jid) {
-          mentionedJidsSet.add(normalizeJid(jid));
+          const resolvedMention = await resolveLidJid(sessionId, jid);
+          mentionedJidsSet.add(normalizeJid(resolvedMention));
         }
       }
     }
@@ -315,10 +373,14 @@ export class MessageSyncService {
 
     for (const msg of messageList) {
       if (!msg.key?.remoteJid || !msg.key?.id) continue;
-      // Skip status and broadcast messages
-      if (msg.key.remoteJid.endsWith('@broadcast') || msg.key.remoteJid === 'status') continue;
 
-      const chatId = await chatService.ensureChatExists(orgId, sessionId, msg.key.remoteJid);
+      const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
+      const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
+
+      // Skip status and broadcast messages
+      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+
+      const chatId = await chatService.ensureChatExists(orgId, sessionId, normalizedRemoteJid);
       if (!chatId) continue;
 
       const { type, content } = extractSyncMessageContent(msg.message);
@@ -326,13 +388,21 @@ export class MessageSyncService {
         ? new Date(Number(msg.messageTimestamp) * 1000)
         : new Date();
 
+      const rawSender = msg.key.fromMe
+        ? 'me'
+        : msg.key.participant || msg.key.remoteJid;
+      
+      let senderJid = 'me';
+      if (rawSender !== 'me') {
+        const resolvedSender = await resolveLidJid(sessionId, rawSender);
+        senderJid = normalizeJid(resolvedSender);
+      }
+
       messagesToInsert.push({
         sessionId,
         chatId,
         waMessageId: msg.key.id,
-        senderJid: msg.key.fromMe
-          ? 'me'
-          : msg.key.participant || msg.key.remoteJid,
+        senderJid,
         fromMe: msg.key.fromMe ?? false,
         messageType: type,
         content,

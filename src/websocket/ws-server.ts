@@ -303,8 +303,8 @@ export class WsServer {
           try {
             const data = JSON.parse(msg.payload);
             // Broadcast to org and chat channels
-            if (data.session_id) {
-              this.broadcastToChannel(`session:${data.session_id}`, {
+            if (data.sessionId) {
+              this.broadcastToChannel(`session:${data.sessionId}`, {
                 type: 'message:new:notify',
                 ...data,
               });

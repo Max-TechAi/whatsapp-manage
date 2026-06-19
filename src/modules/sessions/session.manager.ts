@@ -30,6 +30,7 @@ import { logger } from '../../observability/logger.js';
 import { usePostgresAuthState } from './session.auth-state.js';
 import { SessionEventType, normalizeJid } from './session.events.js';
 import type { ActiveSession, SessionStatus, WhatsAppSession } from './session.types.js';
+import { saveLidMapping } from './lid-mapping.js';
 import { eventBus, STREAMS } from '../../events/event-bus.js';
 
 /** Maximum number of reconnection attempts before giving up */
@@ -609,6 +610,19 @@ class SessionManager {
       await eventBus.publishContactSync(sessionId, orgId, updates).catch((err) => {
         logger.error('Failed to publish contact update', { sessionId, error: err.message });
       });
+    });
+
+    /* BUG 1: Listen to dynamic LID-to-Phone JID mappings as they are discovered */
+    socket.ev.on('lid-mapping.update', async (mapping) => {
+      const { lid, pn } = mapping;
+      logger.debug('LID mapping update event received', { sessionId, lid, pn });
+      if (lid && pn) {
+        try {
+          await saveLidMapping(sessionId, lid, pn);
+        } catch (err) {
+          logger.error('Failed to save dynamic LID mapping in event listener', { sessionId, error: (err as Error).message });
+        }
+      }
     });
 
     // ── Presence Updates ──────────────────────────────────────────────

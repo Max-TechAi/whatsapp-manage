@@ -7,8 +7,11 @@ import { workerRedis } from '../../config/redis.js';
 import { messageSyncService } from '../../modules/messages/message.sync.js';
 import { contactService } from '../../modules/contacts/contact.service.js';
 import { chatService } from '../../modules/chats/chat.service.js';
-import { QUEUES } from '../event-bus.js';
+import { QUEUES, eventBus, STREAMS } from '../event-bus.js';
 import { logger } from '../../observability/logger.js';
+
+import { saveLidMapping, resolveLidJid } from '../../modules/sessions/lid-mapping.js';
+import type { Contact } from '../../modules/contacts/contact.types.js';
 
 interface HistorySyncJob {
   sessionId: string;
@@ -73,10 +76,24 @@ export function createContactSyncWorker(): Worker {
       let synced = 0;
       for (const contact of contactList) {
         try {
+          const waId = contact.id ?? contact.waId;
+          const lid = contact.lid;
+          
+          if (waId && waId.endsWith('@s.whatsapp.net') && lid && lid.endsWith('@lid')) {
+            await saveLidMapping(sessionId, lid, waId);
+          } else if (waId && waId.endsWith('@lid')) {
+            const phoneJid = contact.phoneNumber ?? contact.phone;
+            if (phoneJid && phoneJid.endsWith('@s.whatsapp.net')) {
+              await saveLidMapping(sessionId, waId, phoneJid);
+            }
+          }
+
+          const resolvedWaId = await resolveLidJid(sessionId, waId);
+
           await contactService.upsertContact({
             orgId,
             sessionId,
-            waId: contact.id ?? contact.waId,
+            waId: resolvedWaId,
             pushName: contact.notify ?? contact.pushName ?? null,
             displayName: contact.name ?? contact.displayName ?? null,
             avatarUrl: contact.imgUrl ?? contact.avatarUrl ?? null,
@@ -121,7 +138,7 @@ export function createChatSyncWorker(): Worker {
             // Find and soft-handle deletion
             logger.info('Chat deletion event', { sessionId, chatId: chat.id });
           } else {
-            await chatService.upsertChat({
+            const dbChat = await chatService.upsertChat({
               orgId,
               sessionId,
               waChatId: chat.id ?? chat.waChatId,
@@ -135,6 +152,17 @@ export function createChatSyncWorker(): Worker {
                 ? new Date(Number(chat.conversationTimestamp) * 1000)
                 : undefined,
             });
+
+            /* BUG 3: Broadcast chat update event via Redis stream / WebSockets */
+            if (dbChat) {
+              await eventBus.publishToStream(STREAMS.CHATS, 'chat:update', {
+                sessionId,
+                orgId,
+                chat: dbChat,
+              }).catch(err => {
+                logger.error('Failed to publish chat update to stream', { sessionId, error: err.message });
+              });
+            }
             processed++;
           }
         } catch (err) {

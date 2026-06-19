@@ -101,6 +101,47 @@ messageRouter.get('/chats/:chatId/messages', async (req, res) => {
 
     const result = await messageService.getMessages(orgId, chatId, { cursor, limit });
 
+    /* BUG 1: If no messages exist in local DB but the chat has activity (unreadCount > 0 or lastMessageAt), trigger an on-demand history sync from the phone */
+    if (result.messages.length === 0 && !cursorParam) {
+      const chat = await chatService.getChatById(orgId, chatId);
+      if (chat && (chat.unreadCount > 0 || chat.lastMessageAt)) {
+        logger.info('Triggering on-demand history fetch for empty chat with activity', {
+          chatId,
+          waChatId: chat.waChatId,
+          unreadCount: chat.unreadCount,
+          lastMessageAt: chat.lastMessageAt,
+        });
+
+        const session = sessionManager.getSession(chat.sessionId);
+        if (session && session.socket) {
+          const oldestMsgKey = {
+            remoteJid: chat.waChatId,
+            fromMe: false,
+            id: 'ON_DEMAND_SYNC_' + Math.random().toString(36).substring(2, 15).toUpperCase(),
+          };
+          const oldestMsgTimestamp = chat.lastMessageAt 
+            ? chat.lastMessageAt.getTime() 
+            : Date.now();
+
+          session.socket.fetchMessageHistory(50, oldestMsgKey, oldestMsgTimestamp)
+            .then((msgId) => {
+              logger.info('Requested on-demand history sync from phone', {
+                chatId,
+                waChatId: chat.waChatId,
+                msgId,
+              });
+            })
+            .catch((err) => {
+              logger.error('Failed to request on-demand history sync', {
+                chatId,
+                waChatId: chat.waChatId,
+                error: err.message,
+              });
+            });
+        }
+      }
+    }
+
     // Encode cursor for client
     const encodedCursor = result.nextCursor
       ? Buffer.from(JSON.stringify(result.nextCursor)).toString('base64url')

@@ -10,6 +10,7 @@ import { chatService } from '../../modules/chats/chat.service.js';
 import { contactService } from '../../modules/contacts/contact.service.js';
 import { eventBus, QUEUES, STREAMS } from '../event-bus.js';
 import { extractMessageContent, getJidType, normalizeJid } from '../../modules/sessions/session.events.js';
+import { resolveLidJid } from '../../modules/sessions/lid-mapping.js';
 import { logger } from '../../observability/logger.js';
 
 interface InboundMessageJob {
@@ -31,7 +32,8 @@ export function createMessageWorker(): Worker {
         return;
       }
 
-      const remoteJid = normalizeJid(waMessage.key.remoteJid);
+      const resolvedRemoteJid = await resolveLidJid(sessionId, waMessage.key.remoteJid);
+      const remoteJid = normalizeJid(resolvedRemoteJid);
       const waMessageId = waMessage.key.id;
 
       // Ensure the chat exists (create if needed)
@@ -59,9 +61,11 @@ export function createMessageWorker(): Worker {
         : new Date();
 
       // Determine sender
+      const rawSender = waMessage.key.participant || waMessage.key.remoteJid;
+      const resolvedSender = await resolveLidJid(sessionId, rawSender);
       const senderJid = waMessage.key.fromMe
         ? 'me'
-        : normalizeJid(waMessage.key.participant || waMessage.key.remoteJid);
+        : normalizeJid(resolvedSender);
 
       // Ensure sender contact is updated in database (saved name/pushname resolution)
       if (!waMessage.key.fromMe && senderJid !== 'me') {
@@ -81,7 +85,8 @@ export function createMessageWorker(): Worker {
       const mentionedJids = contextInfo?.mentionedJid || [];
       for (const jid of mentionedJids) {
         if (jid) {
-          const normalized = normalizeJid(jid);
+          const resolvedJid = await resolveLidJid(sessionId, jid);
+          const normalized = normalizeJid(resolvedJid);
           try {
             await contactService.upsertContact({
               orgId,
