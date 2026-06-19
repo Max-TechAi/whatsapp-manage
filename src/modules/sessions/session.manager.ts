@@ -916,7 +916,7 @@ class SessionManager {
         const finalProcessed = Math.max(dbProcessed, redisProcessed);
         const finalTotal = Math.max(dbTotal, redisTotal);
 
-        if (finalTotal > 0 && finalProcessed >= finalTotal) {
+        if (finalProcessed >= finalTotal) {
           logger.info('Initial history sync inactivity timeout triggered, but marking completed because all expected messages were processed', { 
             sessionId, 
             processed: finalProcessed, 
