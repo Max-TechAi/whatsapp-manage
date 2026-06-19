@@ -502,7 +502,17 @@ function renderMessages(msgList) {
               bodyHtml = `<div class="media-container"><a href="${mediaUrl}" target="_blank" class="chat-document" style="display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; color: #4fc3f7; font-weight: 500; margin-top: 5px;">📄 Download ${escapeHtml(m.content || 'Document')}</a></div>`;
             }
           } else {
-            bodyHtml = `<div style="font-style: italic; color: var(--text-muted); padding: 0.25rem 0;">⏳ Media is downloading...</div>`;
+            const isOld = (Date.now() - new Date(m.createdAt).getTime()) > 60000; // 1 minute
+            if (isOld) {
+              bodyHtml = `
+                <div class="media-download-container" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0;">
+                  <span style="color: var(--text-muted); font-style: italic; font-size: 0.85rem;">⏳ Media not downloaded</span>
+                  <button onclick="retryMediaDownload(event, '${m.id}')" class="media-retry-btn" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: var(--text-normal); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer; outline: none; transition: background 0.2s;">Download</button>
+                </div>
+              `;
+            } else {
+              bodyHtml = `<div style="font-style: italic; color: var(--text-muted); padding: 0.25rem 0;">⏳ Media is downloading...</div>`;
+            }
           }
         } else {
           bodyHtml = formatMessageContent(m.content || '');
