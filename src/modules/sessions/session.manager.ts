@@ -886,11 +886,24 @@ class SessionManager {
     this.clearSyncTimeout(sessionId);
 
     const timeout = setTimeout(async () => {
-      logger.error('Initial history sync timed out (no progress for 5 minutes)', { sessionId });
       try {
+        // Query database to see if sync has been marked complete by the worker in the background
+        const [sessionRecord] = await db
+          .select({ metadata: sessions.metadata })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
+        if (metadata.historySyncCompleted) {
+          logger.info('Initial history sync timeout triggered but ignored because history sync completed successfully in database', { sessionId });
+          this.syncTimeouts.delete(sessionId);
+          return;
+        }
+
+        logger.error('Initial history sync timed out (no progress for 5 minutes)', { sessionId });
         await updateSyncProgress(sessionId, 'failed', 0, 0, 'Sync timed out due to inactivity');
       } catch (err) {
-        logger.error('Failed to update sync progress on timeout', { sessionId, error: (err as Error).message });
+        logger.error('Failed to handle sync timeout', { sessionId, error: (err as Error).message });
       }
     }, 5 * 60 * 1000); // 5 minutes
 
