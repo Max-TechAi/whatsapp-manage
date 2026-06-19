@@ -163,13 +163,27 @@ export class EventBus {
     data: any
   ): Promise<void> {
     const queue = this.getQueue(QUEUES.HISTORY_SYNC);
+
+    // Construct a unique jobId to prevent duplicate history sync jobs in BullMQ
+    const syncType = data.syncType ?? 'unknown';
+    const chunkOrder = data.chunkOrder ?? 'single';
+    let messageSignature = 'no_messages';
+    if (data.messages && data.messages.length > 0) {
+      const firstId = data.messages[0]?.key?.id || '';
+      const lastId = data.messages[data.messages.length - 1]?.key?.id || '';
+      messageSignature = `${data.messages.length}_${firstId}_${lastId}`;
+    }
+    const jobId = `history-sync:${sessionId}:${syncType}:${chunkOrder}:${messageSignature}`;
+
     await queue.add(
       'sync',
       { sessionId, orgId, data },
       {
+        jobId, // Unique job ID for BullMQ deduplication
         attempts: 3,
         backoff: { type: 'fixed', delay: 5000 },
         priority: 5,
+        removeOnComplete: true,
       }
     );
   }

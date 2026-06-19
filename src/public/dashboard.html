@@ -72,6 +72,11 @@
               <input type="text" id="chatSearchInput" class="search-input" placeholder="Search chats..." oninput="handleChatSearch()">
             </div>
             
+            <!-- Reconnecting banner (NOT a full lock) -->
+            <div id="reconnectingBanner" class="reconnecting-banner" style="display: none;">
+              <span class="spinner-small"></span> Reconnecting to WhatsApp...
+            </div>
+            
             <!-- Quick session selection inside inbox -->
             <div style="padding: 0.5rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.5rem;">
               <span style="font-size: 0.8rem; color: var(--text-muted);">Session:</span>
@@ -263,6 +268,29 @@
       <div style="display: flex; justify-content: center; gap: 1rem;">
         <button class="btn btn-secondary" onclick="closeQrModal()">Close</button>
         <button class="btn" onclick="checkQrConnectionStatus()">Check Status</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── INITIAL SYNC LOCK OVERLAY ──────────────────────────── -->
+  <div id="syncLockOverlay" class="sync-lock-overlay" style="display: none;">
+    <div class="sync-lock-card">
+      <span class="sync-lock-icon">🔄</span>
+      <h3 class="sync-lock-title">Syncing your conversations</h3>
+      <p class="sync-lock-text">We are syncing your messages for the first time. This may take a few minutes.</p>
+      
+      <!-- Progress container -->
+      <div class="sync-progress-container">
+        <div id="syncProgressBar" class="sync-progress-bar indeterminate"></div>
+      </div>
+      
+      <!-- Status text -->
+      <div id="syncProgressText" class="sync-progress-text">Preparing messages...</div>
+      
+      <!-- Error container -->
+      <div id="syncErrorContainer" style="display: none; margin-top: 1rem;">
+        <div id="syncErrorText" style="color: var(--danger); font-size: 0.85rem; margin-bottom: 1rem;">Sync failed.</div>
+        <button class="btn" id="syncRetryBtn" onclick="handleSyncRetry()">Retry Sync</button>
       </div>
     </div>
   </div>

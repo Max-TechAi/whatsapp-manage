@@ -100,6 +100,8 @@ export const sessions = pgTable(
     /** Encrypted Baileys AuthenticationCreds — AES-256-GCM wrapped */
     authCreds: jsonb('auth_creds'),
     lastConnectedAt: timestamp('last_connected_at', { withTimezone: true }),
+    /** Flexible JSON metadata (e.g. historySyncCompleted, syncStatus, etc.) */
+    metadata: jsonb('metadata').default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

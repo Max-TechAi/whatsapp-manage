@@ -49,6 +49,15 @@ class SessionManager {
   /** Map of sessionId → active Baileys socket and metadata */
   private activeSessions: Map<string, ActiveSession> = new Map();
 
+  /** Set of sessionIds currently initializing to prevent concurrent duplicate sockets */
+  private initializingSessions: Set<string> = new Set();
+
+  /** Map of sessionId → scheduled reconnect Timeout */
+  private pendingReconnects: Map<string, NodeJS.Timeout> = new Map();
+
+  /** Map of sessionId → initial sync timeout (inactivity timer) */
+  private syncTimeouts: Map<string, NodeJS.Timeout> = new Map();
+
   /**
    * Create a new WhatsApp session.
    *
@@ -117,16 +126,55 @@ class SessionManager {
    * @param orgId - Organization scope for event routing
    */
   async initializeSocket(sessionId: string, orgId: string): Promise<void> {
+    if (this.initializingSessions.has(sessionId)) {
+      logger.warn('Socket initialization already in progress for session', { sessionId });
+      return;
+    }
+    this.initializingSessions.add(sessionId);
+
     try {
+      // Clear any pending reconnect timeout
+      const reconnectTimeout = this.pendingReconnects.get(sessionId);
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        this.pendingReconnects.delete(sessionId);
+      }
+
+      // Check and close existing active socket to avoid leak/duplication
+      const existingSession = this.activeSessions.get(sessionId);
+      if (existingSession) {
+        try {
+          logger.info('Ending existing socket before reinitializing', { sessionId });
+          existingSession.socket.ev.removeAllListeners('connection.update');
+          existingSession.socket.ev.removeAllListeners('creds.update');
+          existingSession.socket.ev.removeAllListeners('messages.upsert');
+          existingSession.socket.ev.removeAllListeners('messaging-history.set');
+          existingSession.socket.end(undefined);
+        } catch (err) {
+          logger.warn('Error ending existing socket during reinitialization', { sessionId, error: (err as Error).message });
+        }
+        this.activeSessions.delete(sessionId);
+      }
+
       // Load encrypted auth state from database
       const { state, saveCreds } = await usePostgresAuthState(sessionId);
 
       // Get latest Baileys version for maximum compatibility
       const { version } = await fetchLatestBaileysVersion();
 
+      // Read historySyncCompleted from session metadata to prevent Baileys from requesting history again
+      const [sessionRecord] = await db
+        .select({ metadata: sessions.metadata })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+      const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
+      const historySyncCompleted = !!metadata.historySyncCompleted;
+
       logger.info('Initializing Baileys socket', {
         sessionId,
         baileysVersion: version.join('.'),
+        historySyncCompleted,
       });
 
       // Create the Baileys socket with production-optimized settings
@@ -138,8 +186,8 @@ class SessionManager {
         printQRInTerminal: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
-        syncFullHistory: true,
-        shouldSyncHistoryMessage: () => true,
+        syncFullHistory: !historySyncCompleted,
+        shouldSyncHistoryMessage: () => !historySyncCompleted,
       });
 
       // Wire up all Baileys event handlers
@@ -164,6 +212,8 @@ class SessionManager {
       // Update DB status to reflect failure
       await this.updateSessionStatus(sessionId, 'disconnected');
       throw error;
+    } finally {
+      this.initializingSessions.delete(sessionId);
     }
   }
 
@@ -178,10 +228,22 @@ class SessionManager {
   async destroySession(sessionId: string): Promise<void> {
     logger.info('Destroying session', { sessionId });
 
+    // Clear reconnection and sync timeouts
+    const reconnectTimeout = this.pendingReconnects.get(sessionId);
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      this.pendingReconnects.delete(sessionId);
+    }
+    this.clearSyncTimeout(sessionId);
+
     // Close the socket if active
     const active = this.activeSessions.get(sessionId);
     if (active) {
       try {
+        active.socket.ev.removeAllListeners('connection.update');
+        active.socket.ev.removeAllListeners('creds.update');
+        active.socket.ev.removeAllListeners('messages.upsert');
+        active.socket.ev.removeAllListeners('messaging-history.set');
         active.socket.end(undefined);
       } catch (error) {
         logger.warn('Error closing socket during destroy', {
@@ -378,6 +440,13 @@ class SessionManager {
           active.lastRetry = null;
         }
 
+        // Clear any pending reconnects
+        const reconnectTimeout = this.pendingReconnects.get(sessionId);
+        if (reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          this.pendingReconnects.delete(sessionId);
+        }
+
         const phoneNumber = socket.user?.id
           ? socket.user.id.split('@')[0]?.split(':')[0] || null
           : null;
@@ -397,12 +466,32 @@ class SessionManager {
           phoneNumber: phoneNumber ? '[REDACTED]' : null,
         });
 
+        // Check if history sync has been completed before
+        const [sessionRecord] = await db
+          .select({ metadata: sessions.metadata })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
+        const historySyncCompleted = !!metadata.historySyncCompleted;
+
+        if (!historySyncCompleted) {
+          // Initialize sync state to pending on first-time pairing connect
+          const progressKey = `sync:progress:${sessionId}`;
+          const hasStarted = await redis.exists(progressKey);
+          if (!hasStarted) {
+            await updateSyncProgress(sessionId, 'pending', 0, 0);
+          }
+          this.resetSyncTimeout(sessionId, orgId);
+        }
+
         // Broadcast connection event
         await eventBus.publishToStream(STREAMS.SESSIONS, 'session:status', {
           sessionId,
           orgId,
           status: 'connected',
           phoneNumber,
+          historySyncCompleted,
         });
       }
 
@@ -415,6 +504,14 @@ class SessionManager {
         if (isLoggedOut || isBanned) {
           // Terminal state — user logged out or account banned
           const terminalStatus: SessionStatus = isBanned ? 'banned' : 'disconnected';
+
+          // Clear timeouts
+          this.clearSyncTimeout(sessionId);
+          const reconnectTimeout = this.pendingReconnects.get(sessionId);
+          if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            this.pendingReconnects.delete(sessionId);
+          }
 
           await db
             .update(sessions)
@@ -472,9 +569,16 @@ class SessionManager {
               statusCode,
             });
 
+            // Deduplicate reconnection schedule
+            if (this.pendingReconnects.has(sessionId)) {
+              logger.info('Reconnection already scheduled for session', { sessionId });
+              return;
+            }
+
             // Schedule reconnection after backoff delay
-            setTimeout(async () => {
+            const timeout = setTimeout(async () => {
               try {
+                this.pendingReconnects.delete(sessionId);
                 // Remove stale socket before reinitializing
                 this.activeSessions.delete(sessionId);
                 await this.initializeSocket(sessionId, orgId);
@@ -487,6 +591,7 @@ class SessionManager {
                 });
               }
             }, delay);
+            this.pendingReconnects.set(sessionId, timeout);
           } else {
             // Exhausted retries
             await this.updateSessionStatus(sessionId, 'disconnected');
@@ -534,6 +639,37 @@ class SessionManager {
     socket.ev.on('messaging-history.set', async (data) => {
       const { chats, contacts, messages, isLatest } = data;
 
+      // 1. Skip if already completed in DB
+      try {
+        const [sessionRecord] = await db
+          .select({ metadata: sessions.metadata })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
+        if (metadata.historySyncCompleted) {
+          logger.info('History sync event skipped because history sync is already marked complete', { sessionId });
+          return;
+        }
+      } catch (err) {
+        logger.error('Error checking historySyncCompleted in event listener', { sessionId, error: (err as Error).message });
+      }
+
+      // 2. Redis circuit breaker: max 5 history sync events per 10 minutes per session
+      try {
+        const rateLimitKey = `sync:limit:${sessionId}`;
+        const syncCount = await redis.incr(rateLimitKey);
+        if (syncCount === 1) {
+          await redis.expire(rateLimitKey, 600); // 10 minutes
+        }
+        if (syncCount > 5) {
+          logger.warn('History sync rate-limit exceeded (circuit breaker triggered)', { sessionId, syncCount });
+          return;
+        }
+      } catch (err) {
+        logger.error('Error applying history sync rate limit', { sessionId, error: (err as Error).message });
+      }
+
       logger.info('History sync received', {
         sessionId,
         chats: chats.length,
@@ -541,6 +677,18 @@ class SessionManager {
         messages: messages.length,
         isLatest,
       });
+
+      // 3. Mark progress as syncing and reset the inactivity timer
+      try {
+        const progressKey = `sync:progress:${sessionId}`;
+        const progressData = await redis.hgetall(progressKey);
+        const processed = parseInt(progressData.syncProcessedMessages || '0');
+        const total = parseInt(progressData.syncTotalMessages || '0');
+        await updateSyncProgress(sessionId, 'syncing', processed, total);
+        this.resetSyncTimeout(sessionId, orgId);
+      } catch (err) {
+        logger.error('Error updating progress in history sync event listener', { sessionId, error: (err as Error).message });
+      }
 
       // Publish to history sync BullMQ queue
       await eventBus.publishHistorySync(sessionId, orgId, data).catch((err) => {
@@ -680,7 +828,131 @@ class SessionManager {
       });
     }
   }
+
+  /**
+   * Clear initial history sync inactivity timeout.
+   */
+  clearSyncTimeout(sessionId: string): void {
+    const timeout = this.syncTimeouts.get(sessionId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.syncTimeouts.delete(sessionId);
+      logger.info('Cleared initial sync timeout', { sessionId });
+    }
+  }
+
+  /**
+   * Reset or set initial history sync inactivity timeout (5 minutes).
+   */
+  resetSyncTimeout(sessionId: string, orgId: string): void {
+    this.clearSyncTimeout(sessionId);
+
+    const timeout = setTimeout(async () => {
+      logger.error('Initial history sync timed out (no progress for 5 minutes)', { sessionId });
+      try {
+        await updateSyncProgress(sessionId, 'failed', 0, 0, 'Sync timed out due to inactivity');
+      } catch (err) {
+        logger.error('Failed to update sync progress on timeout', { sessionId, error: (err as Error).message });
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    this.syncTimeouts.set(sessionId, timeout);
+    logger.info('Set/reset initial sync timeout (5 minutes)', { sessionId });
+  }
+}
+
+/**
+ * Update the initial history sync progress for a session.
+ * Updates Redis, PostgreSQL sessions.metadata, and broadcasts updates via WebSocket (Redis Stream).
+ */
+export async function updateSyncProgress(
+  sessionId: string,
+  syncStatus: 'pending' | 'syncing' | 'completed' | 'failed',
+  syncProcessedMessages: number,
+  syncTotalMessages: number,
+  errorReason?: string,
+): Promise<void> {
+  const progressKey = `sync:progress:${sessionId}`;
+  
+  // Get current started timestamp from Redis, or set to now
+  let syncStartedAt = await redis.hget(progressKey, 'syncStartedAt');
+  if (!syncStartedAt) {
+    syncStartedAt = new Date().toISOString();
+  }
+
+  // Save progress to Redis
+  await redis.hset(progressKey, {
+    syncStatus,
+    syncTotalMessages: syncTotalMessages.toString(),
+    syncProcessedMessages: syncProcessedMessages.toString(),
+    syncStartedAt,
+  });
+
+  // Retrieve orgId
+  const active = sessionManager.getSession(sessionId);
+  let orgId = active?.orgId;
+  if (!orgId) {
+    const [sessionRecord] = await db
+      .select({ orgId: sessions.orgId })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+    orgId = sessionRecord?.orgId;
+  }
+
+  // Update Postgres sessions.metadata
+  if (orgId) {
+    try {
+      const [sessionRecord] = await db
+        .select({ metadata: sessions.metadata })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+      
+      const currentMetadata = (sessionRecord?.metadata || {}) as Record<string, any>;
+      const updatedMetadata = {
+        ...currentMetadata,
+        syncStatus,
+        syncTotalMessages,
+        syncProcessedMessages,
+        syncStartedAt,
+        ...(syncStatus === 'completed' && { historySyncCompleted: true, historySyncCompletedAt: new Date().toISOString() }),
+        ...(errorReason && { syncErrorReason: errorReason }),
+      };
+
+      await db
+        .update(sessions)
+        .set({
+          metadata: updatedMetadata,
+          updatedAt: new Date(),
+        })
+        .where(eq(sessions.id, sessionId));
+    } catch (err) {
+      logger.error('Failed to update session metadata in updateSyncProgress', { sessionId, error: (err as Error).message });
+    }
+  }
+
+  // Broadcast over WebSocket (Redis Stream)
+  if (orgId) {
+    const payload = {
+      sessionId,
+      orgId,
+      syncStatus,
+      syncProcessedMessages,
+      syncTotalMessages,
+      ...(errorReason && { reason: errorReason }),
+    };
+
+    if (syncStatus === 'completed') {
+      await eventBus.publishToStream(STREAMS.SESSIONS, 'sync:completed', payload);
+    } else if (syncStatus === 'failed') {
+      await eventBus.publishToStream(STREAMS.SESSIONS, 'sync:failed', payload);
+    } else {
+      await eventBus.publishToStream(STREAMS.SESSIONS, 'sync:progress', payload);
+    }
+  }
 }
 
 /** Singleton SessionManager instance for application-wide use */
 export const sessionManager = new SessionManager();
+

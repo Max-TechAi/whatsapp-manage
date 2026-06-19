@@ -4,7 +4,7 @@
  */
 
 import { db } from '../../config/database.js';
-import { messages, chats, contacts } from '../../db/schema.js';
+import { messages, chats, contacts, sessions } from '../../db/schema.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { redis } from '../../config/redis.js';
 import { messageService } from './message.service.js';
@@ -13,6 +13,7 @@ import { contactService } from '../contacts/contact.service.js';
 import { logger } from '../../observability/logger.js';
 import { normalizeJid } from '../sessions/session.events.js';
 import { saveLidMapping, resolveLidJid } from '../sessions/lid-mapping.js';
+import { updateSyncProgress, sessionManager } from '../sessions/session.manager.js';
 import type { BulkInsertResult } from './message.types.js';
 
 /** Redis key for tracking sync progress per session */
@@ -55,6 +56,7 @@ export class MessageSyncService {
         pn: string;
         lid: string;
       }>;
+      isLatest?: boolean;
       syncType: number;
     }
   ): Promise<{ chats: number; contacts: number; messages: BulkInsertResult }> {
@@ -64,16 +66,21 @@ export class MessageSyncService {
       contactCount: data.contacts.length,
       messageCount: data.messages.length,
       syncType: data.syncType,
+      isLatest: data.isLatest,
     });
 
-    // Track progress in Redis
-    await redis.hset(syncProgressKey(sessionId), {
-      status: 'processing',
-      startedAt: new Date().toISOString(),
-      totalChats: data.chats.length,
-      totalContacts: data.contacts.length,
-      totalMessages: data.messages.length,
-    });
+    // Track progress in Redis and DB
+    const progressKey = `sync:progress:${sessionId}`;
+    const currentProgress = await redis.hgetall(progressKey);
+    let totalMessages = data.messages.length;
+    let processedMessages = 0;
+
+    if (currentProgress && currentProgress.syncTotalMessages) {
+      totalMessages = (parseInt(currentProgress.syncTotalMessages) || 0) + data.messages.length;
+      processedMessages = parseInt(currentProgress.syncProcessedMessages) || 0;
+    }
+
+    await updateSyncProgress(sessionId, 'syncing', processedMessages, totalMessages);
 
     /* BUG 1: Save LID-to-Phone JID mappings first so they are available when processing chats/messages */
     if (data.lidPnMappings && Array.isArray(data.lidPnMappings)) {
@@ -263,24 +270,44 @@ export class MessageSyncService {
     const messageResult = await messageService.bulkInsert(orgId, messagesToInsert);
 
     // Update progress
-    await redis.hset(syncProgressKey(sessionId), {
-      status: 'completed',
-      completedAt: new Date().toISOString(),
-      chatsSynced,
-      contactsSynced,
-      messagesInserted: messageResult.inserted,
-      messagesDuplicated: messageResult.duplicates,
-    });
-
-    // Set TTL on progress key (24 hours)
-    await redis.expire(syncProgressKey(sessionId), 86400);
-
-    logger.info('History sync completed', {
-      sessionId,
-      chatsSynced,
-      contactsSynced,
-      messagesInserted: messageResult.inserted,
-    });
+    processedMessages += messageResult.inserted;
+    
+    const isCompleted = data.isLatest !== false; // default to true if not specified
+    if (isCompleted) {
+      await updateSyncProgress(sessionId, 'completed', totalMessages, totalMessages);
+      sessionManager.clearSyncTimeout(sessionId);
+      
+      // Mark history sync as completed in session metadata
+      try {
+        const [sessionRecord] = await db
+          .select({ metadata: sessions.metadata })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        
+        const currentMetadata = (sessionRecord?.metadata || {}) as Record<string, any>;
+        await db
+          .update(sessions)
+          .set({
+            metadata: {
+              ...currentMetadata,
+              historySyncCompleted: true,
+              historySyncCompletedAt: new Date().toISOString(),
+              syncStatus: 'completed',
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(sessions.id, sessionId));
+        logger.info('Marked history sync as completed in session metadata', { sessionId });
+      } catch (err) {
+        logger.error('Failed to update session metadata for history sync completion', { sessionId, error: (err as Error).message });
+      }
+    } else {
+      // Just update the processed messages count
+      await updateSyncProgress(sessionId, 'syncing', processedMessages, totalMessages);
+      // Reset inactivity timeout since we got progress
+      sessionManager.resetSyncTimeout(sessionId, orgId);
+    }
 
     return {
       chats: chatsSynced,

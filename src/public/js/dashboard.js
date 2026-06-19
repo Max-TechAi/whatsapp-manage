@@ -85,6 +85,8 @@ function populateSessionDropdowns(sessions) {
 
   if (connected.length === 0) {
     dropdown.innerHTML = '<option value="">-- No connected devices --</option>';
+    activeSessionId = '';
+    hideSyncOverlay();
     return;
   }
 
@@ -94,6 +96,12 @@ function populateSessionDropdowns(sessions) {
 
   if (previousSelection && connected.some(s => s.id === previousSelection)) {
     dropdown.value = previousSelection;
+    activeSessionId = previousSelection;
+  } else {
+    // Auto-select first connected session on load
+    dropdown.value = connected[0].id;
+    activeSessionId = connected[0].id;
+    handleInboxSessionChange();
   }
 }
 
@@ -272,8 +280,11 @@ function handleInboxSessionChange() {
   contactsMap = {};
   
   if (activeSessionId) {
+    checkInitialSyncStatus(activeSessionId);
     loadChats();
     loadContactsForSession();
+  } else {
+    hideSyncOverlay();
   }
 }
 
@@ -724,11 +735,15 @@ function connectWS() {
   ws.onopen = () => {
     document.getElementById('wsStatusDot').className = 'status-dot connected';
     document.getElementById('wsStatusText').textContent = 'WebSocket Online';
+    document.getElementById('reconnectingBanner').style.display = 'none';
   };
 
   ws.onclose = () => {
     document.getElementById('wsStatusDot').className = 'status-dot disconnected';
     document.getElementById('wsStatusText').textContent = 'WebSocket Offline';
+    if (isHistorySyncCompleted && activeSessionId) {
+      document.getElementById('reconnectingBanner').style.display = 'block';
+    }
     // Reconnect after 3s
     setTimeout(connectWS, 3000);
   };
@@ -749,6 +764,25 @@ function connectWS() {
 
 function handleWsEvent(data) {
   const { type, sessionId, orgId } = data;
+
+  // Sync event handlers
+  if (activeSessionId === sessionId) {
+    if (type === 'sync:progress') {
+      const { syncProcessedMessages, syncTotalMessages, syncStatus } = data;
+      showSyncOverlay(syncStatus, syncProcessedMessages, syncTotalMessages);
+      return;
+    }
+    if (type === 'sync:completed') {
+      hideSyncOverlay();
+      isHistorySyncCompleted = true;
+      loadChats();
+      return;
+    }
+    if (type === 'sync:failed') {
+      showSyncOverlay('failed', 0, 0, data.reason || 'Sync failed.');
+      return;
+    }
+  }
 
   // Real-time message receiver (maps new_message trigger and other inbound events)
   if (type === 'message:new:notify' || type === 'message:new' || type === 'message:received' || type === 'message:sent' || type.startsWith('message:')) {
@@ -984,4 +1018,126 @@ function escapeHtml(unsafe) {
 
 function logTerminal(topic, message) {
   console.log(`[${topic}] ${message}`);
+}
+
+// ─── INITIAL SYNC LOCK OVERLAY & STATUS TRACKING ──────────────
+
+let isHistorySyncCompleted = false;
+
+async function checkInitialSyncStatus(sessionId) {
+  if (!sessionId) return;
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/sync-status`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!response.ok) throw new Error('Failed to fetch sync status');
+
+    const resData = await response.json();
+    const { syncStatus, syncProcessedMessages, syncTotalMessages, historySyncCompleted } = resData.data;
+
+    isHistorySyncCompleted = historySyncCompleted;
+
+    if (!historySyncCompleted && (syncStatus === 'pending' || syncStatus === 'syncing')) {
+      showSyncOverlay(syncStatus, syncProcessedMessages, syncTotalMessages);
+    } else if (!historySyncCompleted && syncStatus === 'failed') {
+      showSyncOverlay('failed');
+    } else {
+      hideSyncOverlay();
+    }
+  } catch (err) {
+    console.error('Error checking sync status:', err);
+  }
+}
+
+function showSyncOverlay(status, processed = 0, total = 0, errorMsg = '') {
+  try {
+    const overlay = document.getElementById('syncLockOverlay');
+    if (!overlay) return;
+
+    overlay.style.display = 'flex';
+
+    const progressBar = document.getElementById('syncProgressBar');
+    const progressText = document.getElementById('syncProgressText');
+    const errorContainer = document.getElementById('syncErrorContainer');
+    const errorText = document.getElementById('syncErrorText');
+
+    if (status === 'failed') {
+      progressBar.classList.remove('indeterminate');
+      progressBar.style.width = '0%';
+      progressText.style.display = 'none';
+      
+      errorContainer.style.display = 'block';
+      errorText.textContent = errorMsg || 'Sync failed. Retry to resume.';
+    } else {
+      errorContainer.style.display = 'none';
+      progressText.style.display = 'block';
+
+      if (total > 0) {
+        progressBar.classList.remove('indeterminate');
+        const percent = Math.min(100, Math.floor((processed / total) * 100));
+        progressBar.style.width = `${percent}%`;
+        progressText.textContent = `Syncing your conversations... ${processed.toLocaleString()} / ${total.toLocaleString()} messages synced (${percent}%)`;
+      } else {
+        progressBar.classList.add('indeterminate');
+        progressBar.style.width = '100%';
+        if (processed > 0) {
+          progressText.textContent = `Syncing your conversations... ${processed.toLocaleString()} messages synced...`;
+        } else {
+          progressText.textContent = 'Syncing your conversations for the first time. This may take a few minutes.';
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error rendering sync overlay:', err);
+    hideSyncOverlay();
+  }
+}
+
+function hideSyncOverlay() {
+  const overlay = document.getElementById('syncLockOverlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+  }
+}
+
+async function handleSyncRetry() {
+  if (!activeSessionId) return;
+
+  const errorContainer = document.getElementById('syncErrorContainer');
+  const progressText = document.getElementById('syncProgressText');
+  const progressBar = document.getElementById('syncProgressBar');
+  const retryBtn = document.getElementById('syncRetryBtn');
+
+  try {
+    retryBtn.disabled = true;
+    retryBtn.textContent = 'Retrying...';
+
+    const response = await fetch(`/api/sessions/${activeSessionId}/sync-retry`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const errData = await response.json();
+      throw new Error(errData.error || 'Failed to trigger sync retry');
+    }
+
+    // Reset UI to indeterminate syncing state
+    errorContainer.style.display = 'none';
+    progressText.style.display = 'block';
+    progressText.textContent = 'Reinitializing sync...';
+    progressBar.classList.add('indeterminate');
+    progressBar.style.width = '100%';
+
+    // Wait a brief moment to reload sessions list
+    setTimeout(loadSessions, 1500);
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    retryBtn.disabled = false;
+    retryBtn.textContent = 'Retry Sync';
+  }
 }

@@ -21,8 +21,9 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '../../config/database.js';
 import { sessions } from '../../db/schema.js';
 import { authenticate } from '../auth/auth.middleware.js';
-import { sessionManager } from './session.manager.js';
+import { sessionManager, updateSyncProgress } from './session.manager.js';
 import { logger } from '../../observability/logger.js';
+import { redis } from '../../config/redis.js';
 
 /** Request body schema for session creation */
 const createSessionSchema = z.object({
@@ -366,6 +367,130 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       orgId: req.user?.orgId,
     });
     res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
+// ─── GET /:id/sync-status — Get history sync status ───────────────────────
+
+router.get('/:id/sync-status', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { orgId } = req.user!;
+    const sessionId = req.params.id as string;
+
+    // Verify session ownership
+    const [sessionRecord] = await db
+      .select({ id: sessions.id, metadata: sessions.metadata })
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)))
+      .limit(1);
+
+    if (!sessionRecord) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    // Try fetching from Redis first
+    const progressKey = `sync:progress:${sessionId}`;
+    const redisProgress = await redis.hgetall(progressKey);
+    const metadata = (sessionRecord.metadata || {}) as Record<string, any>;
+
+    const syncStatus = redisProgress.syncStatus || metadata.syncStatus || 'pending';
+    const syncProcessedMessages = parseInt(redisProgress.syncProcessedMessages || '0') || metadata.syncProcessedMessages || 0;
+    const syncTotalMessages = parseInt(redisProgress.syncTotalMessages || '0') || metadata.syncTotalMessages || 0;
+    const historySyncCompleted = !!metadata.historySyncCompleted;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        syncStatus,
+        syncProcessedMessages,
+        syncTotalMessages,
+        historySyncCompleted,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to get sync status', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      sessionId: req.params.id,
+      orgId: req.user?.orgId,
+    });
+    res.status(500).json({ error: 'Failed to get sync status' });
+  }
+});
+
+// ─── POST /:id/sync-retry — Force/retry initial history sync ──────────────
+
+router.post('/:id/sync-retry', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { orgId } = req.user!;
+    const sessionId = req.params.id as string;
+
+    // Verify session ownership
+    const [sessionRecord] = await db
+      .select({ id: sessions.id, metadata: sessions.metadata })
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)))
+      .limit(1);
+
+    if (!sessionRecord) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    logger.info('Retrying sync for session', { sessionId, orgId });
+
+    // Clean up Redis sync progress and rate limits
+    const progressKey = `sync:progress:${sessionId}`;
+    const rateLimitKey = `sync:limit:${sessionId}`;
+    await redis.del(progressKey);
+    await redis.del(rateLimitKey);
+
+    // Reset Postgres metadata sync status
+    const currentMetadata = (sessionRecord.metadata || {}) as Record<string, any>;
+    const updatedMetadata = {
+      ...currentMetadata,
+      syncStatus: 'pending',
+      syncProcessedMessages: 0,
+      syncTotalMessages: 0,
+    } as Record<string, any>;
+    delete updatedMetadata.historySyncCompleted;
+    delete updatedMetadata.historySyncCompletedAt;
+    delete updatedMetadata.syncErrorReason;
+
+    await db
+      .update(sessions)
+      .set({
+        metadata: updatedMetadata,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessions.id, sessionId));
+
+    // Destroy active session (keeps credentials and database record)
+    await sessionManager.destroySession(sessionId);
+
+    // Reinitialize the socket connection to force Baileys to re-fetch/sync history
+    await sessionManager.initializeSocket(sessionId, orgId);
+
+    // Update progress state
+    await updateSyncProgress(sessionId, 'pending', 0, 0);
+
+    res.status(200).json({
+      success: true,
+      message: 'Sync retry initiated',
+      data: {
+        syncStatus: 'pending',
+        syncProcessedMessages: 0,
+        syncTotalMessages: 0,
+        historySyncCompleted: false,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to retry sync', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      sessionId: req.params.id,
+      orgId: req.user?.orgId,
+    });
+    res.status(500).json({ error: 'Failed to retry sync' });
   }
 });
 
