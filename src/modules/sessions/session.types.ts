@@ -62,6 +62,8 @@ export interface ActiveSession {
   retryCount: number;
   /** Timestamp of last reconnection attempt */
   lastRetry: Date | null;
+  /** Flag to track if this connection is doing the first-time history sync */
+  isInitialSyncConnection?: boolean;
 }
 
 /**

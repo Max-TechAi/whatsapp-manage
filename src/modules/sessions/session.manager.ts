@@ -216,6 +216,7 @@ class SessionManager {
         orgId,
         retryCount: 0,
         lastRetry: null,
+        isInitialSyncConnection: !historySyncCompleted,
       });
 
       logger.info('Baileys socket initialized', { sessionId });
@@ -660,16 +661,19 @@ class SessionManager {
     socket.ev.on('messaging-history.set', async (data) => {
       const { chats, contacts, messages, isLatest } = data;
 
-      // 1. Skip if already completed in DB
+      // 1. Skip if already completed in DB AND this connection is not the initial sync connection
       try {
+        const active = this.getSession(sessionId);
+        const isInitial = active?.isInitialSyncConnection;
+
         const [sessionRecord] = await db
           .select({ metadata: sessions.metadata })
           .from(sessions)
           .where(eq(sessions.id, sessionId))
           .limit(1);
         const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
-        if (metadata.historySyncCompleted) {
-          logger.info('History sync event skipped because history sync is already marked complete', { sessionId });
+        if (metadata.historySyncCompleted && !isInitial) {
+          logger.info('History sync event skipped because history sync is already marked complete and this is not the initial sync connection', { sessionId });
           return;
         }
       } catch (err) {
