@@ -321,12 +321,12 @@ function renderChatsList(chatList) {
       return;
     }
 
-    // Sort conversations by most recent message activity (lastMessageAt DESC), pinned first
+    // Sort conversations by most recent message activity (lastMessageAt DESC or fallback to createdAt), pinned first
     const sortedList = [...filteredList].sort((a, b) => {
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;
-      const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-      const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+      const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
       return timeB - timeA;
     });
 

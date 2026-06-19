@@ -194,7 +194,7 @@ export class ChatService {
       .where(and(...conditions))
       .orderBy(
         desc(chats.isPinned),
-        sql`${chats.lastMessageAt} DESC NULLS LAST`
+        sql`COALESCE(${chats.lastMessageAt}, ${chats.createdAt}) DESC`
       )
       .limit(fetchLimit);
 

@@ -79,11 +79,11 @@ export function createContactSyncWorker(): Worker {
           const waId = contact.id ?? contact.waId;
           const lid = contact.lid;
           
-          if (waId && waId.endsWith('@s.whatsapp.net') && lid && lid.endsWith('@lid')) {
+          if (waId && lid) {
             await saveLidMapping(sessionId, lid, waId);
-          } else if (waId && waId.endsWith('@lid')) {
+          } else if (waId) {
             const phoneJid = contact.phoneNumber ?? contact.phone;
-            if (phoneJid && phoneJid.endsWith('@s.whatsapp.net')) {
+            if (phoneJid) {
               await saveLidMapping(sessionId, waId, phoneJid);
             }
           }
@@ -146,8 +146,8 @@ export function createChatSyncWorker(): Worker {
               name: chat.name ?? chat.subject ?? null,
               unreadCount: chat.unreadCount ?? undefined,
               isArchived: chat.archived ?? chat.archive ?? undefined,
-              isPinned: chat.pinned ? true : undefined,
-              mutedUntil: chat.muteEndTime ? new Date(chat.muteEndTime * 1000) : undefined,
+              isPinned: chat.pinned === undefined ? undefined : (chat.pinned ? true : false),
+              mutedUntil: chat.muteEndTime === undefined ? undefined : (chat.muteEndTime ? new Date(chat.muteEndTime * 1000) : null),
               lastMessageAt: chat.conversationTimestamp
                 ? new Date(Number(chat.conversationTimestamp) * 1000)
                 : undefined,
