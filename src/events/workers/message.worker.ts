@@ -34,6 +34,13 @@ export function createMessageWorker(): Worker {
 
       const resolvedRemoteJid = await resolveLidJid(sessionId, waMessage.key.remoteJid);
       const remoteJid = normalizeJid(resolvedRemoteJid);
+
+      // Skip status and broadcast messages
+      if (remoteJid.endsWith('@broadcast') || remoteJid === 'status') {
+        logger.debug('Skipping status/broadcast message inbound job', { remoteJid, waMessageId: waMessage.key.id });
+        return;
+      }
+
       const waMessageId = waMessage.key.id;
 
       // Ensure the chat exists (create if needed)
