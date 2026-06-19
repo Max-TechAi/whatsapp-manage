@@ -35,7 +35,7 @@ services:
         --appendonly yes
         --maxmemory-policy noeviction
         --requirepass ${REDIS_PASSWORD:-redis_secret_password}
-        --maxmemory 256mb
+        --maxmemory 512mb
     volumes:
       - redis_data:/data
     ports:

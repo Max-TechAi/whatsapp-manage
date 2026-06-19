@@ -41,8 +41,8 @@ export class EventBus {
         defaultJobOptions: {
           attempts: 5,
           backoff: { type: 'exponential', delay: 1000 },
-          removeOnComplete: { count: 1000 },
-          removeOnFail: { count: 5000 },
+          removeOnComplete: true,
+          removeOnFail: { count: 100 },
         },
       });
       this.queues.set(name, queue);
