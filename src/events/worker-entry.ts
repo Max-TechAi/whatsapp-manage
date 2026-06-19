@@ -4,7 +4,6 @@
  */
 
 import { createMessageWorker } from './workers/message.worker.js';
-import { createMediaWorker } from './workers/media.worker.js';
 import { createSyncWorker, createContactSyncWorker, createChatSyncWorker } from './workers/sync.worker.js';
 import { createWebhookWorker } from './workers/webhook.worker.js';
 import { logger } from '../observability/logger.js';
@@ -16,7 +15,6 @@ async function startWorkers(): Promise<void> {
 
   workers.push(
     createMessageWorker(),
-    createMediaWorker(),
     createSyncWorker(),
     createContactSyncWorker(),
     createChatSyncWorker(),
