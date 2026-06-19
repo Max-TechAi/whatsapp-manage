@@ -873,6 +873,10 @@
 
       // Poll QR code endpoint
       const pollQr = async () => {
+        if (!sessionId || sessionId === 'null' || sessionId === 'undefined') {
+          clearInterval(qrPollInterval);
+          return;
+        }
         try {
           const response = await fetch(`/api/sessions/${sessionId}/qr`, {
             headers: { 'Authorization': `Bearer ${token}` }

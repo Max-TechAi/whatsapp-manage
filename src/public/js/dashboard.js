@@ -233,7 +233,7 @@ function closeQrModal() {
 }
 
 async function checkQrConnectionStatus() {
-  if (!currentQrSessionId) return;
+  if (!currentQrSessionId || currentQrSessionId === 'null' || currentQrSessionId === 'undefined') return;
 
   try {
     const response = await fetch(`/api/sessions/${currentQrSessionId}/qr`, {
@@ -1025,7 +1025,7 @@ function logTerminal(topic, message) {
 let isHistorySyncCompleted = false;
 
 async function checkInitialSyncStatus(sessionId) {
-  if (!sessionId) return;
+  if (!sessionId || sessionId === 'null' || sessionId === 'undefined') return;
   try {
     const response = await fetch(`/api/sessions/${sessionId}/sync-status`, {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -1101,7 +1101,7 @@ function hideSyncOverlay() {
 }
 
 async function handleSyncRetry() {
-  if (!activeSessionId) return;
+  if (!activeSessionId || activeSessionId === 'null' || activeSessionId === 'undefined') return;
 
   const errorContainer = document.getElementById('syncErrorContainer');
   const progressText = document.getElementById('syncProgressText');

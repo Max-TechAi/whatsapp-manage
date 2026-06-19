@@ -40,7 +40,18 @@ const MAX_RETRIES = 10;
 const MAX_RETRY_DELAY_MS = 300_000;
 
 /**
+ * Validate that a given string is a valid UUID v4 format.
+ * This prevents PostgreSQL from throwing "invalid input syntax for type uuid".
+ */
+export function isValidUuid(id: unknown): boolean {
+  if (typeof id !== 'string') return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(id);
+}
+
+/**
  * Manages all active WhatsApp Baileys sessions.
+
  *
  * Maintains an in-memory map of active sockets and coordinates
  * their lifecycle against the PostgreSQL session records.
@@ -126,6 +137,11 @@ class SessionManager {
    * @param orgId - Organization scope for event routing
    */
   async initializeSocket(sessionId: string, orgId: string): Promise<void> {
+    // Add guard to prevent invalid/null UUID check crashes in PostgreSQL
+    if (!isValidUuid(sessionId) || !isValidUuid(orgId)) {
+      logger.warn('initializeSocket skipped for invalid sessionId or orgId', { sessionId, orgId, stack: new Error().stack });
+      return;
+    }
     if (this.initializingSessions.has(sessionId)) {
       logger.warn('Socket initialization already in progress for session', { sessionId });
       return;
@@ -226,6 +242,11 @@ class SessionManager {
    * @param sessionId - Session to destroy
    */
   async destroySession(sessionId: string): Promise<void> {
+    // Add guard to prevent invalid/null UUID check crashes in PostgreSQL
+    if (!isValidUuid(sessionId)) {
+      logger.warn('destroySession skipped for invalid sessionId', { sessionId, stack: new Error().stack });
+      return;
+    }
     logger.info('Destroying session', { sessionId });
 
     // Clear reconnection and sync timeouts
@@ -655,15 +676,17 @@ class SessionManager {
         logger.error('Error checking historySyncCompleted in event listener', { sessionId, error: (err as Error).message });
       }
 
-      // 2. Redis circuit breaker: max 5 history sync events per 10 minutes per session
+      // 2. Redis circuit breaker: max 100 history sync events per 10 minutes per session
       try {
         const rateLimitKey = `sync:limit:${sessionId}`;
         const syncCount = await redis.incr(rateLimitKey);
         if (syncCount === 1) {
           await redis.expire(rateLimitKey, 600); // 10 minutes
         }
-        if (syncCount > 5) {
-          logger.warn('History sync rate-limit exceeded (circuit breaker triggered)', { sessionId, syncCount });
+        // Raised limit to 100 for the initial sync window since a large account can emit many sync batches
+        const limit = 100;
+        if (syncCount > limit) {
+          logger.warn('History sync rate-limit exceeded (circuit breaker triggered)', { sessionId, syncCount, limit });
           return;
         }
       } catch (err) {
@@ -815,6 +838,11 @@ class SessionManager {
     sessionId: string,
     status: SessionStatus,
   ): Promise<void> {
+    // Add guard to prevent invalid/null UUID check crashes in PostgreSQL
+    if (!isValidUuid(sessionId)) {
+      logger.warn('updateSessionStatus skipped for invalid sessionId', { sessionId, stack: new Error().stack });
+      return;
+    }
     try {
       await db
         .update(sessions)
@@ -833,6 +861,11 @@ class SessionManager {
    * Clear initial history sync inactivity timeout.
    */
   clearSyncTimeout(sessionId: string): void {
+    // Add guard to prevent invalid/null UUID checks
+    if (!isValidUuid(sessionId)) {
+      logger.warn('clearSyncTimeout skipped for invalid sessionId', { sessionId, stack: new Error().stack });
+      return;
+    }
     const timeout = this.syncTimeouts.get(sessionId);
     if (timeout) {
       clearTimeout(timeout);
@@ -845,6 +878,11 @@ class SessionManager {
    * Reset or set initial history sync inactivity timeout (5 minutes).
    */
   resetSyncTimeout(sessionId: string, orgId: string): void {
+    // Add guard to prevent invalid/null UUID checks
+    if (!isValidUuid(sessionId) || !isValidUuid(orgId)) {
+      logger.warn('resetSyncTimeout skipped for invalid sessionId or orgId', { sessionId, orgId, stack: new Error().stack });
+      return;
+    }
     this.clearSyncTimeout(sessionId);
 
     const timeout = setTimeout(async () => {
@@ -872,6 +910,11 @@ export async function updateSyncProgress(
   syncTotalMessages: number,
   errorReason?: string,
 ): Promise<void> {
+  // Add guard to prevent invalid/null UUID query crashes in PostgreSQL
+  if (!isValidUuid(sessionId)) {
+    logger.warn('updateSyncProgress skipped for invalid sessionId', { sessionId, stack: new Error().stack });
+    return;
+  }
   const progressKey = `sync:progress:${sessionId}`;
   
   // Get current started timestamp from Redis, or set to now

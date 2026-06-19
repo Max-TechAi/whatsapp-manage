@@ -21,7 +21,7 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '../../config/database.js';
 import { sessions } from '../../db/schema.js';
 import { authenticate } from '../auth/auth.middleware.js';
-import { sessionManager, updateSyncProgress } from './session.manager.js';
+import { sessionManager, updateSyncProgress, isValidUuid } from './session.manager.js';
 import { logger } from '../../observability/logger.js';
 import { redis } from '../../config/redis.js';
 
@@ -42,6 +42,21 @@ const router = Router();
 
 // Apply authentication to all session routes
 router.use(authenticate);
+
+// Parameter guard to validate session UUID format and prevent PostgreSQL syntax errors
+router.param('id', (req, res, next, id) => {
+  if (!isValidUuid(id)) {
+    logger.warn('Invalid UUID parameter detected in session routes', {
+      param: 'id',
+      value: id,
+      path: req.path,
+      stack: new Error().stack,
+    });
+    res.status(400).json({ error: 'Invalid ID format' });
+    return;
+  }
+  next();
+});
 
 // ─── POST / — Create a new session ────────────────────────────────────────
 

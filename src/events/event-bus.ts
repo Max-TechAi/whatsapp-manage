@@ -7,6 +7,27 @@ import { Queue, QueueEvents } from 'bullmq';
 import { queueRedis, redis } from '../config/redis.js';
 import { logger } from '../observability/logger.js';
 
+/**
+ * Helper to generate a safe inbound message jobId for BullMQ.
+ * Removes colons and slashes which are unsafe or cause BullMQ/Redis errors.
+ */
+export function generateInboundJobId(sessionId: string, messageId: string): string {
+  return `${sessionId}-${messageId}`.replace(/[:/]/g, '-');
+}
+
+/**
+ * Helper to generate a safe history sync jobId for BullMQ.
+ * Removes colons and slashes which are unsafe or cause BullMQ/Redis errors.
+ */
+export function generateHistorySyncJobId(
+  sessionId: string,
+  syncType: string | number,
+  chunkOrder: string | number,
+  messageSignature: string
+): string {
+  return `history-sync-${sessionId}-${syncType}-${chunkOrder}-${messageSignature}`.replace(/[:/]/g, '-');
+}
+
 /** Queue names as constants for type safety */
 export const QUEUES = {
   MESSAGE_INBOUND: 'message-inbound',
@@ -71,20 +92,52 @@ export class EventBus {
     const queue = this.getQueue(QUEUES.MESSAGE_INBOUND);
 
     for (const msg of messages) {
-      await queue.add(
-        `msg-${type}`,
-        {
+      const rawJobId = generateInboundJobId(sessionId, msg.key?.id ?? String(Date.now()));
+      try {
+        await queue.add(
+          `msg-${type}`,
+          {
+            sessionId,
+            orgId,
+            message: msg,
+            type,
+            receivedAt: new Date().toISOString(),
+          },
+          {
+            jobId: rawJobId,
+            priority: type === 'notify' ? 1 : 10, // Real-time messages get priority
+          }
+        );
+      } catch (err) {
+        // BUG 1 fallback: if the generated jobId still fails, retry with a safe SHA-256 hash to prevent message loss
+        logger.error('Failed to publish inbound message, retrying with fallback sanitized hash ID', {
           sessionId,
-          orgId,
-          message: msg,
-          type,
-          receivedAt: new Date().toISOString(),
-        },
-        {
-          jobId: `${sessionId}:${msg.key?.id ?? Date.now()}`,
-          priority: type === 'notify' ? 1 : 10, // Real-time messages get priority
+          error: (err as Error).message,
+        });
+        const crypto = await import('node:crypto');
+        const fallbackJobId = crypto.createHash('sha256').update(rawJobId).digest('hex');
+        try {
+          await queue.add(
+            `msg-${type}`,
+            {
+              sessionId,
+              orgId,
+              message: msg,
+              type,
+              receivedAt: new Date().toISOString(),
+            },
+            {
+              jobId: fallbackJobId,
+              priority: type === 'notify' ? 1 : 10,
+            }
+          );
+        } catch (retryErr) {
+          logger.error('Critical: Failed to publish inbound message even with fallback hash ID', {
+            sessionId,
+            error: (retryErr as Error).message,
+          });
         }
-      );
+      }
     }
 
     logger.debug('Published inbound messages', {
@@ -173,19 +226,47 @@ export class EventBus {
       const lastId = data.messages[data.messages.length - 1]?.key?.id || '';
       messageSignature = `${data.messages.length}_${firstId}_${lastId}`;
     }
-    const jobId = `history-sync:${sessionId}:${syncType}:${chunkOrder}:${messageSignature}`;
+    const rawJobId = generateHistorySyncJobId(sessionId, syncType, chunkOrder, messageSignature);
 
-    await queue.add(
-      'sync',
-      { sessionId, orgId, data },
-      {
-        jobId, // Unique job ID for BullMQ deduplication
-        attempts: 3,
-        backoff: { type: 'fixed', delay: 5000 },
-        priority: 5,
-        removeOnComplete: true,
+    try {
+      await queue.add(
+        'sync',
+        { sessionId, orgId, data },
+        {
+          jobId: rawJobId, // Unique job ID for BullMQ deduplication
+          attempts: 3,
+          backoff: { type: 'fixed', delay: 5000 },
+          priority: 5,
+          removeOnComplete: true,
+        }
+      );
+    } catch (err) {
+      // BUG 1 fallback: if the generated jobId still fails, retry with a safe SHA-256 hash to prevent sync stall
+      logger.error('Failed to publish history sync, retrying with fallback sanitized hash ID', {
+        sessionId,
+        error: (err as Error).message,
+      });
+      const crypto = await import('node:crypto');
+      const fallbackJobId = crypto.createHash('sha256').update(rawJobId).digest('hex');
+      try {
+        await queue.add(
+          'sync',
+          { sessionId, orgId, data },
+          {
+            jobId: fallbackJobId,
+            attempts: 3,
+            backoff: { type: 'fixed', delay: 5000 },
+            priority: 5,
+            removeOnComplete: true,
+          }
+        );
+      } catch (retryErr) {
+        logger.error('Critical: Failed to publish history sync even with fallback hash ID', {
+          sessionId,
+          error: (retryErr as Error).message,
+        });
       }
-    );
+    }
   }
 
   /**
