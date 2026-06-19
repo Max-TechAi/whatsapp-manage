@@ -904,6 +904,29 @@ class SessionManager {
           return;
         }
 
+        // Fallback: Check if all expected messages were processed in DB or Redis progress trackers
+        const dbTotal = parseInt(metadata.syncTotalMessages || '0');
+        const dbProcessed = parseInt(metadata.syncProcessedMessages || '0');
+
+        const progressKey = `sync:progress:${sessionId}`;
+        const progressData = await redis.hgetall(progressKey);
+        const redisProcessed = parseInt(progressData?.syncProcessedMessages || '0');
+        const redisTotal = parseInt(progressData?.syncTotalMessages || '0');
+
+        const finalProcessed = Math.max(dbProcessed, redisProcessed);
+        const finalTotal = Math.max(dbTotal, redisTotal);
+
+        if (finalTotal > 0 && finalProcessed >= finalTotal) {
+          logger.info('Initial history sync inactivity timeout triggered, but marking completed because all expected messages were processed', { 
+            sessionId, 
+            processed: finalProcessed, 
+            total: finalTotal 
+          });
+          await updateSyncProgress(sessionId, 'completed', finalTotal, finalTotal);
+          this.syncTimeouts.delete(sessionId);
+          return;
+        }
+
         logger.error('Initial history sync timed out (no progress for 5 minutes)', { sessionId });
         await updateSyncProgress(sessionId, 'failed', 0, 0, 'Sync timed out due to inactivity');
       } catch (err) {

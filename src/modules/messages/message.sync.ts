@@ -223,17 +223,27 @@ export class MessageSyncService {
 
     // 3. Bulk insert messages with dedup
     const messagesToInsert = [];
+    let skippedMessagesCount = 0;
     for (const msg of data.messages) {
-      if (!msg.key?.remoteJid || !msg.key?.id) continue;
+      if (!msg.key?.remoteJid || !msg.key?.id) {
+        skippedMessagesCount++;
+        continue;
+      }
 
       const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
       const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
 
       // Skip status and broadcast messages
-      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') {
+        skippedMessagesCount++;
+        continue;
+      }
 
       const chatId = await chatService.ensureChatExists(orgId, sessionId, normalizedRemoteJid);
-      if (!chatId) continue;
+      if (!chatId) {
+        skippedMessagesCount++;
+        continue;
+      }
 
       const { type, content } = extractSyncMessageContent(msg.message);
       const timestamp = msg.messageTimestamp
@@ -270,7 +280,8 @@ export class MessageSyncService {
     const messageResult = await messageService.bulkInsert(orgId, messagesToInsert);
 
     // Update progress
-    processedMessages += messageResult.inserted;
+    // Include duplicates, errors, and skipped messages in processed count to align progress bar with totalMessages
+    processedMessages += messageResult.inserted + messageResult.duplicates + messageResult.errors + skippedMessagesCount;
     
     const isCompleted = data.isLatest !== false; // default to true if not specified
     if (isCompleted) {
