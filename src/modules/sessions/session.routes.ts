@@ -509,4 +509,41 @@ router.post('/:id/sync-retry', async (req: Request, res: Response): Promise<void
   }
 });
 
+// ─── GET /:id/lid-mappings — Get all LID-to-Phone JID mappings for a session ────────
+
+router.get('/:id/lid-mappings', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { orgId } = req.user!;
+    const sessionId = req.params.id as string;
+
+    // Verify session ownership
+    const [sessionRecord] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)))
+      .limit(1);
+
+    if (!sessionRecord) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    // Fetch mappings from Redis
+    const mappingsKey = `lid:mapping:${sessionId}`;
+    const mappings = await redis.hgetall(mappingsKey);
+
+    res.status(200).json({
+      success: true,
+      data: mappings || {},
+    });
+  } catch (error) {
+    logger.error('Failed to fetch LID mappings', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      sessionId: req.params.id,
+      orgId: req.user?.orgId,
+    });
+    res.status(500).json({ error: 'Failed to fetch LID mappings' });
+  }
+});
+
 export default router;

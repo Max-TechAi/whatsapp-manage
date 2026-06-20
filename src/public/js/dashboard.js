@@ -10,6 +10,7 @@ let messagesMap = {}; // cache messages by JID
 let qrPollInterval = null;
 let currentQrSessionId = null;
 let contactsMap = {};
+let lidMappings = {};
 
 // Auth Guard on start
 if (!token) {
@@ -278,11 +279,14 @@ function handleInboxSessionChange() {
   document.getElementById('chatPlaceholder').style.display = 'flex';
   document.getElementById('activeChatWrapper').style.display = 'none';
   contactsMap = {};
+  lidMappings = {};
   
   if (activeSessionId) {
     checkInitialSyncStatus(activeSessionId);
-    loadChats();
-    loadContactsForSession();
+    loadLidMappingsForSession().then(() => {
+      loadChats();
+      loadContactsForSession();
+    });
   } else {
     hideSyncOverlay();
   }
@@ -444,10 +448,7 @@ function renderMessages(msgList) {
         // Render group sender name above bubble if not from self in group chat
         let senderHeader = '';
         if (!isSelf && activeChatId.endsWith('@g.us')) {
-          const contactName = contactsMap[m.senderJid];
-          const pushName = m.metadata?.pushName;
-          const phone = m.senderJid.split('@')[0];
-          const displayName = formatPhoneNumberFallback(contactName || pushName || phone);
+          const displayName = getSenderDisplayName(m.senderJid, m.metadata?.pushName);
           senderHeader = `<div class="message-sender" style="font-size: 0.75rem; font-weight: 600; color: #4fc3f7; margin-bottom: 0.2rem; cursor: default;">${escapeHtml(displayName)}</div>`;
         }
 
@@ -845,6 +846,21 @@ function handleWsEvent(data) {
 }
 
 // ─── HELPER UTILS ──────────────────────────────────────────────
+async function loadLidMappingsForSession() {
+  if (!activeSessionId) return;
+  try {
+    const response = await fetch(`/api/sessions/${activeSessionId}/lid-mappings`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (response.ok && resData.data) {
+      lidMappings = resData.data;
+    }
+  } catch (err) {
+    console.error('Failed to load LID mappings:', err);
+  }
+}
+
 async function loadContactsForSession() {
   if (!activeSessionId) return;
   try {
@@ -855,7 +871,7 @@ async function loadContactsForSession() {
     if (response.ok && resData.contacts) {
       contactsMap = {};
       resData.contacts.forEach(c => {
-        const name = c.displayName || c.pushName || c.phoneNumber || c.waId.split('@')[0];
+        const name = c.displayName || (c.pushName ? `~${c.pushName}` : null) || c.phoneNumber || c.waId.split('@')[0];
         contactsMap[c.waId] = name;
         const phone = c.waId.split('@')[0];
         contactsMap[phone] = name;
@@ -873,12 +889,42 @@ async function loadContactsForSession() {
   }
 }
 
+function getSenderDisplayName(senderJid, pushNameMetadata) {
+  let resolvedJid = senderJid;
+  if (resolvedJid.endsWith('@lid') && lidMappings[resolvedJid]) {
+    resolvedJid = lidMappings[resolvedJid];
+  }
+  
+  const contactName = contactsMap[resolvedJid] || contactsMap[resolvedJid.split('@')[0]];
+  if (contactName) {
+    return contactName;
+  }
+  
+  if (pushNameMetadata) {
+    return `~${pushNameMetadata}`;
+  }
+  
+  const phone = resolvedJid.split('@')[0];
+  return formatPhoneNumberFallback(phone);
+}
+
 function formatMessageContent(content) {
   if (!content) return '';
   let formatted = escapeHtml(content);
-  // Replace mentions (e.g. @905384534139 or @905384534139@s.whatsapp.net) with contact name
-  formatted = formatted.replace(/@(\d+)(?:@s\.whatsapp\.net)?/g, (match, phone) => {
-    const contactName = contactsMap[phone] || contactsMap[phone + '@s.whatsapp.net'];
+  // Replace mentions (e.g. @905384534139 or @31083399782580@lid) with contact name/pushname
+  formatted = formatted.replace(/@(\d+)(?:@s\.whatsapp\.net|@lid)?/g, (match, id) => {
+    let lookupKey = id;
+    const lidJid = id + '@lid';
+    if (lidMappings[lidJid]) {
+      const phoneJid = lidMappings[lidJid];
+      lookupKey = phoneJid.split('@')[0];
+    }
+    
+    const contactName = contactsMap[lookupKey] 
+      || contactsMap[lookupKey + '@s.whatsapp.net']
+      || contactsMap[id]
+      || contactsMap[lidJid];
+      
     if (contactName) {
       return `<span style="color: #3b82f6; font-weight: 600;">@${escapeHtml(contactName)}</span>`;
     }
