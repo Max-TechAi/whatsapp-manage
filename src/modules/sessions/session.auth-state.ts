@@ -18,7 +18,7 @@ import type {
   SignalDataSet,
 } from '@whiskeysockets/baileys';
 import { proto, initAuthCreds, BufferJSON } from '@whiskeysockets/baileys';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { db } from '../../config/database.js';
 import { sessions, sessionKeys } from '../../db/schema.js';
 import { encryptJSON, decryptJSON } from '../../security/encryption.js';
@@ -33,13 +33,6 @@ import { logger } from '../../observability/logger.js';
  *
  * @param sessionId - The session ID to load/store auth state for
  * @returns Object with Baileys-compatible `state` and a `saveCreds` callback
- *
- * @example
- * ```typescript
- * const { state, saveCreds } = await usePostgresAuthState(sessionId);
- * const socket = makeWASocket({ auth: state });
- * socket.ev.on('creds.update', saveCreds);
- * ```
  */
 export async function usePostgresAuthState(sessionId: string): Promise<{
   state: AuthenticationState;
@@ -73,6 +66,24 @@ export async function usePostgresAuthState(sessionId: string): Promise<{
     logger.debug('Initialized new auth credentials', { sessionId });
   }
 
+  // ── In-memory keys cache for fast read/writes ───────────────────────────
+  const keysCache = new Map<string, Map<string, any>>();
+
+  const getCache = (type: string, id: string) => {
+    return keysCache.get(type)?.get(id);
+  };
+
+  const setCache = (type: string, id: string, value: any) => {
+    if (!keysCache.has(type)) {
+      keysCache.set(type, new Map());
+    }
+    keysCache.get(type)!.set(id, value);
+  };
+
+  const deleteCache = (type: string, id: string) => {
+    keysCache.get(type)?.delete(id);
+  };
+
   // ── Build AuthenticationState ───────────────────────────────────────────
 
   const state: AuthenticationState = {
@@ -80,15 +91,35 @@ export async function usePostgresAuthState(sessionId: string): Promise<{
     keys: {
       /**
        * Retrieve signal protocol keys by type and ID.
-       * Queries the sessionKeys table, decrypts, and deserializes.
+       * Uses local cache first, fallback to batch database lookup.
        */
       get: async <T extends keyof SignalDataTypeMap>(
         type: T,
         ids: string[],
       ): Promise<Record<string, SignalDataTypeMap[T]>> => {
         const result: Record<string, SignalDataTypeMap[T]> = {};
+        const missingIds: string[] = [];
 
-        if (ids.length === 0) return result;
+        for (const id of ids) {
+          const cached = getCache(type, id);
+          if (cached !== undefined) {
+            result[id] = cached;
+          } else {
+            missingIds.push(id);
+          }
+        }
+
+        if (missingIds.length === 0) {
+          // Filter out cached null markers before returning to Baileys
+          const finalResult: Record<string, SignalDataTypeMap[T]> = {};
+          for (const id of ids) {
+            const val = result[id];
+            if (val !== undefined && val !== null) {
+              finalResult[id] = val;
+            }
+          }
+          return finalResult;
+        }
 
         try {
           const rows = await db
@@ -101,7 +132,7 @@ export async function usePostgresAuthState(sessionId: string): Promise<{
               and(
                 eq(sessionKeys.sessionId, sessionId),
                 eq(sessionKeys.keyType, type),
-                inArray(sessionKeys.keyId, ids),
+                inArray(sessionKeys.keyId, missingIds),
               ),
             );
 
@@ -114,6 +145,7 @@ export async function usePostgresAuthState(sessionId: string): Promise<{
                 BufferJSON.reviver,
               );
               result[row.keyId] = value;
+              setCache(type, row.keyId, value);
             } catch (error) {
               logger.warn('Failed to decrypt session key', {
                 sessionId,
@@ -121,6 +153,13 @@ export async function usePostgresAuthState(sessionId: string): Promise<{
                 keyId: row.keyId,
                 error: error instanceof Error ? error.message : 'Unknown error',
               });
+            }
+          }
+
+          // Mark missing keys as null in cache to avoid repeated DB hits
+          for (const id of missingIds) {
+            if (!(id in result)) {
+              setCache(type, id, null);
             }
           }
         } catch (error) {
@@ -131,54 +170,91 @@ export async function usePostgresAuthState(sessionId: string): Promise<{
           });
         }
 
-        return result;
+        // Filter out null values before returning to Baileys
+        const finalResult: Record<string, SignalDataTypeMap[T]> = {};
+        for (const id of ids) {
+          const val = result[id];
+          if (val !== undefined && val !== null) {
+            finalResult[id] = val;
+          }
+        }
+        return finalResult;
       },
 
       /**
        * Persist signal protocol keys.
-       * Upserts encrypted key data; null values trigger deletion.
+       * Updates local cache immediately (instant read-after-write) and schedules batch DB writes.
        */
       set: async (data: SignalDataSet): Promise<void> => {
         try {
+          const upsertValues: Array<{
+            sessionId: string;
+            keyType: string;
+            keyId: string;
+            keyData: string;
+          }> = [];
+
+          const deleteIdsByType: Record<string, string[]> = {};
+
           for (const [type, entries] of Object.entries(data)) {
             for (const [id, value] of Object.entries(entries ?? {})) {
               if (value === null || value === undefined) {
-                // Delete key when value is null (key invalidation)
-                await db
-                  .delete(sessionKeys)
-                  .where(
-                    and(
-                      eq(sessionKeys.sessionId, sessionId),
-                      eq(sessionKeys.keyType, type),
-                      eq(sessionKeys.keyId, id),
-                    ),
-                  );
+                // Delete from cache
+                deleteCache(type, id);
+                if (!deleteIdsByType[type]) {
+                  deleteIdsByType[type] = [];
+                }
+                deleteIdsByType[type].push(id);
               } else {
-                // Serialize with BufferJSON.replacer to handle Buffer instances,
-                // then encrypt the result for at-rest security
+                // Save to cache immediately
+                setCache(type, id, value);
+
+                // Serialize and encrypt
                 const serialized = JSON.parse(
                   JSON.stringify(value, BufferJSON.replacer),
                 );
                 const encrypted = encryptJSON(serialized);
 
-                await db
-                  .insert(sessionKeys)
-                  .values({
-                    sessionId,
-                    keyType: type,
-                    keyId: id,
-                    keyData: encrypted,
-                  })
-                  .onConflictDoUpdate({
-                    target: [
-                      sessionKeys.sessionId,
-                      sessionKeys.keyType,
-                      sessionKeys.keyId,
-                    ],
-                    set: { keyData: encrypted },
-                  });
+                upsertValues.push({
+                  sessionId,
+                  keyType: type,
+                  keyId: id,
+                  keyData: encrypted,
+                });
               }
             }
+          }
+
+          // Execute deletes in batch
+          for (const [type, ids] of Object.entries(deleteIdsByType)) {
+            if (ids.length > 0) {
+              await db
+                .delete(sessionKeys)
+                .where(
+                  and(
+                    eq(sessionKeys.sessionId, sessionId),
+                    eq(sessionKeys.keyType, type),
+                    inArray(sessionKeys.keyId, ids),
+                  ),
+                );
+            }
+          }
+
+          // Execute upserts in batch (chunked to avoid database parameters overflow)
+          const batchSize = 100;
+          for (let i = 0; i < upsertValues.length; i += batchSize) {
+            const batch = upsertValues.slice(i, i + batchSize);
+            await db
+              .insert(sessionKeys)
+              .values(batch)
+              .onConflictDoUpdate({
+                target: [
+                  sessionKeys.sessionId,
+                  sessionKeys.keyType,
+                  sessionKeys.keyId,
+                ],
+                set: { keyData: sql`EXCLUDED.key_data` },
+              });
           }
         } catch (error) {
           logger.error('Failed to persist session keys', {
