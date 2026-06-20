@@ -169,7 +169,7 @@ class SessionManager {
         } catch (err) {
           logger.warn('Error ending existing socket during reinitialization', { sessionId, error: (err as Error).message });
         }
-        this.activeSessions.delete(sessionId);
+        this.removeActiveSession(sessionId);
       }
 
       // Load encrypted auth state from database
@@ -273,7 +273,7 @@ class SessionManager {
           error: error instanceof Error ? error.message : 'Unknown error',
         });
       }
-      this.activeSessions.delete(sessionId);
+      this.removeActiveSession(sessionId);
     }
 
     // Update DB status
@@ -460,12 +460,8 @@ class SessionManager {
         if (active) {
           active.retryCount = 0;
           active.lastRetry = null;
+          this.setupPresenceKeepAlive(active);
         }
-
-        // Mark client as unavailable on WhatsApp to restore push notifications on phone
-        socket.sendPresenceUpdate('unavailable').catch((err) => {
-          logger.warn('Failed to send unavailable presence update on connect', { sessionId, error: err.message });
-        });
 
         // Clear any pending reconnects
         const reconnectTimeout = this.pendingReconnects.get(sessionId);
@@ -549,7 +545,7 @@ class SessionManager {
             .where(eq(sessions.id, sessionId));
 
           // Clean up in-memory state
-          this.activeSessions.delete(sessionId);
+          this.removeActiveSession(sessionId);
 
           // Clean up signal keys on logout
           if (isLoggedOut) {
@@ -607,7 +603,7 @@ class SessionManager {
               try {
                 this.pendingReconnects.delete(sessionId);
                 // Remove stale socket before reinitializing
-                this.activeSessions.delete(sessionId);
+                this.removeActiveSession(sessionId);
                 await this.initializeSocket(sessionId, orgId);
               } catch (error) {
                 logger.error('Reconnection failed', {
@@ -622,7 +618,7 @@ class SessionManager {
           } else {
             // Exhausted retries
             await this.updateSessionStatus(sessionId, 'disconnected');
-            this.activeSessions.delete(sessionId);
+            this.removeActiveSession(sessionId);
 
             logger.error('Max reconnection attempts reached', {
               sessionId,
@@ -946,6 +942,42 @@ class SessionManager {
 
     this.syncTimeouts.set(sessionId, timeout);
     logger.info('Set/reset initial sync timeout (2 minutes)', { sessionId });
+  }
+
+  private setupPresenceKeepAlive(active: ActiveSession): void {
+    // Clear any existing interval
+    if (active.presenceInterval) {
+      clearInterval(active.presenceInterval);
+    }
+
+    // Call once after a 5-second delay to let connection settle
+    setTimeout(() => {
+      active.socket.sendPresenceUpdate('unavailable').catch((err) => {
+        logger.warn('Failed to send unavailable presence update on connect', { sessionId: active.sessionId, error: err.message });
+      });
+    }, 5000);
+
+    // Call periodically every 5 minutes (300000 ms)
+    active.presenceInterval = setInterval(() => {
+      active.socket.sendPresenceUpdate('unavailable').catch((err) => {
+        logger.warn('Failed to send unavailable presence update in keep-alive', { sessionId: active.sessionId, error: err.message });
+      });
+    }, 300000);
+  }
+
+  private clearPresenceKeepAlive(active: ActiveSession): void {
+    if (active.presenceInterval) {
+      clearInterval(active.presenceInterval);
+      active.presenceInterval = undefined;
+    }
+  }
+
+  private removeActiveSession(sessionId: string): void {
+    const active = this.activeSessions.get(sessionId);
+    if (active) {
+      this.clearPresenceKeepAlive(active);
+      this.activeSessions.delete(sessionId);
+    }
   }
 }
 

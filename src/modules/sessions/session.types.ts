@@ -64,6 +64,8 @@ export interface ActiveSession {
   lastRetry: Date | null;
   /** Flag to track if this connection is doing the first-time history sync */
   isInitialSyncConnection?: boolean;
+  /** Interval handle for keeping presence status as unavailable */
+  presenceInterval?: NodeJS.Timeout;
 }
 
 /**
