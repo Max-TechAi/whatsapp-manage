@@ -462,6 +462,11 @@ class SessionManager {
           active.lastRetry = null;
         }
 
+        // Mark client as unavailable on WhatsApp to restore push notifications on phone
+        socket.sendPresenceUpdate('unavailable').catch((err) => {
+          logger.warn('Failed to send unavailable presence update on connect', { sessionId, error: err.message });
+        });
+
         // Clear any pending reconnects
         const reconnectTimeout = this.pendingReconnects.get(sessionId);
         if (reconnectTimeout) {
