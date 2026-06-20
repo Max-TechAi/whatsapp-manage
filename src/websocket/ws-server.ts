@@ -26,6 +26,7 @@ export class WsServer {
   private clients: Map<string, Set<AuthenticatedSocket>> = new Map();
   private heartbeatInterval!: NodeJS.Timeout;
   private streamReaderRunning = false;
+  private streamRedis?: typeof redis;
 
   async start(): Promise<void> {
     const env = getEnv();
@@ -240,11 +241,17 @@ export class WsServer {
       }
     }
 
+    // Duplicate client for blocking read to avoid blocking general commands on shared connection
+    this.streamRedis = redis.duplicate();
+    this.streamRedis.on('error', (err) => {
+      logger.error('Stream Redis connection error', { error: err.message });
+    });
+
     // Read loop
     const readLoop = async () => {
-      while (this.streamReaderRunning) {
+      while (this.streamReaderRunning && this.streamRedis) {
         try {
-          const results = await redis.xreadgroup(
+          const results = await this.streamRedis.xreadgroup(
             'GROUP', consumerGroup, consumerName,
             'COUNT', '50',
             'BLOCK', '5000',
@@ -271,6 +278,7 @@ export class WsServer {
                     this.broadcastToChannel(`chat:${data.chatId}`, { type: event, ...data });
                   }
 
+                  // Acknowledge using general client (non-blocking)
                   await redis.xack(stream as string, consumerGroup, id);
                 } catch (err) {
                   logger.error('Failed to process stream message', { error: (err as Error).message });
@@ -346,6 +354,16 @@ export class WsServer {
     this.wss.clients.forEach((ws) => {
       ws.close(1001, 'Server shutting down');
     });
+
+    if (this.streamRedis) {
+      try {
+        await this.streamRedis.quit();
+        logger.info('Stream Redis connection closed');
+      } catch (err) {
+        logger.error('Failed to close Stream Redis connection', { error: (err as Error).message });
+      }
+      this.streamRedis = undefined;
+    }
 
     return new Promise((resolve) => {
       this.httpServer.close(() => {
