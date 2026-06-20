@@ -8,7 +8,7 @@ import { workerRedis } from '../../config/redis.js';
 import { mediaService } from '../../modules/media/media.service.js';
 import { messageService } from '../../modules/messages/message.service.js';
 import { sessionManager } from '../../modules/sessions/session.manager.js';
-import { QUEUES } from '../event-bus.js';
+import { QUEUES, STREAMS, eventBus } from '../event-bus.js';
 import { logger } from '../../observability/logger.js';
 
 interface MediaDownloadJob {
@@ -71,7 +71,7 @@ export function createMediaWorker(): Worker {
         // Update message with media URL
         const dbMessage = await messageService.getMessageById(orgId, messageId);
         if (dbMessage) {
-          await messageService.upsertMessage({
+          const updatedMessage = await messageService.upsertMessage({
             ...dbMessage,
             mediaUrl: result.objectKey,
             mediaMimeType: mimeType,
@@ -83,6 +83,14 @@ export function createMediaWorker(): Worker {
               checksum: result.checksumSha256,
               mediaStatus: 'downloaded',
             },
+          });
+
+          // Broadcast to Redis Stream for WebSocket update
+          await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+            sessionId,
+            orgId,
+            chatId: dbMessage.chatId,
+            message: updatedMessage,
           });
         }
 
@@ -102,12 +110,20 @@ export function createMediaWorker(): Worker {
           try {
             const dbMessage = await messageService.getMessageById(orgId, messageId);
             if (dbMessage) {
-              await messageService.upsertMessage({
+              const updatedMessage = await messageService.upsertMessage({
                 ...dbMessage,
                 metadata: {
                   ...dbMessage.metadata,
                   mediaStatus: 'failed',
                 },
+              });
+
+              // Broadcast update
+              await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+                sessionId,
+                orgId,
+                chatId: dbMessage.chatId,
+                message: updatedMessage,
               });
             }
           } catch (updateErr) {

@@ -72,6 +72,8 @@ export class MessageService {
           status: data.status ?? 'sent',
           content: data.content,
           mediaUrl: data.mediaUrl ?? undefined,
+          mediaMimeType: data.mediaMimeType ?? undefined,
+          mediaSize: data.mediaSize ?? undefined,
           metadata: data.metadata ?? undefined,
           updatedAt: new Date(),
         },

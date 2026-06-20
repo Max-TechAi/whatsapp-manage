@@ -159,6 +159,13 @@ export class MediaService {
   }
 
   /**
+   * Download a partial file from MinIO (range support).
+   */
+  async downloadPartial(objectKey: string, offset: number, length: number): Promise<Readable> {
+    return minio.getPartialObject(this.bucket, objectKey, offset, length);
+  }
+
+  /**
    * Generate a presigned URL for temporary access to a file.
    */
   async getPresignedUrl(options: PresignedUrlOptions): Promise<string> {

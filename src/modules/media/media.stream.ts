@@ -9,7 +9,7 @@ import { mediaService } from './media.service.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
 import { messageService } from '../messages/message.service.js';
-import { eventBus } from '../../events/event-bus.js';
+import { eventBus, STREAMS } from '../../events/event-bus.js';
 
 export const mediaRouter = Router();
 
@@ -50,8 +50,7 @@ mediaRouter.get('/:id', async (req: Request, res: Response) => {
         'ETag': `"${file.checksumSha256}"`,
       });
 
-      const stream = await mediaService.download(file.objectKey);
-      // For simplicity, pipe the whole stream — MinIO handles the range internally
+      const stream = await mediaService.downloadPartial(file.objectKey, start, chunkSize);
       stream.pipe(res);
     } else {
       res.writeHead(200, {
@@ -154,7 +153,13 @@ mediaRouter.get('/:id/transcode', async (req: Request, res: Response) => {
       'Cache-Control': 'private, max-age=86400',
     });
 
-    ffmpeg(stream)
+    const isOgg = file.mimeType.includes('ogg') || file.objectKey.endsWith('.ogg');
+    const command = ffmpeg(stream);
+    if (isOgg) {
+      command.inputFormat('ogg');
+    }
+
+    command
       .toFormat('mp3')
       .on('error', (err) => {
         logger.error('FFmpeg transcoding failed', { error: err.message, fileId: req.params.id });
@@ -196,9 +201,17 @@ mediaRouter.post('/messages/:messageId/retry', async (req: Request, res: Respons
     // Clean up mediaFileId/failed status if present
     delete updatedMetadata.mediaFileId;
 
-    await messageService.upsertMessage({
+    const updatedMessage = await messageService.upsertMessage({
       ...dbMessage,
       metadata: updatedMetadata,
+    });
+
+    // Broadcast update to notify UI that it has started downloading
+    await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+      sessionId: dbMessage.sessionId,
+      orgId: req.user!.orgId,
+      chatId: dbMessage.chatId,
+      message: updatedMessage,
     });
 
     // Enqueue download job again
