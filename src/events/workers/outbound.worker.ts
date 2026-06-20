@@ -7,7 +7,7 @@ import { Worker, Job } from 'bullmq';
 import { workerRedis } from '../../config/redis.js';
 import { messageService } from '../../modules/messages/message.service.js';
 import { sessionManager } from '../../modules/sessions/session.manager.js';
-import { QUEUES } from '../event-bus.js';
+import { QUEUES, eventBus, STREAMS } from '../event-bus.js';
 import { logger } from '../../observability/logger.js';
 
 interface OutboundMessageJob {
@@ -86,6 +86,25 @@ export function createOutboundWorker(): Worker {
           ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
         },
         createdAt: timestamp,
+      });
+
+      // Broadcast the new message event to WebSockets
+      await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+        sessionId,
+        orgId,
+        chatId,
+        message: dbMessage,
+      }).catch((err) => {
+        logger.error('Failed to publish outbound message to stream', { sessionId, error: err.message });
+      });
+
+      // Publish webhook for outbound message
+      await eventBus.publishWebhookDelivery(orgId, 'message.sent', {
+        sessionId,
+        chatId,
+        message: dbMessage,
+      }).catch((err) => {
+        logger.error('Failed to publish outbound message webhook', { sessionId, error: err.message });
       });
 
       logger.info('Outbound message sent and stored successfully', {
