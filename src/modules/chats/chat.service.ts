@@ -60,7 +60,7 @@ export class ChatService {
       .onConflictDoUpdate({
         target: [chats.sessionId, chats.waChatId],
         set: {
-          name: data.name,
+          name: data.name ?? sql`chats.name`,
           avatarUrl: data.avatarUrl ?? undefined,
           unreadCount: data.unreadCount ?? undefined,
           isArchived: data.isArchived ?? undefined,

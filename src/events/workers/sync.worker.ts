@@ -155,13 +155,16 @@ export function createChatSyncWorker(): Worker {
 
             /* BUG 3: Broadcast chat update event via Redis stream / WebSockets */
             if (dbChat) {
-              await eventBus.publishToStream(STREAMS.CHATS, 'chat:update', {
-                sessionId,
-                orgId,
-                chat: dbChat,
-              }).catch(err => {
-                logger.error('Failed to publish chat update to stream', { sessionId, error: err.message });
-              });
+              const resolvedChat = await chatService.getChatById(orgId, dbChat.id);
+              if (resolvedChat) {
+                await eventBus.publishToStream(STREAMS.CHATS, 'chat:update', {
+                  sessionId,
+                  orgId,
+                  chat: resolvedChat,
+                }).catch(err => {
+                  logger.error('Failed to publish chat update to stream', { sessionId, error: err.message });
+                });
+              }
             }
             processed++;
           }
