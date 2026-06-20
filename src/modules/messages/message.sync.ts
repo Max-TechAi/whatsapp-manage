@@ -44,6 +44,8 @@ export class MessageSyncService {
         name?: string;
         notify?: string;
         imgUrl?: string;
+        lid?: string;
+        phoneNumber?: string;
       }>;
       messages: Array<{
         key: { remoteJid: string; fromMe: boolean; id: string; participant?: string };
@@ -93,6 +95,32 @@ export class MessageSyncService {
         if (mapping.lid && mapping.pn) {
           await saveLidMapping(sessionId, mapping.lid, mapping.pn);
         }
+      }
+    }
+
+    // Also extract mappings from contacts list (since Baileys often includes lid/phoneNumber mappings there)
+    if (data.contacts && Array.isArray(data.contacts)) {
+      let contactMappingsCount = 0;
+      for (const contact of data.contacts) {
+        try {
+          const waId = contact.id;
+          const lid = contact.lid;
+          if (waId && lid) {
+            await saveLidMapping(sessionId, lid, waId);
+            contactMappingsCount++;
+          } else if (waId) {
+            const phoneJid = contact.phoneNumber;
+            if (phoneJid) {
+              await saveLidMapping(sessionId, waId, phoneJid);
+              contactMappingsCount++;
+            }
+          }
+        } catch (err) {
+          // Ignore errors for individual contacts
+        }
+      }
+      if (contactMappingsCount > 0) {
+        logger.info('Extracted LID mappings from history sync contacts', { sessionId, count: contactMappingsCount });
       }
     }
 
@@ -282,6 +310,44 @@ export class MessageSyncService {
     }
 
     const messageResult = await messageService.bulkInsert(orgId, messagesToInsert);
+
+    // Update last message preview and last message at for the chats in this sync chunk
+    if (messagesToInsert.length > 0) {
+      const latestMessagesMap = new Map<string, { content: string | null; createdAt: Date }>();
+      for (const msg of messagesToInsert) {
+        const existing = latestMessagesMap.get(msg.chatId);
+        if (!existing || msg.createdAt > existing.createdAt) {
+          latestMessagesMap.set(msg.chatId, {
+            content: msg.content,
+            createdAt: msg.createdAt,
+          });
+        }
+      }
+
+      for (const [chatId, lastMsg] of latestMessagesMap.entries()) {
+        try {
+          const [chatRecord] = await db
+            .select({ lastMessageAt: chats.lastMessageAt })
+            .from(chats)
+            .where(eq(chats.id, chatId))
+            .limit(1);
+          
+          if (chatRecord && (!chatRecord.lastMessageAt || lastMsg.createdAt > chatRecord.lastMessageAt)) {
+            const preview = lastMsg.content ? lastMsg.content.substring(0, 200) : null;
+            await db
+              .update(chats)
+              .set({
+                lastMessagePreview: preview,
+                lastMessageAt: lastMsg.createdAt,
+                updatedAt: new Date(),
+              })
+              .where(eq(chats.id, chatId));
+          }
+        } catch (err) {
+          logger.warn('Failed to update chat last message preview after bulk insert', { chatId, error: (err as Error).message });
+        }
+      }
+    }
 
     // Update progress atomically to avoid concurrent write race conditions (lost updates)
     // Include duplicates, errors, and skipped messages in processed count to align progress bar with totalMessages

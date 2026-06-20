@@ -36,6 +36,11 @@ export async function saveLidMapping(sessionId: string, lid: string, phone: stri
   normalizedLid = localNormalizeJid(normalizedLid);
   normalizedPhone = localNormalizeJid(normalizedPhone);
 
+  // Convert c.us JID to s.whatsapp.net
+  if (normalizedPhone.endsWith('@c.us')) {
+    normalizedPhone = normalizedPhone.replace('@c.us', '@s.whatsapp.net');
+  }
+
   // Ensure they have the correct JID domains appended
   if (!normalizedLid.includes('@')) {
     normalizedLid = `${normalizedLid}@lid`;
@@ -44,6 +49,11 @@ export async function saveLidMapping(sessionId: string, lid: string, phone: stri
     normalizedPhone = `${normalizedPhone}@s.whatsapp.net`;
   }
   
+  // Prevent self-mapping
+  if (normalizedLid === normalizedPhone) {
+    return;
+  }
+
   if (normalizedLid.endsWith('@lid') && normalizedPhone.endsWith('@s.whatsapp.net')) {
     try {
       await redis.hset(lidMappingKey(sessionId), normalizedLid, normalizedPhone);
