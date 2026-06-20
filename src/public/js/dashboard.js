@@ -784,7 +784,7 @@ function handleWsEvent(data) {
   }
 
   // Real-time message receiver (maps new_message trigger and other inbound events)
-  if (type === 'message:new:notify' || type === 'message:new' || type === 'message:received' || type === 'message:sent' || type.startsWith('message:')) {
+  if (type === 'message:new' || type === 'message:received' || type === 'message:sent') {
     const msgChatId = data.chatId || data.data?.chatId;
 
     if (activeSessionId === sessionId && msgChatId) {
