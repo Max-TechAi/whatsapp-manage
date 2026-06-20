@@ -386,18 +386,8 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   document.getElementById('chatPlaceholder').style.display = 'none';
   document.getElementById('activeChatWrapper').style.display = 'flex';
 
-  // Instant UI: Clear unread badge locally
-  const chatObj = chats.find(c => c.id === chatDbId);
-  if (chatObj && chatObj.unreadCount > 0) {
-    chatObj.unreadCount = 0;
-    renderChatsList(chats);
-  }
-
   // Load message history
   await loadMessages(chatDbId);
-  
-  // Mark chat as read in backend
-  markChatAsRead(chatDbId);
 }
 
 async function loadMessages(chatDbId, silent = false) {
@@ -584,6 +574,11 @@ async function handleSendMessageSubmit(e) {
     });
     const resData = await response.json();
     if (!response.ok) throw new Error(resData.error || 'Failed to send');
+
+    // Mark chat as read since we replied
+    if (activeChatDbId) {
+      markChatAsRead(activeChatDbId);
+    }
   } catch (err) {
     console.error(err);
     logTerminal('ERROR', `Send failed: ${err.message}`);
@@ -803,7 +798,11 @@ function handleWsEvent(data) {
           chatObj.lastMessagePreview = data.content;
         }
         
-        if (data.fromMe === false && activeChatDbId !== msgChatId) {
+        const isFromMe = data.fromMe || data.message?.fromMe || false;
+        if (isFromMe) {
+          chatObj.unreadCount = 0; // Reset count since we replied!
+        } else {
+          // Keep unread increment even if active (unread until replied)
           chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
         }
         renderChatsList(chats);
@@ -812,10 +811,9 @@ function handleWsEvent(data) {
         loadChats();
       }
 
-      // If we are currently chatting with this contact, reload messages and mark as read
+      // If we are currently chatting with this contact, reload messages silently
       if (activeChatDbId === msgChatId) {
         loadMessages(activeChatDbId, true);
-        markChatAsRead(activeChatDbId);
       }
     }
   }

@@ -147,8 +147,8 @@ BEGIN
     last_message_preview = LEFT(NEW.content, 200),
     last_message_at = NEW.created_at,
     unread_count = CASE
-      WHEN NEW.from_me = false THEN unread_count + 1
-      ELSE unread_count
+      WHEN NEW.from_me = true THEN 0
+      ELSE unread_count + 1
     END,
     updated_at = NOW()
   WHERE id = NEW.chat_id;
