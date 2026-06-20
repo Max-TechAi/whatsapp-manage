@@ -396,9 +396,11 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   markChatAsRead(chatDbId);
 }
 
-async function loadMessages(chatDbId) {
+async function loadMessages(chatDbId, silent = false) {
   const container = document.getElementById('messagesContainer');
-  container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Loading chat history...</div>';
+  if (!silent) {
+    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Loading chat history...</div>';
+  }
 
   try {
     const response = await fetch(`/api/messages/chats/${chatDbId}/messages?limit=100`, {
@@ -811,7 +813,7 @@ function handleWsEvent(data) {
 
       // If we are currently chatting with this contact, reload messages and mark as read
       if (activeChatDbId === msgChatId) {
-        loadMessages(activeChatDbId);
+        loadMessages(activeChatDbId, true);
         markChatAsRead(activeChatDbId);
       }
     }
