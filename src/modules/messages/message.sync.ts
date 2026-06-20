@@ -151,6 +151,7 @@ export class MessageSyncService {
           lastMessageAt: chat.conversationTimestamp
             ? new Date(Number(chat.conversationTimestamp) * 1000)
             : null,
+          isHistorySync: true,
         });
         if (result) {
           chatsSynced++;

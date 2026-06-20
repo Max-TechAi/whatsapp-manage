@@ -30,6 +30,7 @@ export class ChatService {
     lastMessagePreview?: string | null;
     lastMessageAt?: Date | null;
     metadata?: Record<string, unknown>;
+    isHistorySync?: boolean;
   }): Promise<Chat | null> {
     // BUG 2: Exclude WhatsApp Status broadcast threads
     const resolvedJid = await resolveLidJid(data.sessionId, data.waChatId);
@@ -62,7 +63,7 @@ export class ChatService {
         set: {
           name: data.name ?? sql`chats.name`,
           avatarUrl: data.avatarUrl ?? undefined,
-          unreadCount: data.unreadCount ?? undefined,
+          unreadCount: (data.isHistorySync || data.unreadCount === 0) ? (data.unreadCount ?? undefined) : undefined,
           isArchived: data.isArchived ?? undefined,
           isPinned: data.isPinned ?? undefined,
           mutedUntil: data.mutedUntil ?? undefined,
