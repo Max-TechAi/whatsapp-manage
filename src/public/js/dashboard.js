@@ -791,7 +791,10 @@ function handleWsEvent(data) {
       // In-memory array update for instant chat list updates & sorting
       const chatObj = chats.find(c => c.id === msgChatId || c.waChatId === msgChatId);
       if (chatObj) {
-        chatObj.lastMessageAt = data.createdAt || new Date().toISOString();
+        const msgTime = new Date(data.createdAt || data.message?.createdAt || new Date()).getTime();
+        const lastMsgTime = chatObj.lastMessageAt ? new Date(chatObj.lastMessageAt).getTime() : 0;
+
+        chatObj.lastMessageAt = data.createdAt || data.message?.createdAt || new Date().toISOString();
         if (data.message?.content) {
           chatObj.lastMessagePreview = data.message.content;
         } else if (data.content) {
@@ -802,8 +805,10 @@ function handleWsEvent(data) {
         if (isFromMe) {
           chatObj.unreadCount = 0; // Reset count since we replied!
         } else {
-          // Keep unread increment even if active (unread until replied)
-          chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
+          // Only increment unread count if this message is newer than the last registered activity
+          if (msgTime > lastMsgTime) {
+            chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
+          }
         }
         renderChatsList(chats);
       } else {
