@@ -58,6 +58,7 @@ export class MessageSyncService {
       }>;
       isLatest?: boolean;
       syncType: number;
+      chunkOrder?: number;
     }
   ): Promise<{ chats: number; contacts: number; messages: BulkInsertResult }> {
     logger.info('Processing history sync', {
@@ -71,13 +72,17 @@ export class MessageSyncService {
 
     // Track progress in Redis and DB atomically to prevent race conditions from concurrent workers
     const progressKey = `sync:progress:${sessionId}`;
-    
-    // Atomically increment the total messages expected in Redis
-    const totalMessages = await redis.hincrby(progressKey, 'syncTotalMessages', data.messages.length);
-    
-    // Get the current processed messages count from Redis (could be updated by other concurrent workers)
-    const processedMessagesVal = await redis.hget(progressKey, 'syncProcessedMessages');
-    const processedMessages = parseInt(processedMessagesVal || '0');
+    const totalKey = `sync:chunks:total:${sessionId}`;
+    const processedKey = `sync:chunks:processed:${sessionId}`;
+    const chunkKey = `${data.syncType ?? 0}_${data.chunkOrder ?? 0}_${data.messages?.[0]?.key?.id || 'empty'}`;
+
+    // Set chunk total messages atomically and fetch global totals (idempotent, retries don't double count)
+    await redis.hset(totalKey, chunkKey, data.messages.length.toString());
+    const totals = await redis.hvals(totalKey);
+    const totalMessages = totals.reduce((sum, val) => sum + (parseInt(val) || 0), 0);
+
+    const processeds = await redis.hvals(processedKey);
+    const processedMessages = processeds.reduce((sum, val) => sum + (parseInt(val) || 0), 0);
 
     await updateSyncProgress(sessionId, 'syncing', processedMessages, totalMessages);
 
@@ -281,11 +286,14 @@ export class MessageSyncService {
     // Update progress atomically to avoid concurrent write race conditions (lost updates)
     // Include duplicates, errors, and skipped messages in processed count to align progress bar with totalMessages
     const processedDelta = messageResult.inserted + messageResult.duplicates + messageResult.errors + skippedMessagesCount;
-    const finalProcessedMessages = await redis.hincrby(progressKey, 'syncProcessedMessages', processedDelta);
-    
-    // Get the latest atomic total messages count to ensure alignment
-    const finalTotalMessagesVal = await redis.hget(progressKey, 'syncTotalMessages');
-    const finalTotalMessages = parseInt(finalTotalMessagesVal || '0') || totalMessages;
+    await redis.hset(processedKey, chunkKey, processedDelta.toString());
+
+    // Fetch the updated global processed and total counts (idempotent across chunk updates)
+    const finalTotals = await redis.hvals(totalKey);
+    const finalTotalMessages = finalTotals.reduce((sum, val) => sum + (parseInt(val) || 0), 0);
+
+    const finalProcesseds = await redis.hvals(processedKey);
+    const finalProcessedMessages = finalProcesseds.reduce((sum, val) => sum + (parseInt(val) || 0), 0);
 
     const isCompleted = data.isLatest !== false && (data.syncType === undefined || data.syncType === null || data.syncType === 2 || data.syncType === 3);
     if (isCompleted) {

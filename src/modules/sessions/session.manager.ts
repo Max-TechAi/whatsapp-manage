@@ -909,10 +909,14 @@ class SessionManager {
         const dbTotal = parseInt(metadata.syncTotalMessages || '0');
         const dbProcessed = parseInt(metadata.syncProcessedMessages || '0');
 
-        const progressKey = `sync:progress:${sessionId}`;
-        const progressData = await redis.hgetall(progressKey);
-        const redisProcessed = parseInt(progressData?.syncProcessedMessages || '0');
-        const redisTotal = parseInt(progressData?.syncTotalMessages || '0');
+        const totalKey = `sync:chunks:total:${sessionId}`;
+        const processedKey = `sync:chunks:processed:${sessionId}`;
+
+        const totals = await redis.hvals(totalKey);
+        const processeds = await redis.hvals(processedKey);
+
+        const redisTotal = totals.reduce((sum, val) => sum + (parseInt(val) || 0), 0);
+        const redisProcessed = processeds.reduce((sum, val) => sum + (parseInt(val) || 0), 0);
 
         const finalProcessed = Math.max(dbProcessed, redisProcessed);
         const finalTotal = Math.max(dbTotal, redisTotal);
@@ -1010,6 +1014,18 @@ export async function updateSyncProgress(
         .where(eq(sessions.id, sessionId));
     } catch (err) {
       logger.error('Failed to update session metadata atomically in updateSyncProgress', { sessionId, error: (err as Error).message });
+    }
+  }
+
+  // Cleanup Redis progress and chunk keys on completion or failure
+  if (syncStatus === 'completed' || syncStatus === 'failed') {
+    try {
+      await redis.del(progressKey);
+      await redis.del(`sync:chunks:total:${sessionId}`);
+      await redis.del(`sync:chunks:processed:${sessionId}`);
+      logger.info('Cleaned up Redis history sync keys', { sessionId, syncStatus });
+    } catch (err) {
+      logger.warn('Failed to cleanup Redis sync keys', { sessionId, error: (err as Error).message });
     }
   }
 
