@@ -935,6 +935,10 @@ function formatMessageContent(content) {
 
 function formatPhoneNumberFallback(name) {
   if (!name) return '';
+  // If it is a LID JID user part (usually 15 digits starting with 11, 31, 51, etc.)
+  if (name.length === 15 && /^(?:11|31|51)/.test(name)) {
+    return 'LID ' + name;
+  }
   // If name is just digits (like user part of JID), prepend +
   if (/^\d+$/.test(name)) {
     return '+' + name;
