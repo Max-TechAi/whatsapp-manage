@@ -340,9 +340,9 @@ function renderChatsList(chatList) {
       const lastMsg = c.lastMessagePreview || '<i>No messages</i>';
       const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
       
-      /* BUG 2: Show simple dot indicator for chats with genuinely unread messages, no numeric count */
+      // Show numeric unread badge count
       const hasUnread = typeof c.unreadCount !== 'undefined' && c.unreadCount !== null && Number(c.unreadCount) > 0;
-      const unread = hasUnread ? `<span class="chat-badge-dot" title="${c.unreadCount} unread messages"></span>` : '';
+      const unread = hasUnread ? `<span class="chat-badge" title="${c.unreadCount} unread messages">${c.unreadCount}</span>` : '';
       
       // Fallback phone number formatted with '+'
       const displayName = formatPhoneNumberFallback(c.name || c.waChatId.split('@')[0]);

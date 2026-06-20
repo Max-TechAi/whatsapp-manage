@@ -353,6 +353,8 @@ body {
   font-weight: 700;
   padding: 0.15rem 0.45rem;
   border-radius: 10px;
+  flex-shrink: 0;
+  display: inline-block;
 }
 
 /* BUG 2: Simple dot badge instead of numeric count */
