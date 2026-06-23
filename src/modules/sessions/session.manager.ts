@@ -1101,29 +1101,51 @@ class SessionManager {
       }
 
       let statusCondition;
-      if (status === 'read') {
-        statusCondition = ne(messages.status, 'read');
-      } else if (status === 'delivered') {
-        statusCondition = inArray(messages.status, ['pending', 'sent']);
-      } else {
-        statusCondition = ne(messages.status, status);
-      }
+      if (status === 'read' || status === 'delivered') {
+        if (status === 'read') {
+          statusCondition = ne(messages.status, 'read');
+        } else {
+          statusCondition = inArray(messages.status, ['pending', 'sent']);
+        }
 
-      // Update all prior outbound messages in that chat up to the reference message's createdAt
-      await db
-        .update(messages)
-        .set({
-          status,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(messages.chatId, msgRecord.chatId),
-            eq(messages.fromMe, true),
-            lte(messages.createdAt, msgRecord.createdAt),
-            statusCondition
-          )
-        );
+        // Update all prior outbound messages in that chat up to the reference message's createdAt
+        await db
+          .update(messages)
+          .set({
+            status,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(messages.chatId, msgRecord.chatId),
+              eq(messages.fromMe, true),
+              lte(messages.createdAt, msgRecord.createdAt),
+              statusCondition
+            )
+          );
+      } else {
+        // Only update the single referenced message, preventing status downgrades (e.g., read/delivered -> sent)
+        if (status === 'sent') {
+          statusCondition = inArray(messages.status, ['pending']);
+        } else if (status === 'pending') {
+          statusCondition = eq(messages.status, 'pending');
+        } else {
+          statusCondition = ne(messages.status, status);
+        }
+
+        await db
+          .update(messages)
+          .set({
+            status,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(messages.id, msgRecord.id),
+              statusCondition
+            )
+          );
+      }
 
       logger.debug('Receipt status updated in database', {
         sessionId,
