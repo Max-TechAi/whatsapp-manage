@@ -857,22 +857,26 @@ class SessionManager {
       // eventBus.broadcast(orgId, SessionEventType.PRESENCE_UPDATED, { sessionId, jid, presences });
     });
 
-    // ── Message Status Updates (Receipts) ──────────────────────────────
-
     socket.ev.on('messages.update', async (updates) => {
-      logger.debug('Messages update (receipt) event received', {
+      logger.info('[DEBUG RECEIPT] Baileys messages.update (status update) event received', {
         sessionId,
-        count: updates.length,
+        updatesCount: updates.length,
+        updatesDetails: updates.map(u => ({
+          msgId: u.key.id,
+          remoteJid: u.key.remoteJid,
+          status: u.update.status
+        }))
       });
 
       for (const update of updates) {
         if (update.update.status !== undefined && update.update.status !== null) {
           const statusMap: Record<number, string> = {
-            0: 'pending',
-            1: 'sent',
-            2: 'delivered',
-            3: 'read',
+            0: 'failed',
+            1: 'pending',
+            2: 'sent',
+            3: 'delivered',
             4: 'read',
+            5: 'read',
           };
           const status = statusMap[update.update.status] || 'sent';
           const messageId = update.key.id;
@@ -885,9 +889,14 @@ class SessionManager {
     });
 
     socket.ev.on('message-receipt.update', async (receipts) => {
-      logger.debug('Message receipts update event received', {
+      logger.info('[DEBUG RECEIPT] Baileys message-receipt.update event received', {
         sessionId,
-        count: receipts.length,
+        receiptsCount: receipts.length,
+        receiptsDetails: receipts.map(r => ({
+          msgId: r.key.id,
+          remoteJid: r.key.remoteJid,
+          receipt: r.receipt
+        }))
       });
 
       for (const receipt of receipts) {

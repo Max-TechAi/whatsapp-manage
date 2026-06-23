@@ -596,11 +596,12 @@ function extractSyncMessageContent(message: any): { type: string; content: strin
  */
 function mapWAStatus(status?: number): string {
   switch (status) {
-    case 0: return 'pending';
-    case 1: return 'sent';
-    case 2: return 'delivered';
-    case 3: return 'read';
+    case 0: return 'failed';
+    case 1: return 'pending';
+    case 2: return 'sent';
+    case 3: return 'delivered';
     case 4: return 'read';
+    case 5: return 'read';
     default: return 'sent';
   }
 }
