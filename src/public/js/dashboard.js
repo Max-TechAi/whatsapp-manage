@@ -445,7 +445,9 @@ function renderMessages(msgList) {
 
         // Render message body (handles text content vs media files)
         let bodyHtml = '';
-        if (['image', 'video', 'audio', 'document', 'sticker'].includes(m.messageType)) {
+        if (m.isDeleted) {
+          bodyHtml = `<span style="font-style: italic; color: rgba(255,255,255,0.4); display: inline-flex; align-items: center; gap: 0.25rem;">🚫 This message was deleted</span>`;
+        } else if (['image', 'video', 'audio', 'document', 'sticker'].includes(m.messageType)) {
           if (m.metadata?.mediaStatus === 'failed') {
             // BUG 6: Handle download failures gracefully with a retry and a "media unavailable" fallback UI
             bodyHtml = `
@@ -524,11 +526,14 @@ function renderMessages(msgList) {
           bodyHtml = formatMessageContent(m.content || '');
         }
 
+        const editedLabel = m.isEdited ? '<span style="font-size: 0.65rem; color: rgba(255,255,255,0.4); margin-right: 0.25rem;">Edited</span>' : '';
+
         return `
           <div class="${bubbleClass}">
             ${senderHeader}
             ${bodyHtml}
             <div class="message-meta">
+              ${editedLabel}
               <span>${time}</span>
               ${statusTick}
             </div>

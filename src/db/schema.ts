@@ -251,6 +251,9 @@ export const messages = pgTable(
     isForwarded: boolean('is_forwarded').notNull().default(false),
     forwardScore: integer('forward_score').notNull().default(0),
     starred: boolean('starred').notNull().default(false),
+    isEdited: boolean('is_edited').notNull().default(false),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    isDeleted: boolean('is_deleted').notNull().default(false),
     metadata: jsonb('metadata').default({}),
     /**
      * Full-text search vector column.

@@ -12,6 +12,9 @@ import { eventBus, QUEUES, STREAMS } from '../event-bus.js';
 import { extractMessageContent, getJidType, normalizeJid } from '../../modules/sessions/session.events.js';
 import { resolveLidJid } from '../../modules/sessions/lid-mapping.js';
 import { logger } from '../../observability/logger.js';
+import { db } from '../../config/database.js';
+import { messages } from '../../db/schema.js';
+import { eq, and } from 'drizzle-orm';
 
 interface InboundMessageJob {
   sessionId: string;
@@ -48,6 +51,113 @@ export function createMessageWorker(): Worker {
       if (remoteJid.endsWith('@broadcast') || remoteJid === 'status') {
         logger.debug('Skipping status/broadcast message inbound job', { remoteJid, waMessageId: waMessage.key.id });
         return;
+      }
+
+      // Intercept message edits and deletes (revoke)
+      const protocolMessage = waMessage.message?.protocolMessage;
+      if (protocolMessage) {
+        const targetId = protocolMessage.key?.id;
+        const isEdit = protocolMessage.type === 14 || protocolMessage.type === 'MESSAGE_EDIT';
+        const isRevoke = protocolMessage.type === 0 || protocolMessage.type === 'REVOKE';
+
+        if (targetId && (isEdit || isRevoke)) {
+          logger.info('[DEBUG EDIT_DELETE] Intercepted protocolMessage', {
+            sessionId,
+            waMessageId: waMessage.key.id,
+            targetId,
+            isEdit,
+            isRevoke,
+          });
+
+          // Fetch the original message from the database
+          const [originalMsg] = await db
+            .select({
+              id: messages.id,
+              chatId: messages.chatId,
+              content: messages.content,
+            })
+            .from(messages)
+            .where(
+              and(
+                eq(messages.sessionId, sessionId),
+                eq(messages.waMessageId, targetId)
+              )
+            )
+            .limit(1);
+
+          if (originalMsg) {
+            if (isEdit) {
+              // Extract the new content from the editedMessage using extractMessageContent
+              const dummyWaMsg = {
+                key: protocolMessage.key,
+                message: protocolMessage.editedMessage,
+                messageTimestamp: waMessage.messageTimestamp,
+              };
+              const { content: newContent } = extractMessageContent(dummyWaMsg as any);
+
+              // Update database record
+              await db
+                .update(messages)
+                .set({
+                  content: newContent,
+                  isEdited: true,
+                  editedAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(eq(messages.id, originalMsg.id));
+
+              logger.info('[DEBUG EDIT_DELETE] Updated message content for edit', {
+                messageId: originalMsg.id,
+                waMessageId: targetId,
+                newContent,
+              });
+
+              // Broadcast update via message:status_update
+              await eventBus.publishToStream(STREAMS.MESSAGES, 'message:status_update', {
+                sessionId,
+                orgId,
+                chatId: originalMsg.chatId,
+                messageId: targetId,
+                isEdited: true,
+                content: newContent,
+              });
+
+            } else if (isRevoke) {
+              // Update database record (keep content in DB but set isDeleted flag)
+              await db
+                .update(messages)
+                .set({
+                  isDeleted: true,
+                  updatedAt: new Date(),
+                })
+                .where(eq(messages.id, originalMsg.id));
+
+              logger.info('[DEBUG EDIT_DELETE] Flagged message as deleted', {
+                messageId: originalMsg.id,
+                waMessageId: targetId,
+              });
+
+              // Broadcast update via message:status_update
+              await eventBus.publishToStream(STREAMS.MESSAGES, 'message:status_update', {
+                sessionId,
+                orgId,
+                chatId: originalMsg.chatId,
+                messageId: targetId,
+                isDeleted: true,
+              });
+            }
+          } else {
+            logger.warn('[DEBUG EDIT_DELETE] Original message not found for edit/revoke', {
+              sessionId,
+              targetId,
+              isEdit,
+              isRevoke,
+            });
+          }
+
+          // Return early to prevent inserting the protocol message wrapper as a new bubble
+          return { messageId: null };
+        }
       }
 
       const waMessageId = waMessage.key.id;

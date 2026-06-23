@@ -38,6 +38,9 @@ export interface Message {
   forwardScore: number;
   starred: boolean;
   metadata: Record<string, unknown>;
+  isEdited?: boolean;
+  editedAt?: Date | null;
+  isDeleted?: boolean;
   createdAt: Date;
   updatedAt: Date | null;
   deletedAt: Date | null;
