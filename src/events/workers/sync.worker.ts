@@ -138,6 +138,11 @@ export function createChatSyncWorker(): Worker {
             // Find and soft-handle deletion
             logger.info('Chat deletion event', { sessionId, chatId: chat.id });
           } else {
+            logger.info('[DEBUG UNREAD] ChatSyncWorker: upsertChat starting', {
+              sessionId,
+              waChatId: chat.id ?? chat.waChatId,
+              incomingUnreadCount: chat.unreadCount,
+            });
             const dbChat = await chatService.upsertChat({
               orgId,
               sessionId,
@@ -156,6 +161,13 @@ export function createChatSyncWorker(): Worker {
             /* BUG 3: Broadcast chat update event via Redis stream / WebSockets */
             if (dbChat) {
               const resolvedChat = await chatService.getChatById(orgId, dbChat.id);
+              logger.info('[DEBUG UNREAD] ChatSyncWorker: dbChat upserted and fetched', {
+                sessionId,
+                waChatId: chat.id ?? chat.waChatId,
+                dbChatId: dbChat.id,
+                dbUnreadCount: dbChat.unreadCount,
+                resolvedUnreadCount: resolvedChat?.unreadCount,
+              });
               if (resolvedChat) {
                 await eventBus.publishToStream(STREAMS.CHATS, 'chat:update', {
                   sessionId,

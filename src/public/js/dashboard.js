@@ -11,6 +11,7 @@ let qrPollInterval = null;
 let currentQrSessionId = null;
 let contactsMap = {};
 let lidMappings = {};
+let processedMessageIds = new Set();
 
 // Auth Guard on start
 if (!token) {
@@ -788,12 +789,28 @@ function handleWsEvent(data) {
     const msgChatId = data.chatId || data.data?.chatId;
 
     if (activeSessionId === sessionId && msgChatId) {
+      // BUG 1: Deduplicate message processing using a Set of processed message IDs
+      const msgId = data.message?.waMessageId || data.waMessageId || data.message?.id || data.id;
+      let isDuplicate = false;
+      if (msgId) {
+        if (processedMessageIds.has(msgId)) {
+          isDuplicate = true;
+        } else {
+          processedMessageIds.add(msgId);
+        }
+      }
+
+      console.log('[DEBUG UNREAD] WS message event received:', {
+        type,
+        msgChatId,
+        msgId,
+        isDuplicate,
+        fromMe: data.fromMe || data.message?.fromMe || false
+      });
+
       // In-memory array update for instant chat list updates & sorting
       const chatObj = chats.find(c => c.id === msgChatId || c.waChatId === msgChatId);
       if (chatObj) {
-        const msgTime = new Date(data.createdAt || data.message?.createdAt || new Date()).getTime();
-        const lastMsgTime = chatObj.lastMessageAt ? new Date(chatObj.lastMessageAt).getTime() : 0;
-
         chatObj.lastMessageAt = data.createdAt || data.message?.createdAt || new Date().toISOString();
         if (data.message?.content) {
           chatObj.lastMessagePreview = data.message.content;
@@ -803,20 +820,35 @@ function handleWsEvent(data) {
         
         const isFromMe = data.fromMe || data.message?.fromMe || false;
         if (isFromMe) {
+          console.log('[DEBUG UNREAD] Resetting unread count to 0 in chatObj due to fromMe message', { msgChatId, oldVal: chatObj.unreadCount });
           chatObj.unreadCount = 0; // Reset count since we replied!
+        } else if (!isDuplicate) {
+          // Increment unread count for every new inbound message that is not a duplicate
+          const oldVal = chatObj.unreadCount;
+          chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
+          console.log('[DEBUG UNREAD] Incrementing unread count in chatObj', { msgChatId, oldVal, newVal: chatObj.unreadCount });
         } else {
-          // Only increment unread count if this message is newer than the last registered activity
-          if (msgTime > lastMsgTime) {
-            chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
-          }
+          console.log('[DEBUG UNREAD] Skipping unread increment because it is a duplicate message', { msgChatId, msgId });
         }
         renderChatsList(chats);
       } else {
+        console.log('[DEBUG UNREAD] Chat object not found in chats array, calling loadChats()', { msgChatId });
         // Fallback: reload chats list from server
         loadChats();
       }
 
       // If we are currently chatting with this contact, reload messages silently
+      if (activeChatDbId === msgChatId) {
+        loadMessages(activeChatDbId, true);
+      }
+    }
+  }
+
+  // Handle media and status updates separately to avoid duplicate counts or incorrect resets
+  if (type === 'message:media_update' || type === 'message:status_update') {
+    const msgChatId = data.chatId || data.data?.chatId;
+    if (activeSessionId === sessionId && msgChatId) {
+      // If we are currently chatting with this contact, reload messages silently to update checkmarks/media
       if (activeChatDbId === msgChatId) {
         loadMessages(activeChatDbId, true);
       }
@@ -829,9 +861,29 @@ function handleWsEvent(data) {
     if (activeSessionId === sessionId && updatedChat) {
       const index = chats.findIndex(c => c.id === updatedChat.id || c.waChatId === updatedChat.waChatId);
       if (index !== -1) {
-        // Merge updated properties
+        // Merge updated properties, preserving current unread count unless explicitly read (0)
+        const oldUnreadCount = chats[index].unreadCount;
+        console.log('[DEBUG UNREAD] WS chat:update event received for existing chat', {
+          chatId: updatedChat.id,
+          waChatId: updatedChat.waChatId,
+          oldUnreadCount,
+          incomingUnreadCount: updatedChat.unreadCount
+        });
         chats[index] = { ...chats[index], ...updatedChat };
+        if (updatedChat.unreadCount !== 0) {
+          console.log('[DEBUG UNREAD] WS chat:update preserving oldUnreadCount because incoming is non-zero', {
+            chatId: updatedChat.id,
+            oldUnreadCount,
+            incomingUnreadCount: updatedChat.unreadCount
+          });
+          chats[index].unreadCount = oldUnreadCount;
+        }
       } else {
+        console.log('[DEBUG UNREAD] WS chat:update event received for NEW chat', {
+          chatId: updatedChat.id,
+          waChatId: updatedChat.waChatId,
+          incomingUnreadCount: updatedChat.unreadCount
+        });
         // Insert new chat if it doesn't exist locally
         chats.push(updatedChat);
       }

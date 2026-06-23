@@ -20,17 +20,17 @@ import type { WASocket, BaileysEventMap, WAMessage } from '@whiskeysockets/baile
 import * as QRCode from 'qrcode';
 import pino from 'pino';
 import { v4 as uuidv4 } from 'uuid';
-import { eq, and, inArray, sql } from 'drizzle-orm';
+import { eq, and, inArray, sql, lte, ne, desc } from 'drizzle-orm';
 import { Boom } from '@hapi/boom';
 
 import { db } from '../../config/database.js';
-import { sessions, sessionKeys } from '../../db/schema.js';
+import { sessions, sessionKeys, messages } from '../../db/schema.js';
 import { redis } from '../../config/redis.js';
 import { logger } from '../../observability/logger.js';
 import { usePostgresAuthState } from './session.auth-state.js';
 import { SessionEventType, normalizeJid } from './session.events.js';
 import type { ActiveSession, SessionStatus, WhatsAppSession } from './session.types.js';
-import { saveLidMapping } from './lid-mapping.js';
+import { saveLidMapping, resolveLidJid } from './lid-mapping.js';
 import { eventBus, STREAMS } from '../../events/event-bus.js';
 
 /** Maximum number of reconnection attempts before giving up */
@@ -164,6 +164,8 @@ class SessionManager {
           existingSession.socket.ev.removeAllListeners('connection.update');
           existingSession.socket.ev.removeAllListeners('creds.update');
           existingSession.socket.ev.removeAllListeners('messages.upsert');
+          existingSession.socket.ev.removeAllListeners('messages.update');
+          existingSession.socket.ev.removeAllListeners('message-receipt.update');
           existingSession.socket.ev.removeAllListeners('messaging-history.set');
           existingSession.socket.end(undefined);
         } catch (err) {
@@ -265,6 +267,8 @@ class SessionManager {
         active.socket.ev.removeAllListeners('connection.update');
         active.socket.ev.removeAllListeners('creds.update');
         active.socket.ev.removeAllListeners('messages.upsert');
+        active.socket.ev.removeAllListeners('messages.update');
+        active.socket.ev.removeAllListeners('message-receipt.update');
         active.socket.ev.removeAllListeners('messaging-history.set');
         active.socket.end(undefined);
       } catch (error) {
@@ -733,6 +737,16 @@ class SessionManager {
         count: chats.length,
       });
 
+      for (const chat of chats) {
+        if (chat.unreadCount !== undefined) {
+          logger.info('[DEBUG UNREAD] Baileys chats.upsert event contains unreadCount', {
+            sessionId,
+            waChatId: chat.id,
+            unreadCount: chat.unreadCount,
+          });
+        }
+      }
+
       // Publish to chat sync BullMQ queue
       await eventBus.publishChatSync(sessionId, orgId, chats, 'upsert').catch((err) => {
         logger.error('Failed to publish chat upsert', { sessionId, error: err.message });
@@ -744,6 +758,16 @@ class SessionManager {
         sessionId,
         count: updates.length,
       });
+
+      for (const update of updates) {
+        if (update.unreadCount !== undefined) {
+          logger.info('[DEBUG UNREAD] Baileys chats.update event contains unreadCount', {
+            sessionId,
+            waChatId: update.id,
+            unreadCount: update.unreadCount,
+          });
+        }
+      }
 
       // Publish to chat sync BullMQ queue
       await eventBus.publishChatSync(sessionId, orgId, updates, 'update').catch((err) => {
@@ -831,6 +855,57 @@ class SessionManager {
 
       // TODO: Broadcast presence to WebSocket clients
       // eventBus.broadcast(orgId, SessionEventType.PRESENCE_UPDATED, { sessionId, jid, presences });
+    });
+
+    // ── Message Status Updates (Receipts) ──────────────────────────────
+
+    socket.ev.on('messages.update', async (updates) => {
+      logger.debug('Messages update (receipt) event received', {
+        sessionId,
+        count: updates.length,
+      });
+
+      for (const update of updates) {
+        if (update.update.status !== undefined && update.update.status !== null) {
+          const statusMap: Record<number, string> = {
+            0: 'pending',
+            1: 'sent',
+            2: 'delivered',
+            3: 'read',
+            4: 'read',
+          };
+          const status = statusMap[update.update.status] || 'sent';
+          const messageId = update.key.id;
+          const remoteJid = update.key.remoteJid;
+          if (messageId && remoteJid) {
+            await this.processMessageReceiptUpdate(sessionId, orgId, remoteJid, messageId, status);
+          }
+        }
+      }
+    });
+
+    socket.ev.on('message-receipt.update', async (receipts) => {
+      logger.debug('Message receipts update event received', {
+        sessionId,
+        count: receipts.length,
+      });
+
+      for (const receipt of receipts) {
+        const remoteJid = receipt.key.remoteJid;
+        const messageId = receipt.key.id;
+        if (remoteJid && messageId && receipt.receipt) {
+          let status: string | undefined = undefined;
+          if (receipt.receipt.readTimestamp || receipt.receipt.playedTimestamp) {
+            status = 'read';
+          } else if (receipt.receipt.receiptTimestamp) {
+            status = 'delivered';
+          }
+
+          if (status) {
+            await this.processMessageReceiptUpdate(sessionId, orgId, remoteJid, messageId, status);
+          }
+        }
+      }
     });
   }
 
@@ -977,6 +1052,93 @@ class SessionManager {
     if (active) {
       this.clearPresenceKeepAlive(active);
       this.activeSessions.delete(sessionId);
+    }
+  }
+
+  /**
+   * Process receipt/status updates for messages (delivery/read checks).
+   * Updates all preceding outbound messages in the chat to match status.
+   */
+  private async processMessageReceiptUpdate(
+    sessionId: string,
+    orgId: string,
+    remoteJid: string,
+    messageId: string,
+    status: string,
+  ): Promise<void> {
+    try {
+      const resolvedJid = await resolveLidJid(sessionId, remoteJid);
+      const normalizedRemoteJid = normalizeJid(resolvedJid);
+
+      // Find the reference message by waMessageId and sessionId
+      const [msgRecord] = await db
+        .select({
+          id: messages.id,
+          chatId: messages.chatId,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.sessionId, sessionId),
+            eq(messages.waMessageId, messageId)
+          )
+        )
+        .limit(1);
+
+      if (!msgRecord) {
+        logger.debug('Reference message not found for receipt update', { sessionId, messageId, status });
+        return;
+      }
+
+      let statusCondition;
+      if (status === 'read') {
+        statusCondition = ne(messages.status, 'read');
+      } else if (status === 'delivered') {
+        statusCondition = inArray(messages.status, ['pending', 'sent']);
+      } else {
+        statusCondition = ne(messages.status, status);
+      }
+
+      // Update all prior outbound messages in that chat up to the reference message's createdAt
+      await db
+        .update(messages)
+        .set({
+          status,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(messages.chatId, msgRecord.chatId),
+            eq(messages.fromMe, true),
+            lte(messages.createdAt, msgRecord.createdAt),
+            statusCondition
+          )
+        );
+
+      logger.debug('Receipt status updated in database', {
+        sessionId,
+        chatId: msgRecord.chatId,
+        messageId,
+        status,
+      });
+
+      // Broadcast status update to frontend
+      await eventBus.publishToStream(STREAMS.MESSAGES, 'message:status_update', {
+        sessionId,
+        orgId,
+        chatId: msgRecord.chatId,
+        status,
+        waMessageId: messageId,
+      });
+
+    } catch (error) {
+      logger.error('Failed to process message receipt update', {
+        sessionId,
+        messageId,
+        status,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   }
 }

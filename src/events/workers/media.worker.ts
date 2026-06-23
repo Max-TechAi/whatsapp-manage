@@ -85,8 +85,8 @@ export function createMediaWorker(): Worker {
             },
           });
 
-          // Broadcast to Redis Stream for WebSocket update
-          await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+          // Broadcast to Redis Stream for WebSocket update (changed to media_update to avoid duplicate counters)
+          await eventBus.publishToStream(STREAMS.MESSAGES, 'message:media_update', {
             sessionId,
             orgId,
             chatId: dbMessage.chatId,
@@ -118,8 +118,8 @@ export function createMediaWorker(): Worker {
                 },
               });
 
-              // Broadcast update
-              await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+              // Broadcast update (changed to media_update to avoid duplicate counters)
+              await eventBus.publishToStream(STREAMS.MESSAGES, 'message:media_update', {
                 sessionId,
                 orgId,
                 chatId: dbMessage.chatId,

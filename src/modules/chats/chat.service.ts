@@ -41,6 +41,13 @@ export class ChatService {
       return null;
     }
 
+    logger.info('[DEBUG UNREAD] chat.service.ts upsertChat starting', {
+      sessionId: data.sessionId,
+      waChatId: normalizedChatJid,
+      inputUnreadCount: data.unreadCount,
+      isHistorySync: data.isHistorySync,
+    });
+
     const [result] = await db
       .insert(chats)
       .values({
@@ -72,6 +79,14 @@ export class ChatService {
         },
       })
       .returning();
+
+    if (result) {
+      logger.info('[DEBUG UNREAD] chat.service.ts upsertChat completed', {
+        sessionId: result.sessionId,
+        waChatId: result.waChatId,
+        dbUnreadCount: result.unreadCount,
+      });
+    }
 
     return result as Chat;
   }
@@ -318,6 +333,7 @@ export class ChatService {
    * Mark all messages in a chat as read (reset unread count).
    */
   async markAsRead(orgId: string, chatId: string): Promise<void> {
+    logger.info('[DEBUG UNREAD] chat.service.ts markAsRead called', { orgId, chatId });
     await db
       .update(chats)
       .set({ unreadCount: 0, updatedAt: new Date() })

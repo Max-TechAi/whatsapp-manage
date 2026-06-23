@@ -32,6 +32,15 @@ export function createMessageWorker(): Worker {
         return;
       }
 
+      logger.info('[DEBUG UNREAD] MessageWorker starting processing', {
+        jobId: job.id,
+        sessionId,
+        waMessageId: waMessage.key.id,
+        remoteJid: waMessage.key.remoteJid,
+        fromMe: waMessage.key.fromMe,
+        type
+      });
+
       const resolvedRemoteJid = await resolveLidJid(sessionId, waMessage.key.remoteJid);
       const remoteJid = normalizeJid(resolvedRemoteJid);
 
@@ -145,6 +154,12 @@ export function createMessageWorker(): Worker {
 
       // Publish to Redis Stream for WebSocket broadcast
       if (type === 'notify') {
+        logger.info('[DEBUG UNREAD] MessageWorker publishing message:new to Redis Stream', {
+          sessionId,
+          waMessageId,
+          chatId,
+          fromMe: waMessage.key.fromMe
+        });
         await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
           sessionId,
           orgId,

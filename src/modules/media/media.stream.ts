@@ -206,8 +206,8 @@ mediaRouter.post('/messages/:messageId/retry', async (req: Request, res: Respons
       metadata: updatedMetadata,
     });
 
-    // Broadcast update to notify UI that it has started downloading
-    await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+    // Broadcast update to notify UI that it has started downloading (changed to media_update to avoid duplicate counters)
+    await eventBus.publishToStream(STREAMS.MESSAGES, 'message:media_update', {
       sessionId: dbMessage.sessionId,
       orgId: req.user!.orgId,
       chatId: dbMessage.chatId,
