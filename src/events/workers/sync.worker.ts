@@ -90,6 +90,11 @@ export function createContactSyncWorker(): Worker {
 
           const resolvedWaId = await resolveLidJid(sessionId, waId);
 
+          // EXCLUDE: Skip newsletter contacts to prevent storing them
+          if (resolvedWaId.endsWith('@newsletter')) {
+            continue;
+          }
+
           await contactService.upsertContact({
             orgId,
             sessionId,
@@ -128,8 +133,13 @@ export function createChatSyncWorker(): Worker {
       let processed = 0;
       for (const chat of chatList) {
         const waChatId = chat.id ?? chat.waChatId ?? '';
-        // BUG 2: Exclude WhatsApp Status broadcast threads
-        if (waChatId.endsWith('@broadcast') || waChatId === 'status' || chat.type === 'status') {
+        // EXCLUDE: Exclude WhatsApp Status broadcast & official Channel/Newsletter threads
+        if (
+          waChatId.endsWith('@broadcast') ||
+          waChatId.endsWith('@newsletter') ||
+          waChatId === 'status' ||
+          chat.type === 'status'
+        ) {
           continue;
         }
 

@@ -314,8 +314,13 @@ function renderChatsList(chatList) {
   try {
     const container = document.getElementById('chatsListContainer');
     
-    // Exclude WhatsApp Status broadcast threads
-    const filteredList = (chatList || []).filter(c => c.waChatId !== 'status@broadcast' && c.waChatId !== 'status' && !c.waChatId.endsWith('@broadcast'));
+    // EXCLUDE: Exclude WhatsApp Status broadcast and official Channel/Newsletter threads
+    const filteredList = (chatList || []).filter(c => 
+      c.waChatId !== 'status@broadcast' && 
+      c.waChatId !== 'status' && 
+      !c.waChatId.endsWith('@broadcast') && 
+      !c.waChatId.endsWith('@newsletter')
+    );
 
     if (filteredList.length === 0) {
       container.innerHTML = `

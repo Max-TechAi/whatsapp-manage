@@ -36,8 +36,12 @@ export class ChatService {
     const resolvedJid = await resolveLidJid(data.sessionId, data.waChatId);
     const normalizedChatJid = normalizeJid(resolvedJid);
 
-    // BUG 2: Exclude WhatsApp Status broadcast threads
-    if (normalizedChatJid.endsWith('@broadcast') || normalizedChatJid === 'status') {
+    // EXCLUDE: Exclude WhatsApp Status broadcast & official Channel/Newsletter threads to prevent syncing them
+    if (
+      normalizedChatJid.endsWith('@broadcast') ||
+      normalizedChatJid.endsWith('@newsletter') ||
+      normalizedChatJid === 'status'
+    ) {
       return null;
     }
 
@@ -103,8 +107,12 @@ export class ChatService {
     const resolvedJid = await resolveLidJid(sessionId, waChatJid);
     const normalizedChatJid = normalizeJid(resolvedJid);
 
-    // BUG 2: Exclude WhatsApp Status broadcast threads
-    if (normalizedChatJid.endsWith('@broadcast') || normalizedChatJid === 'status') {
+    // EXCLUDE: Exclude WhatsApp Status broadcast & official Channel/Newsletter threads to prevent syncing them
+    if (
+      normalizedChatJid.endsWith('@broadcast') ||
+      normalizedChatJid.endsWith('@newsletter') ||
+      normalizedChatJid === 'status'
+    ) {
       return null;
     }
 
@@ -163,8 +171,9 @@ export class ChatService {
     const conditions = [
       eq(chats.orgId, orgId),
       eq(chats.sessionId, query.sessionId),
-      // BUG 2: Filter out any chat ending with @broadcast or named status
+      // EXCLUDE: Filter out any chat ending with @broadcast, @newsletter, or named status
       notLike(chats.waChatId, '%@broadcast'),
+      notLike(chats.waChatId, '%@newsletter'),
       ne(chats.waChatId, 'status'),
     ];
 

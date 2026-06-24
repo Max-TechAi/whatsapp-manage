@@ -131,8 +131,12 @@ export class MessageSyncService {
         const resolvedChatJid = await resolveLidJid(sessionId, chat.id);
         const normalizedChatJid = normalizeJid(resolvedChatJid);
 
-        // Skip status and broadcast chats
-        if (normalizedChatJid.endsWith('@broadcast') || normalizedChatJid === 'status') {
+        // EXCLUDE: Skip status, broadcast, and newsletter chats
+        if (
+          normalizedChatJid.endsWith('@broadcast') ||
+          normalizedChatJid.endsWith('@newsletter') ||
+          normalizedChatJid === 'status'
+        ) {
           continue;
         }
 
@@ -168,6 +172,11 @@ export class MessageSyncService {
         const resolvedWaId = await resolveLidJid(sessionId, contact.id);
         const normalizedWaId = normalizeJid(resolvedWaId);
 
+        // EXCLUDE: Skip newsletter contacts
+        if (normalizedWaId.endsWith('@newsletter')) {
+          continue;
+        }
+
         await contactService.upsertContact({
           orgId,
           sessionId,
@@ -192,8 +201,12 @@ export class MessageSyncService {
       const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
       const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
 
-      // Skip status and broadcast messages
-      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+      // EXCLUDE: Skip status, broadcast, and newsletter messages
+      if (
+        normalizedRemoteJid.endsWith('@broadcast') ||
+        normalizedRemoteJid.endsWith('@newsletter') ||
+        normalizedRemoteJid === 'status'
+      ) continue;
 
       const rawSender = msg.key.fromMe
         ? 'me'
@@ -266,8 +279,12 @@ export class MessageSyncService {
       const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
       const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
 
-      // Skip status and broadcast messages
-      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') {
+      // EXCLUDE: Skip status, broadcast, and newsletter messages
+      if (
+        normalizedRemoteJid.endsWith('@broadcast') ||
+        normalizedRemoteJid.endsWith('@newsletter') ||
+        normalizedRemoteJid === 'status'
+      ) {
         skippedMessagesCount++;
         continue;
       }
@@ -426,8 +443,12 @@ export class MessageSyncService {
       const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
       const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
 
-      // Skip status and broadcast messages
-      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+      // EXCLUDE: Skip status, broadcast, and newsletter messages
+      if (
+        normalizedRemoteJid.endsWith('@broadcast') ||
+        normalizedRemoteJid.endsWith('@newsletter') ||
+        normalizedRemoteJid === 'status'
+      ) continue;
 
       const rawSender = msg.key.fromMe
         ? 'me'
@@ -494,8 +515,12 @@ export class MessageSyncService {
       const resolvedRemoteJid = await resolveLidJid(sessionId, msg.key.remoteJid);
       const normalizedRemoteJid = normalizeJid(resolvedRemoteJid);
 
-      // Skip status and broadcast messages
-      if (normalizedRemoteJid.endsWith('@broadcast') || normalizedRemoteJid === 'status') continue;
+      // EXCLUDE: Skip status, broadcast, and newsletter messages
+      if (
+        normalizedRemoteJid.endsWith('@broadcast') ||
+        normalizedRemoteJid.endsWith('@newsletter') ||
+        normalizedRemoteJid === 'status'
+      ) continue;
 
       const chatId = await chatService.ensureChatExists(orgId, sessionId, normalizedRemoteJid);
       if (!chatId) continue;

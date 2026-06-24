@@ -47,9 +47,13 @@ export function createMessageWorker(): Worker {
       const resolvedRemoteJid = await resolveLidJid(sessionId, waMessage.key.remoteJid);
       const remoteJid = normalizeJid(resolvedRemoteJid);
 
-      // Skip status and broadcast messages
-      if (remoteJid.endsWith('@broadcast') || remoteJid === 'status') {
-        logger.debug('Skipping status/broadcast message inbound job', { remoteJid, waMessageId: waMessage.key.id });
+      // EXCLUDE: Skip status, broadcast, and newsletter messages
+      if (
+        remoteJid.endsWith('@broadcast') ||
+        remoteJid.endsWith('@newsletter') ||
+        remoteJid === 'status'
+      ) {
+        logger.debug('Skipping status/broadcast/newsletter message inbound job', { remoteJid, waMessageId: waMessage.key.id });
         return;
       }
 
