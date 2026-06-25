@@ -76,6 +76,20 @@
             <div id="reconnectingBanner" class="reconnecting-banner" style="display: none;">
               <span class="spinner-small"></span> Reconnecting to WhatsApp...
             </div>
+
+            <!-- Notification permission prompt (shown once if permission not yet granted) -->
+            <div id="notifPromptBanner" class="notif-prompt-banner" style="display: none;">
+              <span class="notif-prompt-icon">🔔</span>
+              <span class="notif-prompt-text">Enable desktop notifications for new messages</span>
+              <button id="notifEnableBtn" class="notif-enable-btn" onclick="requestNotificationPermission()">Enable</button>
+              <button class="notif-dismiss-btn" onclick="dismissNotifPrompt()" title="Dismiss">✕</button>
+            </div>
+
+            <!-- Notifications blocked warning (shown if user previously denied) -->
+            <div id="notifBlockedBanner" class="notif-blocked-banner" style="display: none;">
+              <span>🔕 Notifications are blocked. To re-enable, click the 🔒 icon in your browser's address bar → Notifications → Allow.</span>
+              <button class="notif-dismiss-btn" onclick="dismissNotifBlocked()" title="Dismiss">✕</button>
+            </div>
             
             <!-- Quick session selection inside inbox -->
             <div style="padding: 0.5rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.5rem;">

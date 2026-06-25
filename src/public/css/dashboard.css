@@ -856,3 +856,84 @@ tr:hover td {
   animation: spin 0.8s linear infinite;
   display: inline-block;
 }
+
+/* ─── DESKTOP NOTIFICATION BANNERS ─────────────────────────── */
+
+/* Permission request prompt — subtle green tint */
+.notif-prompt-banner {
+  background: linear-gradient(90deg, rgba(37, 211, 102, 0.18) 0%, rgba(37, 211, 102, 0.08) 100%);
+  border-bottom: 1px solid rgba(37, 211, 102, 0.3);
+  color: var(--text-normal);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  animation: slideDown 0.25s ease-out;
+}
+
+.notif-prompt-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.notif-prompt-text {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.notif-enable-btn {
+  background: var(--accent-green);
+  color: #0b0f19;
+  border: none;
+  border-radius: 4px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+
+.notif-enable-btn:hover {
+  opacity: 0.85;
+}
+
+.notif-dismiss-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 0.2rem;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.notif-dismiss-btn:hover {
+  color: var(--text-normal);
+}
+
+/* Notifications-blocked warning banner — subtle amber tint */
+.notif-blocked-banner {
+  background: linear-gradient(90deg, rgba(255, 152, 0, 0.18) 0%, rgba(255, 152, 0, 0.08) 100%);
+  border-bottom: 1px solid rgba(255, 152, 0, 0.3);
+  color: rgba(255, 255, 255, 0.75);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  animation: slideDown 0.25s ease-out;
+}
+
+.notif-blocked-banner span {
+  flex: 1;
+  line-height: 1.4;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

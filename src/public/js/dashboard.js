@@ -13,6 +13,233 @@ let contactsMap = {};
 let lidMappings = {};
 let processedMessageIds = new Set();
 
+// ─── DESKTOP NOTIFICATIONS MODULE ────────────────────────────
+// Tracks whether the prompt has been dismissed this session so we don't re-show it.
+let notifPromptDismissed = sessionStorage.getItem('notif_prompt_dismissed') === '1';
+let notifBlockedDismissed = sessionStorage.getItem('notif_blocked_dismissed') === '1';
+
+/**
+ * Called on page load. Checks the current Notification API permission state
+ * and shows the appropriate UI banner (prompt / blocked / nothing).
+ * Does NOT call requestPermission() automatically — requires a user gesture.
+ */
+function initNotifications() {
+  if (!('Notification' in window)) return; // Browser doesn't support notifications
+
+  const perm = Notification.permission;
+
+  if (perm === 'granted') {
+    // Already granted — nothing to do, notifications work silently.
+    return;
+  }
+
+  if (perm === 'denied') {
+    // User has explicitly blocked notifications. Show a dismissible warning once.
+    if (!notifBlockedDismissed) {
+      document.getElementById('notifBlockedBanner').style.display = 'flex';
+    }
+    return;
+  }
+
+  // perm === 'default' — not yet asked. Show a non-intrusive prompt.
+  if (!notifPromptDismissed) {
+    document.getElementById('notifPromptBanner').style.display = 'flex';
+  }
+}
+
+/**
+ * Called when the user clicks the "Enable" button on the prompt banner.
+ * Requests permission (requires user gesture — this click IS the gesture).
+ */
+async function requestNotificationPermission() {
+  if (!('Notification' in window)) return;
+
+  // Hide the prompt immediately to avoid double-clicks
+  document.getElementById('notifPromptBanner').style.display = 'none';
+
+  const result = await Notification.requestPermission();
+  if (result === 'granted') {
+    // Optionally fire a brief "test" notification to confirm it's working
+    new Notification('✅ Notifications enabled', {
+      body: 'You will now receive desktop alerts for new WhatsApp messages.',
+      icon: '/img/wa-icon.png',
+      tag: 'notif-test',
+      silent: true,
+    });
+  } else if (result === 'denied') {
+    // They changed their mind and denied — show the blocked banner
+    if (!notifBlockedDismissed) {
+      document.getElementById('notifBlockedBanner').style.display = 'flex';
+    }
+  }
+}
+
+/** Dismiss the permission prompt for this browser session. */
+function dismissNotifPrompt() {
+  notifPromptDismissed = true;
+  sessionStorage.setItem('notif_prompt_dismissed', '1');
+  document.getElementById('notifPromptBanner').style.display = 'none';
+}
+
+/** Dismiss the "blocked" warning banner for this browser session. */
+function dismissNotifBlocked() {
+  notifBlockedDismissed = true;
+  sessionStorage.setItem('notif_blocked_dismissed', '1');
+  document.getElementById('notifBlockedBanner').style.display = 'none';
+}
+
+/**
+ * Returns a human-readable preview string for a message object,
+ * suitable for both the desktop notification body and chat list preview.
+ *
+ * Priority: deleted → message-type emoji → text content (truncated).
+ * @param {object} message - The message object from the WebSocket event.
+ * @returns {string}
+ */
+function getMessagePreviewText(message) {
+  if (!message) return '';
+
+  if (message.isDeleted) return '🚫 This message was deleted';
+
+  const type = message.messageType || 'text';
+
+  switch (type) {
+    case 'image':    return '📷 Photo';
+    case 'video':    return '🎬 Video';
+    case 'audio': {
+      // Distinguish between voice notes (ptt) and regular audio files
+      const isPtt = message.metadata?.ptt === true ||
+        (message.mediaMimeType && message.mediaMimeType.includes('ogg'));
+      return isPtt ? '🎤 Voice message' : '🎵 Audio';
+    }
+    case 'document': return `📄 ${message.content || 'Document'}`;
+    case 'sticker':  return '🎭 Sticker';
+    case 'location': return '📍 Location';
+    case 'contact':  return '👤 Contact';
+    case 'reaction': return `${message.content || '👍'} Reaction`;
+    case 'poll':     return `📊 ${message.content || 'Poll'}`;
+    default: {
+      const text = message.content || '';
+      return text.length > 100 ? text.substring(0, 100) + '…' : text;
+    }
+  }
+}
+
+/**
+ * Resolves the best display name for a chat object, reusing the same
+ * priority chain used for the chat list: pushName → saved contact name
+ * → chat.name → formatted phone number.
+ * @param {object} chatObj - A chat entry from the in-memory `chats` array.
+ * @returns {string}
+ */
+function getChatDisplayName(chatObj) {
+  if (!chatObj) return 'Unknown';
+
+  const jid = chatObj.waChatId || '';
+  const phone = jid.split('@')[0];
+
+  // Resolve via contactsMap (same lookup used in renderChatsList)
+  const fromContacts = contactsMap[jid] || contactsMap[phone];
+  if (fromContacts) return fromContacts;
+
+  // Fall back to the chat's own name field
+  if (chatObj.name) return chatObj.name;
+
+  return formatPhoneNumberFallback(phone) || jid;
+}
+
+/**
+ * Plays a brief notification sound using the Web Audio API.
+ * Generates a simple two-tone "ding" — no external file required.
+ * Silently fails if audio is blocked by the browser.
+ */
+function playNotificationSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+
+    // First tone
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.frequency.value = 880;  // A5
+    gain1.gain.setValueAtTime(0.18, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    osc1.start(now);
+    osc1.stop(now + 0.18);
+
+    // Second tone (slightly higher, delayed)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.frequency.value = 1100; // C#6
+    gain2.gain.setValueAtTime(0.12, now + 0.1);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+    osc2.start(now + 0.1);
+    osc2.stop(now + 0.32);
+
+    // Close audio context after sound finishes to free resources
+    setTimeout(() => { try { ctx.close(); } catch (_) {} }, 400);
+  } catch (err) {
+    // Web Audio not supported or blocked — fail silently
+    console.debug('Notification sound unavailable:', err.message);
+  }
+}
+
+/**
+ * Creates and shows a native OS desktop notification for a new inbound message.
+ *
+ * Rules:
+ *  - Only fires for inbound messages (fromMe === false).
+ *  - Only fires when Notification.permission === 'granted'.
+ *  - Uses tag = chatDbId so rapid bursts from the SAME chat replace each other,
+ *    but bursts from DIFFERENT chats each get their own notification.
+ *  - Clicking the notification focuses the window and opens that chat.
+ *
+ * TODO: Check per-chat mute settings before showing notification, once
+ *       per-chat mute/DND settings are implemented in the backend.
+ *
+ * @param {object} message  - The message object from the WebSocket event data.
+ * @param {object} chatObj  - The matching entry from the in-memory `chats` array.
+ * @param {string} chatDbId - The database UUID of the chat (used as notification tag).
+ */
+function showDesktopNotification(message, chatObj, chatDbId) {
+  // Guard: browser must support Notifications
+  if (!('Notification' in window)) return;
+  // Guard: permission must be granted
+  if (Notification.permission !== 'granted') return;
+  // Guard: must be an inbound message (not sent by us)
+  if (message && (message.fromMe === true)) return;
+
+  const title = getChatDisplayName(chatObj);
+  const body  = getMessagePreviewText(message);
+
+  const notif = new Notification(title, {
+    body,
+    // Use chat avatar if available; fall back to a generic WhatsApp icon.
+    icon: chatObj?.avatarUrl || '/img/wa-icon.png',
+    // tag: same-chat notifications replace each other instead of stacking.
+    tag: chatDbId || (chatObj?.id) || 'wa-msg',
+    // renotify: show animation/sound for each replacement even with same tag.
+    renotify: true,
+  });
+
+  // Clicking the notification: bring window to front and open that chat.
+  notif.onclick = () => {
+    window.focus();
+    if (chatDbId && chatObj) {
+      const displayName = getChatDisplayName(chatObj);
+      selectChat(chatDbId, chatObj.waChatId, displayName);
+    }
+    notif.close();
+  };
+
+  // Play a subtle notification sound
+  playNotificationSound();
+}
+
 // Auth Guard on start
 if (!token) {
   document.getElementById('authWarning').style.display = 'block';
@@ -36,6 +263,8 @@ if (!token) {
 function initDashboard() {
   loadSessions();
   loadWebhooks();
+  // Initialize desktop notification permission state (shows prompt or blocked banner as needed)
+  initNotifications();
 }
 
 // ─── TAB NAVIGATION ───────────────────────────────────────────
@@ -837,6 +1066,11 @@ function handleWsEvent(data) {
           const oldVal = chatObj.unreadCount;
           chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
           console.log('[DEBUG UNREAD] Incrementing unread count in chatObj', { msgChatId, oldVal, newVal: chatObj.unreadCount });
+
+          // Show a desktop notification for new INBOUND messages (only on message:new, not status/media updates)
+          if (type === 'message:new' && !isDuplicate) {
+            showDesktopNotification(data.message || data, chatObj, msgChatId);
+          }
         } else {
           console.log('[DEBUG UNREAD] Skipping unread increment because it is a duplicate message', { msgChatId, msgId });
         }
