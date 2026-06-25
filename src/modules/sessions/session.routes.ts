@@ -24,6 +24,7 @@ import { authenticate } from '../auth/auth.middleware.js';
 import { sessionManager, updateSyncProgress, isValidUuid } from './session.manager.js';
 import { logger } from '../../observability/logger.js';
 import { redis } from '../../config/redis.js';
+import { resolveLidJid } from './lid-mapping.js';
 
 /** Request body schema for session creation */
 const createSessionSchema = z.object({
@@ -32,6 +33,10 @@ const createSessionSchema = z.object({
     .min(1, 'Session name is required')
     .max(100, 'Session name must be 100 characters or less')
     .trim(),
+});
+
+const resetContactSessionSchema = z.object({
+  contactJid: z.string().min(1, 'Contact JID is required'),
 });
 
 /**
@@ -506,6 +511,71 @@ router.post('/:id/sync-retry', async (req: Request, res: Response): Promise<void
       orgId: req.user?.orgId,
     });
     res.status(500).json({ error: 'Failed to retry sync' });
+  }
+});
+
+// ─── POST /:id/reset-contact-session — Reset Signal encryption session for a contact ──────
+
+router.post('/:id/reset-contact-session', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { orgId } = req.user!;
+    const sessionId = req.params.id as string;
+
+    const parsed = resetContactSessionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const { contactJid } = parsed.data;
+
+    // Verify session ownership
+    const [sessionRecord] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)))
+      .limit(1);
+
+    if (!sessionRecord) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    // Get the active socket session
+    const active = sessionManager.getSession(sessionId);
+    if (!active || !active.socket) {
+      res.status(400).json({
+        error: 'Session is not active or connected. Please make sure the device is connected before resetting contact sessions.',
+      });
+      return;
+    }
+
+    logger.info('Manually resetting Signal session for contact', { sessionId, orgId, contactJid });
+
+    // Resolve LID mapping if exists
+    const resolvedJid = await resolveLidJid(sessionId, contactJid);
+    const jidsToDelete = Array.from(new Set([contactJid, resolvedJid]));
+
+    // Delete the session key
+    await active.socket.signalRepository.deleteSession(jidsToDelete);
+
+    logger.info('Successfully reset encryption session for contact', { sessionId, orgId, contactJid, jidsToDelete });
+
+    res.status(200).json({
+      success: true,
+      message: 'Successfully reset encryption session for contact. A new secure session will establish on the next message.',
+    });
+  } catch (error) {
+    logger.error('Failed to reset contact session', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      sessionId: req.params.id,
+      orgId: req.user?.orgId,
+      contactJid: req.body?.contactJid,
+    });
+    res.status(500).json({ error: 'Failed to reset contact session' });
   }
 });
 

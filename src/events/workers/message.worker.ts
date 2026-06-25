@@ -236,6 +236,10 @@ export function createMessageWorker(): Worker {
       );
       const forwardScore = contextInfo?.forwardingScore ?? 0;
 
+      const isDecryptionFailure =
+        waMessage.messageStubType === 2 ||
+        waMessage.messageStubType === 'CIPHERTEXT';
+
       // Upsert message (dedup via ON CONFLICT)
       const dbMessage = await messageService.upsertMessage({
         orgId,
@@ -244,18 +248,19 @@ export function createMessageWorker(): Worker {
         waMessageId,
         senderJid,
         fromMe: waMessage.key.fromMe ?? false,
-        messageType,
-        content,
+        messageType: isDecryptionFailure ? 'text' : messageType,
+        content: isDecryptionFailure ? 'Waiting for this message. This may take a while.' : content,
         mediaMimeType: mediaInfo?.mimeType ?? null,
         mediaSize: mediaInfo?.size ?? null,
         quotedContent,
-        status: waMessage.key.fromMe ? 'sent' : 'delivered',
+        status: isDecryptionFailure ? 'failed' : (waMessage.key.fromMe ? 'sent' : 'delivered'),
         isForwarded,
         forwardScore,
         metadata: {
           pushName: waMessage.pushName ?? null,
           broadcast: waMessage.broadcast ?? false,
           ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
+          decryptionFailed: isDecryptionFailure ? true : undefined,
           waMessage, // Store raw message for retry
         },
         createdAt: timestamp,

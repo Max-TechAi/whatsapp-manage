@@ -655,6 +655,33 @@ class SessionManager {
         type,
       });
 
+      // Check for decryption failure (StubType.CIPHERTEXT) and reset per-contact session
+      for (const msg of messages) {
+        const isDecryptionFailure =
+          msg.messageStubType === 2 ||
+          (msg.messageStubType as any) === 'CIPHERTEXT';
+        
+        if (isDecryptionFailure && msg.key.remoteJid) {
+          const remoteJid = msg.key.remoteJid;
+          logger.warn('Decryption failure detected, resetting Signal session for contact', {
+            sessionId,
+            remoteJid,
+            msgId: msg.key.id
+          });
+          
+          try {
+            await socket.signalRepository.deleteSession([remoteJid]);
+            logger.info('Successfully cleared Signal session for contact', { sessionId, remoteJid });
+          } catch (err) {
+            logger.error('Failed to clear Signal session for contact', {
+              sessionId,
+              remoteJid,
+              error: err instanceof Error ? err.message : String(err)
+            });
+          }
+        }
+      }
+
       // Publish to message-inbound BullMQ queue
       await eventBus.publishMessageInbound(sessionId, orgId, messages, type).catch((err) => {
         logger.error('Failed to publish inbound messages', { sessionId, error: err.message });

@@ -70,6 +70,7 @@ export class MessageService {
         target: [messages.sessionId, messages.waMessageId],
         set: {
           status: data.status ?? 'sent',
+          messageType: data.messageType,
           content: data.content,
           mediaUrl: data.mediaUrl ?? undefined,
           mediaMimeType: data.mediaMimeType ?? undefined,

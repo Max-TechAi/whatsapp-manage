@@ -681,6 +681,16 @@ function renderMessages(msgList) {
         let bodyHtml = '';
         if (m.isDeleted) {
           bodyHtml = `<span style="font-style: italic; color: rgba(255,255,255,0.4); display: inline-flex; align-items: center; gap: 0.25rem;">🚫 This message was deleted</span>`;
+        } else if (m.metadata?.decryptionFailed) {
+          bodyHtml = `
+            <div class="decryption-failed-container" style="display: flex; flex-direction: column; gap: 0.4rem; padding: 0.25rem 0;">
+              <div style="display: flex; align-items: center; gap: 0.5rem; color: #ffab40; font-style: italic; font-size: 0.85rem; line-height: 1.4;">
+                <span>⏳ Waiting for this message. This may take a while.</span>
+                <span class="tooltip-icon" style="display: inline-block; cursor: pointer; color: rgba(255,255,255,0.5); font-style: normal; font-size: 0.75rem; background: rgba(255,255,255,0.1); width: 15px; height: 15px; border-radius: 50%; text-align: center; line-height: 15px; font-weight: bold; flex-shrink: 0;" title="If the recipient's phone has been offline or their security keys changed, your chat session might get out of sync. Resetting the session will force WhatsApp to establish a new secure channel. Any new messages sent after resetting will decrypt properly.">?</span>
+              </div>
+              <button onclick="resetContactSession(event, '${m.senderJid}')" class="session-reset-btn" style="align-self: flex-start; background: rgba(255,171,64,0.1); border: 1px solid rgba(255,171,64,0.25); color: #ffab40; font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer; outline: none; transition: all 0.2s; font-weight: 500; margin-top: 2px;" onmouseover="this.style.background='rgba(255,171,64,0.2)'" onmouseout="this.style.background='rgba(255,171,64,0.1)'">Reset Session</button>
+            </div>
+          `;
         } else if (['image', 'video', 'audio', 'document', 'sticker'].includes(m.messageType)) {
           if (m.metadata?.mediaStatus === 'failed') {
             // BUG 6: Handle download failures gracefully with a retry and a "media unavailable" fallback UI
@@ -1349,6 +1359,54 @@ async function retryMediaDownload(evt, messageId) {
     alert('An error occurred while retrying download');
   }
 }
+
+async function resetContactSession(evt, contactJid) {
+  evt.stopPropagation();
+  if (!activeSessionId) {
+    alert('No active session selected.');
+    return;
+  }
+  
+  const btn = evt.target;
+  const originalText = btn.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Resetting...';
+  }
+
+  try {
+    const response = await fetch(`/api/sessions/${activeSessionId}/reset-contact-session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ contactJid })
+    });
+
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to reset session');
+
+    alert('Successfully reset session for contact. A new secure channel will establish when they send a new message or when you reply.');
+    if (btn) {
+      btn.textContent = 'Reset!';
+    }
+    setTimeout(() => {
+      if (btn) {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }
+    }, 2000);
+  } catch (err) {
+    console.error('Failed to reset contact session:', err);
+    alert(`Error: ${err.message}`);
+    if (btn) {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
+  }
+}
+window.resetContactSession = resetContactSession;
 
 function handleLogout() {
   localStorage.removeItem('token');
