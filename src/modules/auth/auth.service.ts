@@ -69,6 +69,7 @@ export async function register(data: RegisterRequest): Promise<AuthResponse> {
       displayName: data.displayName,
       role: 'admin',
       isActive: true,
+      hasAllSessionsAccess: true,
       createdAt: now,
       updatedAt: now,
     });
@@ -81,6 +82,7 @@ export async function register(data: RegisterRequest): Promise<AuthResponse> {
     orgId,
     email: data.email.toLowerCase(),
     role: 'admin',
+    hasAllSessionsAccess: true,
   };
 
   const tokens = generateTokens(payload);
@@ -137,6 +139,7 @@ export async function login(data: LoginRequest): Promise<AuthResponse> {
     orgId: user.orgId,
     email: user.email,
     role: user.role as 'admin' | 'agent',
+    hasAllSessionsAccess: user.hasAllSessionsAccess,
   };
 
   const tokens = generateTokens(payload);
@@ -205,6 +208,7 @@ export function verifyToken(token: string): JwtPayload {
     orgId: decoded.orgId,
     email: decoded.email,
     role: decoded.role,
+    hasAllSessionsAccess: decoded.hasAllSessionsAccess,
   };
 }
 
@@ -231,6 +235,7 @@ export function refreshTokens(refreshToken: string): AuthTokens {
     orgId: decoded.orgId,
     email: decoded.email,
     role: decoded.role,
+    hasAllSessionsAccess: decoded.hasAllSessionsAccess,
   };
 
   return generateTokens(payload);

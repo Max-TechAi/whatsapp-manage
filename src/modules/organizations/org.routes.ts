@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { authenticate, requireRole } from '../auth/auth.middleware.js';
 import * as orgService from './org.service.js';
 import { logger } from '../../observability/logger.js';
+import { wsServer } from '../../websocket/ws-server.js';
 
 /* ------------------------------------------------------------------ */
 /*  Validation Schemas                                                 */
@@ -149,6 +150,7 @@ orgRouter.delete('/members/:userId', async (req: Request, res: Response) => {
     }
 
     await orgService.removeMember(req.user!.orgId, userId);
+    wsServer.invalidateSessionAccess(userId);
     res.status(200).json({ message: 'Member removed successfully' });
   } catch (error) {
     if (error instanceof Error && error.message === 'USER_NOT_FOUND') {
@@ -156,6 +158,101 @@ orgRouter.delete('/members/:userId', async (req: Request, res: Response) => {
       return;
     }
     logger.error('Failed to remove member', {
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+const updateMemberSchema = z.object({
+  displayName: z.string().min(1).max(255).optional(),
+  role: z.enum(['admin', 'agent']).optional(),
+  isActive: z.boolean().optional(),
+});
+
+const updatePermissionsSchema = z.object({
+  hasAllSessionsAccess: z.boolean(),
+  sessionIds: z.array(z.string().uuid()),
+});
+
+/**
+ * PATCH /members/:userId
+ * Update member details.
+ */
+orgRouter.patch('/members/:userId', async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.userId as string;
+    const parsed = updateMemberSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const member = await orgService.updateMember(req.user!.orgId, userId, parsed.data);
+    if (!member) {
+      res.status(404).json({ error: 'Member not found' });
+      return;
+    }
+
+    wsServer.invalidateSessionAccess(userId);
+    res.status(200).json({ member });
+  } catch (error) {
+    logger.error('Failed to update member', {
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /members/:userId/permissions
+ * Retrieve member session permissions.
+ */
+orgRouter.get('/members/:userId/permissions', async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.userId as string;
+    const permissions = await orgService.getMemberPermissions(req.user!.orgId, userId);
+    res.status(200).json(permissions);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'USER_NOT_FOUND') {
+      res.status(404).json({ error: 'Member not found' });
+      return;
+    }
+    logger.error('Failed to retrieve permissions', {
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * PUT /members/:userId/permissions
+ * Update member session permissions.
+ */
+orgRouter.put('/members/:userId/permissions', async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.userId as string;
+    const parsed = updatePermissionsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    await orgService.updateMemberPermissions(req.user!.orgId, userId, parsed.data);
+    wsServer.invalidateSessionAccess(userId);
+    res.status(200).json({ success: true, message: 'Permissions updated successfully' });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'USER_NOT_FOUND') {
+      res.status(404).json({ error: 'Member not found' });
+      return;
+    }
+    logger.error('Failed to update permissions', {
       error: error instanceof Error ? error.message : 'Unknown',
     });
     res.status(500).json({ error: 'Internal server error' });

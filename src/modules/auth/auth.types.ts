@@ -7,6 +7,7 @@ export interface JwtPayload {
   orgId: string;
   email: string;
   role: 'admin' | 'agent';
+  hasAllSessionsAccess: boolean;
 }
 
 /**

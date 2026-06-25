@@ -42,6 +42,7 @@ export class MessageService {
     isForwarded?: boolean;
     forwardScore?: number;
     metadata?: Record<string, unknown>;
+    sentByUserId?: string | null;
     createdAt?: Date;
   }): Promise<Message> {
     const [result] = await db
@@ -64,6 +65,7 @@ export class MessageService {
         isForwarded: data.isForwarded ?? false,
         forwardScore: data.forwardScore ?? 0,
         metadata: data.metadata ?? {},
+        sentByUserId: data.sentByUserId ?? null,
         createdAt: data.createdAt ?? new Date(),
       })
       .onConflictDoUpdate({
@@ -76,6 +78,7 @@ export class MessageService {
           mediaMimeType: data.mediaMimeType ?? undefined,
           mediaSize: data.mediaSize ?? undefined,
           metadata: data.metadata ?? undefined,
+          sentByUserId: data.sentByUserId ?? undefined,
           updatedAt: new Date(),
         },
       })
@@ -165,10 +168,37 @@ export class MessageService {
   ): Promise<PaginatedMessages> {
     const limit = Math.min(options.limit ?? 50, 100);
     const fetchLimit = limit + 1; // Fetch one extra to detect hasMore
+    const { users: usersTable } = await import('../../db/schema.js');
 
     let query = db
-      .select()
+      .select({
+        id: messages.id,
+        orgId: messages.orgId,
+        sessionId: messages.sessionId,
+        chatId: messages.chatId,
+        waMessageId: messages.waMessageId,
+        senderJid: messages.senderJid,
+        fromMe: messages.fromMe,
+        messageType: messages.messageType,
+        content: messages.content,
+        mediaUrl: messages.mediaUrl,
+        mediaMimeType: messages.mediaMimeType,
+        mediaSize: messages.mediaSize,
+        quotedMessageId: messages.quotedMessageId,
+        quotedContent: messages.quotedContent,
+        status: messages.status,
+        isForwarded: messages.isForwarded,
+        forwardScore: messages.forwardScore,
+        starred: messages.starred,
+        metadata: messages.metadata,
+        sentByUserId: messages.sentByUserId,
+        sentByDisplayName: usersTable.displayName,
+        createdAt: messages.createdAt,
+        updatedAt: messages.updatedAt,
+        deletedAt: messages.deletedAt,
+      })
       .from(messages)
+      .leftJoin(usersTable, eq(messages.sentByUserId, usersTable.id))
       .where(
         options.cursor
           ? and(

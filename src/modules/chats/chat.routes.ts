@@ -8,9 +8,10 @@ import { chatService } from './chat.service.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
-import { messages } from '../../db/schema.js';
+import { messages, users, userSessionAccess } from '../../db/schema.js';
 import { sessionManager } from '../sessions/session.manager.js';
-import { desc, eq, and } from 'drizzle-orm';
+import { desc, eq, and, or, sql } from 'drizzle-orm';
+import { wsServer } from '../../websocket/ws-server.js';
 
 export const chatRouter = Router();
 
@@ -34,7 +35,24 @@ chatRouter.get('/', async (req, res) => {
       return res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
     }
 
-    const result = await chatService.getChatList(req.user!.orgId, parsed.data);
+    if (req.user!.role !== 'admin' && !req.user!.hasAllSessionsAccess) {
+      const [access] = await db
+        .select()
+        .from(userSessionAccess)
+        .where(
+          and(
+            eq(userSessionAccess.userId, req.user!.userId),
+            eq(userSessionAccess.sessionId, parsed.data.sessionId)
+          )
+        )
+        .limit(1);
+
+      if (!access) {
+        return res.status(403).json({ error: 'Access denied: you do not have permission for this WhatsApp session' });
+      }
+    }
+
+    const result = await chatService.getChatList(req.user!.orgId, parsed.data, req.user!);
     return res.json(result);
   } catch (err) {
     logger.error('Failed to list chats', { error: (err as Error).message });
@@ -48,6 +66,11 @@ chatRouter.get('/', async (req, res) => {
  */
 chatRouter.get('/:id', async (req, res) => {
   try {
+    const hasAccess = await chatService.hasChatAccess(req.user!.orgId, req.params.id, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
+    }
+
     const chat = await chatService.getChatById(req.user!.orgId, req.params.id);
     if (!chat) {
       return res.status(404).json({ error: 'Chat not found' });
@@ -65,6 +88,11 @@ chatRouter.get('/:id', async (req, res) => {
  */
 chatRouter.patch('/:id', async (req, res) => {
   try {
+    const hasAccess = await chatService.hasChatAccess(req.user!.orgId, req.params.id, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to modify this chat' });
+    }
+
     const schema = z.object({
       isArchived: z.boolean().optional(),
       isPinned: z.boolean().optional(),
@@ -101,6 +129,11 @@ chatRouter.post('/:id/read', async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const chatId = req.params.id;
+
+    const hasAccess = await chatService.hasChatAccess(orgId, chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
+    }
 
     // 1. Get the chat details
     const chat = await chatService.getChatById(orgId, chatId);
@@ -180,10 +213,106 @@ chatRouter.post('/:id/read', async (req, res) => {
  */
 chatRouter.delete('/:id', async (req, res) => {
   try {
+    const hasAccess = await chatService.hasChatAccess(req.user!.orgId, req.params.id, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to delete this chat' });
+    }
+
     await chatService.deleteChat(req.user!.orgId, req.params.id);
     return res.json({ success: true });
   } catch (err) {
     logger.error('Failed to delete chat', { error: (err as Error).message });
     return res.status(500).json({ error: 'Failed to delete chat' });
+  }
+});
+
+/**
+ * POST /api/chats/:id/assign
+ * Assign/reassign/unassign a chat (Admin only).
+ */
+chatRouter.post('/:id/assign', async (req, res) => {
+  try {
+    if (req.user!.role !== 'admin') {
+      return res.status(403).json({ error: 'Only administrators can assign chats' });
+    }
+
+    const schema = z.object({
+      userId: z.string().uuid().nullable(),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid body', details: parsed.error.flatten() });
+    }
+
+    const chatId = req.params.id;
+    const orgId = req.user!.orgId;
+
+    // Verify the chat exists
+    const chat = await chatService.getChatById(orgId, chatId);
+    if (!chat) {
+      return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    const updatedChat = await chatService.updateChat(orgId, chatId, {
+      chatId,
+      assignedToUserId: parsed.data.userId,
+    });
+
+    // Invalidate WS server assignee cache immediately
+    wsServer.invalidateChatAssignee(chatId);
+
+    return res.json({ success: true, chat: updatedChat });
+  } catch (err) {
+    logger.error('Failed to assign chat', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to assign chat' });
+  }
+});
+
+/**
+ * GET /api/chats/:id/eligible-assignees
+ * Get active members who are eligible to be assigned to this chat.
+ */
+chatRouter.get('/:id/eligible-assignees', async (req, res) => {
+  try {
+    const chatId = req.params.id;
+    const orgId = req.user!.orgId;
+
+    const chat = await chatService.getChatById(orgId, chatId);
+    if (!chat) {
+      return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    const eligibleUsers = await db
+      .select({
+        id: users.id,
+        displayName: users.displayName,
+        email: users.email,
+        role: users.role,
+      })
+      .from(users)
+      .leftJoin(
+        userSessionAccess,
+        and(
+          eq(users.id, userSessionAccess.userId),
+          eq(userSessionAccess.sessionId, chat.sessionId)
+        )
+      )
+      .where(
+        and(
+          eq(users.orgId, orgId),
+          eq(users.isActive, true),
+          or(
+            eq(users.role, 'admin'),
+            eq(users.hasAllSessionsAccess, true),
+            sql`${userSessionAccess.id} IS NOT NULL`
+          )
+        )
+      );
+
+    return res.json({ success: true, data: eligibleUsers });
+  } catch (err) {
+    logger.error('Failed to get eligible assignees', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to get eligible assignees' });
   }
 });

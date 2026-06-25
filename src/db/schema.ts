@@ -63,6 +63,7 @@ export const users = pgTable(
     passwordHash: text('password_hash').notNull(),
     displayName: varchar('display_name', { length: 255 }),
     role: userRoleEnum('role').notNull().default('agent'),
+    hasAllSessionsAccess: boolean('has_all_sessions_access').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -145,6 +146,27 @@ export const sessionKeys = pgTable(
   ],
 );
 
+// ─── 4.5. User Session Access ───────────────────────────────────────────────────
+
+/** Stores which employees have access to which WhatsApp sessions (Level 1 permissions) */
+export const userSessionAccess = pgTable(
+  'user_session_access',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_user_session_access_user_session').on(table.userId, table.sessionId),
+    index('idx_user_session_access_user_id').on(table.userId),
+  ],
+);
+
 // ─── 5. Contacts ────────────────────────────────────────────────────────────────
 
 /** WhatsApp contacts discovered through message exchange or synced from the device. */
@@ -203,6 +225,7 @@ export const chats = pgTable(
     lastMessagePreview: text('last_message_preview'),
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
     metadata: jsonb('metadata').default({}),
+    assignedToUserId: uuid('assigned_to_user_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -255,6 +278,7 @@ export const messages = pgTable(
     editedAt: timestamp('edited_at', { withTimezone: true }),
     isDeleted: boolean('is_deleted').notNull().default(false),
     metadata: jsonb('metadata').default({}),
+    sentByUserId: uuid('sent_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     /**
      * Full-text search vector column.
      * This column is managed by a PostgreSQL trigger (see migrate.ts).
@@ -459,6 +483,9 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   }),
   sessions: many(sessions),
   auditLogs: many(auditLogs),
+  sessionAccess: many(userSessionAccess),
+  assignedChats: many(chats),
+  sentMessages: many(messages),
 }));
 
 /** Session belongs to an org and user; has keys, contacts, chats, messages, audit logs. */
@@ -476,6 +503,7 @@ export const sessionsRelations = relations(sessions, ({ one, many }) => ({
   chats: many(chats),
   messages: many(messages),
   auditLogs: many(auditLogs),
+  userAccess: many(userSessionAccess),
 }));
 
 /** Session key belongs to a session. */
@@ -509,6 +537,10 @@ export const chatsRelations = relations(chats, ({ one, many }) => ({
     references: [sessions.id],
   }),
   messages: many(messages),
+  assignedToUser: one(users, {
+    fields: [chats.assignedToUserId],
+    references: [users.id],
+  }),
 }));
 
 /** Message belongs to an org, session, and chat; may have reactions, media, and a quoted parent. */
@@ -535,6 +567,10 @@ export const messagesRelations = relations(messages, ({ one, many }) => ({
   replies: many(messages, { relationName: 'quotedMessage' }),
   reactions: many(messageReactions),
   mediaFiles: many(mediaFiles),
+  sentByUser: one(users, {
+    fields: [messages.sentByUserId],
+    references: [users.id],
+  }),
 }));
 
 /** Reaction belongs to a message. */

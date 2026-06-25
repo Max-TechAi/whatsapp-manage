@@ -20,6 +20,7 @@ interface OutboundMessageJob {
   mediaUrl?: string;
   caption?: string;
   quotedWaMessageId?: string;
+  sentByUserId?: string | null;
   enqueuedAt: string;
 }
 
@@ -27,7 +28,7 @@ export function createOutboundWorker(): Worker {
   const worker = new Worker<OutboundMessageJob>(
     QUEUES.MESSAGE_OUTBOUND,
     async (job: Job<OutboundMessageJob>) => {
-      const { sessionId, orgId, chatId, waChatJid, type, content, mediaUrl, caption, quotedWaMessageId } = job.data;
+      const { sessionId, orgId, chatId, waChatJid, type, content, mediaUrl, caption, quotedWaMessageId, sentByUserId } = job.data;
 
       logger.info('Processing outbound message job', { jobId: job.id, sessionId, waChatJid });
 
@@ -85,6 +86,7 @@ export function createOutboundWorker(): Worker {
         metadata: {
           ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
         },
+        sentByUserId: sentByUserId ?? null,
         createdAt: timestamp,
       });
 

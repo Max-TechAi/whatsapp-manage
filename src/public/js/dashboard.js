@@ -13,6 +13,10 @@ let contactsMap = {};
 let lidMappings = {};
 let processedMessageIds = new Set();
 
+let userRole = 'agent';
+let userHasAllSessionsAccess = false;
+let userDisplayName = '';
+
 // ─── DESKTOP NOTIFICATIONS MODULE ────────────────────────────
 // Tracks whether the prompt has been dismissed this session so we don't re-show it.
 let notifPromptDismissed = sessionStorage.getItem('notif_prompt_dismissed') === '1';
@@ -247,10 +251,19 @@ if (!token) {
     window.location.href = '/';
   }, 2000);
 } else {
-  // Decode JWT to get display name
+  // Decode JWT to get display name and role
   try {
     const payload = JSON.parse(atob(token.split('.')[1]));
-    document.getElementById('headerUserName').textContent = payload.displayName || payload.email || 'Agent';
+    userRole = payload.role || 'agent';
+    userHasAllSessionsAccess = !!payload.hasAllSessionsAccess;
+    userDisplayName = payload.displayName || payload.email || 'Agent';
+    document.getElementById('headerUserName').textContent = userDisplayName;
+
+    // Show team settings tab link for admin
+    if (userRole === 'admin') {
+      const navBtnTeam = document.getElementById('navBtnTeam');
+      if (navBtnTeam) navBtnTeam.style.display = 'flex';
+    }
   } catch (e) {
     console.error('Failed to parse token payload', e);
   }
@@ -263,6 +276,9 @@ if (!token) {
 function initDashboard() {
   loadSessions();
   loadWebhooks();
+  if (userRole === 'admin') {
+    loadTeamMembers();
+  }
   // Initialize desktop notification permission state (shows prompt or blocked banner as needed)
   initNotifications();
 }
@@ -286,10 +302,12 @@ function switchTab(tabId) {
   if (tabId === 'inbox') document.getElementById('navBtnInbox').classList.add('active');
   if (tabId === 'sessions') document.getElementById('navBtnSessions').classList.add('active');
   if (tabId === 'webhooks') document.getElementById('navBtnWebhooks').classList.add('active');
+  if (tabId === 'team') document.getElementById('navBtnTeam').classList.add('active');
 
   // Reload data context
   if (tabId === 'sessions') loadSessions();
   if (tabId === 'webhooks') loadWebhooks();
+  if (tabId === 'team') loadTeamMembers();
 }
 
 // ─── SESSION MANAGEMENT ───────────────────────────────────────
@@ -318,6 +336,18 @@ function populateSessionDropdowns(sessions) {
     dropdown.innerHTML = '<option value="">-- No connected devices --</option>';
     activeSessionId = '';
     hideSyncOverlay();
+
+    if (userRole === 'agent' && sessions.length === 0) {
+      const chatsContainer = document.getElementById('chatsListContainer');
+      if (chatsContainer) {
+        chatsContainer.innerHTML = `
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; height: 100%; padding: 2rem; color: var(--text-muted);">
+            <p style="font-weight: 500; font-size: 1rem; margin-bottom: 0.5rem;">⚠️ No WhatsApp Devices</p>
+            <p style="font-size: 0.9rem; line-height: 1.4;">You don't have access to any WhatsApp numbers yet. Please contact your administrator.</p>
+          </div>
+        `;
+      }
+    }
     return;
   }
 
@@ -621,6 +651,14 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   document.getElementById('chatPlaceholder').style.display = 'none';
   document.getElementById('activeChatWrapper').style.display = 'flex';
 
+  // Toggle assignee select display based on user role
+  if (userRole === 'admin') {
+    document.getElementById('assignChatContainer').style.display = 'flex';
+    await loadEligibleAssignees(chatDbId);
+  } else {
+    document.getElementById('assignChatContainer').style.display = 'none';
+  }
+
   // Load message history
   await loadMessages(chatDbId);
 }
@@ -668,6 +706,16 @@ function renderMessages(msgList) {
           if (m.status === 'read') statusTick = '<span style="color: #4fc3f7;">✓✓</span>';
           else if (m.status === 'delivered') statusTick = '<span>✓✓</span>';
           else if (m.status === 'sent') statusTick = '<span>✓</span>';
+        }
+
+        // Attribution for self messages
+        let attributionHtml = '';
+        if (isSelf) {
+          if (m.sentByUserId) {
+            attributionHtml = `<div class="message-attribution" style="font-size: 0.65rem; color: rgba(255,255,255,0.45); text-align: right; margin-top: 0.2rem; font-style: italic;">Sent by: ${escapeHtml(m.sentByDisplayName || 'Unknown Agent')}</div>`;
+          } else {
+            attributionHtml = `<div class="message-attribution" style="font-size: 0.65rem; color: rgba(255,255,255,0.45); text-align: right; margin-top: 0.2rem; font-style: italic;">Sent from phone</div>`;
+          }
         }
 
         // Render group sender name above bubble if not from self in group chat
@@ -776,6 +824,7 @@ function renderMessages(msgList) {
           <div class="${bubbleClass}">
             ${senderHeader}
             ${bodyHtml}
+            ${attributionHtml}
             <div class="message-meta">
               ${editedLabel}
               <span>${time}</span>
@@ -1551,3 +1600,328 @@ async function handleSyncRetry() {
     retryBtn.textContent = 'Retry Sync';
   }
 }
+
+// ─── TEAM MANAGEMENT & ASSIGNMENT MODULE ──────────────────────────
+
+let teamMembers = [];
+let allOrgSessions = [];
+
+async function loadEligibleAssignees(chatDbId) {
+  try {
+    const response = await fetch(`/api/chats/${chatDbId}/eligible-assignees`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!response.ok) throw new Error('Failed to load eligible assignees');
+    const res = await response.json();
+    
+    const select = document.getElementById('chatAssigneeSelect');
+    const users = res.data || [];
+    
+    select.innerHTML = '<option value="">Unassigned</option>' +
+      users.map(u => `<option value="${u.id}">${escapeHtml(u.displayName || u.email)}</option>`).join('');
+    
+    const chatObj = chats.find(c => c.id === chatDbId);
+    if (chatObj && chatObj.assignedToUserId) {
+      select.value = chatObj.assignedToUserId;
+    } else {
+      select.value = '';
+    }
+  } catch (err) {
+    console.error('Failed to load eligible assignees:', err);
+  }
+}
+
+async function handleAssignChatChange() {
+  const select = document.getElementById('chatAssigneeSelect');
+  const assignedUserId = select.value || null;
+  
+  try {
+    const response = await fetch(`/api/chats/${activeChatDbId}/assign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ userId: assignedUserId })
+    });
+    
+    if (!response.ok) {
+      const res = await response.json();
+      throw new Error(res.error || 'Failed to assign chat');
+    }
+    
+    const chatObj = chats.find(c => c.id === activeChatDbId);
+    if (chatObj) {
+      chatObj.assignedToUserId = assignedUserId;
+    }
+    
+    logTerminal('INFO', `Chat assigned successfully to ${assignedUserId || 'Unassigned'}`);
+  } catch (err) {
+    alert(err.message);
+    const chatObj = chats.find(c => c.id === activeChatDbId);
+    select.value = (chatObj && chatObj.assignedToUserId) ? chatObj.assignedToUserId : '';
+  }
+}
+
+async function loadTeamMembers() {
+  try {
+    const response = await fetch('/api/orgs/members', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to load team members');
+
+    teamMembers = resData.members || [];
+    renderTeamMembersTable(teamMembers);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function renderTeamMembersTable(members) {
+  const tableBody = document.getElementById('teamListBody');
+  if (members.length === 0) {
+    tableBody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+          No team members found.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tableBody.innerHTML = members.map(m => {
+    const statusText = m.isActive ? '<span class="badge-status connected">ACTIVE</span>' : '<span class="badge-status disconnected">INACTIVE</span>';
+    return `
+      <tr>
+        <td style="font-weight: 500;">${escapeHtml(m.displayName || '')}</td>
+        <td><code>${escapeHtml(m.email)}</code></td>
+        <td><span class="badge-status connecting" style="text-transform: uppercase;">${m.role}</span></td>
+        <td>${statusText}</td>
+        <td>
+          <div style="display: flex; gap: 0.5rem;">
+            <button onclick="openTeamModal('${m.id}')" class="btn" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">Edit</button>
+            <button onclick="removeTeamMember('${m.id}')" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; color: var(--danger); border-color: var(--danger);">Remove</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function handleInviteMember(e) {
+  e.preventDefault();
+  const emailInput = document.getElementById('inviteEmail');
+  const roleSelect = document.getElementById('inviteRole');
+  const btn = e.target.querySelector('button[type="submit"]');
+
+  try {
+    btn.disabled = true;
+    btn.textContent = 'Inviting...';
+
+    const response = await fetch('/api/orgs/members', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        email: emailInput.value.trim(),
+        role: roleSelect.value
+      })
+    });
+
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to invite member');
+
+    emailInput.value = '';
+    roleSelect.value = 'agent';
+    alert('Member invited successfully!');
+    loadTeamMembers();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Invite Member';
+  }
+}
+
+async function removeTeamMember(userId) {
+  if (userId === JSON.parse(atob(token.split('.')[1])).userId) {
+    alert('You cannot remove yourself');
+    return;
+  }
+  if (!confirm('Are you sure you want to remove this team member?')) return;
+
+  try {
+    const response = await fetch(`/api/orgs/members/${userId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!response.ok) {
+      const res = await response.json();
+      throw new Error(res.error || 'Failed to remove member');
+    }
+
+    alert('Member removed successfully');
+    loadTeamMembers();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function openTeamModal(userId) {
+  const member = teamMembers.find(m => m.id === userId);
+  if (!member) return;
+
+  document.getElementById('editUserId').value = userId;
+  document.getElementById('editDisplayName').value = member.displayName || '';
+  document.getElementById('editRole').value = member.role;
+  document.getElementById('editIsActive').checked = member.isActive;
+
+  // Load org sessions list
+  try {
+    const response = await fetch('/api/sessions', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (response.ok) {
+      allOrgSessions = resData.data || [];
+    }
+  } catch (err) {
+    console.error('Failed to load org sessions:', err);
+  }
+
+  // Load current permissions for this member
+  let permissions = { hasAllSessionsAccess: false, sessionIds: [] };
+  try {
+    const response = await fetch(`/api/orgs/members/${userId}/permissions`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (response.ok) {
+      permissions = await response.json();
+    }
+  } catch (err) {
+    console.error('Failed to fetch permissions:', err);
+  }
+
+  document.getElementById('editAllSessionsAccess').checked = permissions.hasAllSessionsAccess;
+
+  // Populate checkboxes
+  const group = document.getElementById('specificSessionsGroup');
+  group.innerHTML = allOrgSessions.map(s => {
+    const checked = permissions.sessionIds.includes(s.id) ? 'checked' : '';
+    return `
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text-main); font-size: 0.9rem;">
+        <input type="checkbox" class="specific-session-checkbox" value="${s.id}" ${checked}> ${escapeHtml(s.sessionName)} (${s.phoneNumber || 'Unlinked'})
+      </label>
+    `;
+  }).join('');
+
+  toggleEditRoleSettings();
+  document.getElementById('teamModalOverlay').classList.add('active');
+}
+
+function closeTeamModal() {
+  document.getElementById('teamModalOverlay').classList.remove('active');
+}
+
+function toggleEditRoleSettings() {
+  const role = document.getElementById('editRole').value;
+  const note = document.getElementById('adminSessionsNote');
+  const checkboxContainer = document.getElementById('editAllSessionsAccess').closest('.input-group');
+  const group = document.getElementById('specificSessionsGroup');
+
+  if (role === 'admin') {
+    note.style.display = 'block';
+    checkboxContainer.style.display = 'none';
+    group.style.display = 'none';
+  } else {
+    note.style.display = 'none';
+    checkboxContainer.style.display = 'block';
+    group.style.display = 'flex';
+    toggleAllSessionsCheckbox();
+  }
+}
+
+function toggleAllSessionsCheckbox() {
+  const allSessionsChecked = document.getElementById('editAllSessionsAccess').checked;
+  const checkboxes = document.querySelectorAll('.specific-session-checkbox');
+  checkboxes.forEach(cb => {
+    cb.disabled = allSessionsChecked;
+    if (allSessionsChecked) {
+      cb.checked = false;
+    }
+  });
+}
+
+async function handleSaveMember(e) {
+  e.preventDefault();
+  const userId = document.getElementById('editUserId').value;
+  const displayName = document.getElementById('editDisplayName').value.trim();
+  const role = document.getElementById('editRole').value;
+  const isActive = document.getElementById('editIsActive').checked;
+  const hasAllSessionsAccess = document.getElementById('editAllSessionsAccess').checked;
+
+  const btn = e.target.querySelector('button[type="submit"]');
+
+  try {
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    // 1. Update basic details
+    const patchRes = await fetch(`/api/orgs/members/${userId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ displayName, role, isActive })
+    });
+
+    if (!patchRes.ok) {
+      const res = await patchRes.json();
+      throw new Error(res.error || 'Failed to update user details');
+    }
+
+    // 2. If role is agent, save session permissions
+    if (role === 'agent') {
+      const checkedBoxes = document.querySelectorAll('.specific-session-checkbox:checked');
+      const sessionIds = Array.from(checkedBoxes).map(cb => cb.value);
+
+      const putPermsRes = await fetch(`/api/orgs/members/${userId}/permissions`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ hasAllSessionsAccess, sessionIds })
+      });
+
+      if (!putPermsRes.ok) {
+        const res = await putPermsRes.json();
+        throw new Error(res.error || 'Failed to save session permissions');
+      }
+    }
+
+    closeTeamModal();
+    alert('Member changes saved successfully');
+    loadTeamMembers();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
+  }
+}
+
+window.handleInviteMember = handleInviteMember;
+window.openTeamModal = openTeamModal;
+window.closeTeamModal = closeTeamModal;
+window.removeTeamMember = removeTeamMember;
+window.toggleEditRoleSettings = toggleEditRoleSettings;
+window.toggleAllSessionsCheckbox = toggleAllSessionsCheckbox;
+window.handleSaveMember = handleSaveMember;
+window.handleAssignChatChange = handleAssignChatChange;

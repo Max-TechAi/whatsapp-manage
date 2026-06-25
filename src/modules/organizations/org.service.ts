@@ -101,6 +101,7 @@ export async function getMembers(orgId: string): Promise<OrgMember[]> {
     displayName: users.displayName,
     role: users.role,
     isActive: users.isActive,
+    hasAllSessionsAccess: users.hasAllSessionsAccess,
     lastLoginAt: users.lastLoginAt,
   })
     .from(users)
@@ -156,6 +157,7 @@ export async function inviteMember(
     displayName: users.displayName,
     role: users.role,
     isActive: users.isActive,
+    hasAllSessionsAccess: users.hasAllSessionsAccess,
     lastLoginAt: users.lastLoginAt,
   });
 
@@ -185,4 +187,156 @@ export async function removeMember(orgId: string, userId: string): Promise<void>
   }
 
   logger.info('Member removed from organization', { orgId, userId });
+}
+
+/**
+ * Update an organization member's fields (displayName, role, isActive).
+ */
+export async function updateMember(
+  orgId: string,
+  userId: string,
+  data: {
+    displayName?: string;
+    role?: 'admin' | 'agent';
+    isActive?: boolean;
+    hasAllSessionsAccess?: boolean;
+  }
+): Promise<OrgMember | null> {
+  const updatePayload: Record<string, any> = {
+    updatedAt: new Date(),
+  };
+
+  if (data.displayName !== undefined) updatePayload.displayName = data.displayName;
+  if (data.role !== undefined) updatePayload.role = data.role;
+  if (data.isActive !== undefined) updatePayload.isActive = data.isActive;
+  if (data.hasAllSessionsAccess !== undefined) {
+    updatePayload.hasAllSessionsAccess = data.hasAllSessionsAccess;
+  }
+
+  // If role is admin, they implicitly have all session access
+  if (data.role === 'admin') {
+    updatePayload.hasAllSessionsAccess = true;
+  }
+
+  const member = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(users)
+      .set(updatePayload)
+      .where(and(eq(users.id, userId), eq(users.orgId, orgId)))
+      .returning({
+        id: users.id,
+        email: users.email,
+        displayName: users.displayName,
+        role: users.role,
+        isActive: users.isActive,
+        hasAllSessionsAccess: users.hasAllSessionsAccess,
+        lastLoginAt: users.lastLoginAt,
+      });
+
+    const updatedUser = rows[0];
+    if (!updatedUser) return null;
+
+    // Purge userSessionAccess if promoted to admin
+    if (data.role === 'admin') {
+      const { userSessionAccess } = await import('../../db/schema.js');
+      await tx
+        .delete(userSessionAccess)
+        .where(eq(userSessionAccess.userId, userId));
+    }
+
+    return updatedUser;
+  });
+
+  if (member) {
+    logger.info('Member updated successfully', { orgId, userId, role: data.role });
+  }
+
+  return member;
+}
+
+/**
+ * Update user's Level 1 session permissions.
+ */
+export async function updateMemberPermissions(
+  orgId: string,
+  userId: string,
+  data: {
+    hasAllSessionsAccess: boolean;
+    sessionIds: string[];
+  }
+): Promise<void> {
+  // Verify user exists in the org
+  const [user] = await db
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.orgId, orgId)))
+    .limit(1);
+
+  if (!user) {
+    throw new Error('USER_NOT_FOUND');
+  }
+
+  const finalHasAll = user.role === 'admin' ? true : data.hasAllSessionsAccess;
+
+  await db.transaction(async (tx) => {
+    // Update users table
+    await tx
+      .update(users)
+      .set({
+        hasAllSessionsAccess: finalHasAll,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+
+    const { userSessionAccess } = await import('../../db/schema.js');
+
+    // Delete existing session access
+    await tx
+      .delete(userSessionAccess)
+      .where(eq(userSessionAccess.userId, userId));
+
+    // Insert new specific session access rows
+    if (!finalHasAll && data.sessionIds && data.sessionIds.length > 0) {
+      await tx.insert(userSessionAccess).values(
+        data.sessionIds.map((sessionId) => ({
+          userId,
+          sessionId,
+        }))
+      );
+    }
+  });
+
+  logger.info('Member permissions updated successfully', { orgId, userId });
+}
+
+/**
+ * Get user's current session access list.
+ */
+export async function getMemberPermissions(orgId: string, userId: string) {
+  const [user] = await db
+    .select({
+      id: users.id,
+      hasAllSessionsAccess: users.hasAllSessionsAccess,
+      role: users.role,
+    })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.orgId, orgId)))
+    .limit(1);
+
+  if (!user) {
+    throw new Error('USER_NOT_FOUND');
+  }
+
+  const { userSessionAccess } = await import('../../db/schema.js');
+  const allowedSessions = await db
+    .select({
+      sessionId: userSessionAccess.sessionId,
+    })
+    .from(userSessionAccess)
+    .where(eq(userSessionAccess.userId, userId));
+
+  return {
+    hasAllSessionsAccess: user.role === 'admin' ? true : user.hasAllSessionsAccess,
+    sessionIds: allowedSessions.map((row) => row.sessionId),
+  };
 }

@@ -5,7 +5,7 @@
 
 import { db } from '../../config/database.js';
 import { chats, contacts, messages } from '../../db/schema.js';
-import { eq, and, desc, lt, sql, ne, notLike } from 'drizzle-orm';
+import { eq, and, desc, lt, sql, ne, notLike, or, isNull } from 'drizzle-orm';
 import { logger } from '../../observability/logger.js';
 import { resolveLidJid } from '../sessions/lid-mapping.js';
 import { normalizeJid } from '../sessions/session.events.js';
@@ -164,7 +164,11 @@ export class ChatService {
    * Get chat list for a session, sorted by last message time.
    * Uses cursor-based pagination on lastMessageAt.
    */
-  async getChatList(orgId: string, query: ChatListQuery): Promise<ChatListResponse> {
+  async getChatList(
+    orgId: string,
+    query: ChatListQuery,
+    user: { userId: string; role: 'admin' | 'agent'; hasAllSessionsAccess: boolean }
+  ): Promise<ChatListResponse> {
     const limit = Math.min(query.limit ?? 50, 100);
     const fetchLimit = limit + 1;
 
@@ -187,6 +191,16 @@ export class ChatService {
       );
     }
 
+    if (user.role !== 'admin') {
+      const orCond = or(
+        eq(chats.assignedToUserId, user.userId),
+        isNull(chats.assignedToUserId)
+      );
+      if (orCond) {
+        conditions.push(orCond);
+      }
+    }
+
     const rows = await db
       .select({
         id: chats.id,
@@ -203,6 +217,7 @@ export class ChatService {
         lastMessagePreview: chats.lastMessagePreview,
         lastMessageAt: chats.lastMessageAt,
         metadata: chats.metadata,
+        assignedToUserId: chats.assignedToUserId,
         createdAt: chats.createdAt,
         updatedAt: chats.updatedAt,
         contactName: contacts.displayName,
@@ -246,6 +261,7 @@ export class ChatService {
       lastMessagePreview: r.lastMessagePreview,
       lastMessageAt: r.lastMessageAt,
       metadata: r.metadata,
+      assignedToUserId: r.assignedToUserId,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     })) as Chat[];
@@ -277,6 +293,7 @@ export class ChatService {
         lastMessagePreview: chats.lastMessagePreview,
         lastMessageAt: chats.lastMessageAt,
         metadata: chats.metadata,
+        assignedToUserId: chats.assignedToUserId,
         createdAt: chats.createdAt,
         updatedAt: chats.updatedAt,
         contactName: contacts.displayName,
@@ -311,9 +328,57 @@ export class ChatService {
       lastMessagePreview: result.lastMessagePreview,
       lastMessageAt: result.lastMessageAt,
       metadata: result.metadata,
+      assignedToUserId: result.assignedToUserId,
       createdAt: result.createdAt,
       updatedAt: result.updatedAt,
     } as Chat;
+  }
+
+  /**
+   * Helper method to verify if a user has permission to access a chat.
+   */
+  async hasChatAccess(
+    orgId: string,
+    chatId: string,
+    user: { userId: string; role: 'admin' | 'agent'; hasAllSessionsAccess: boolean }
+  ): Promise<boolean> {
+    if (user.role === 'admin') return true;
+
+    // Fetch the chat to see its sessionId and assignedToUserId
+    const [chatRecord] = await db
+      .select({
+        sessionId: chats.sessionId,
+        assignedToUserId: chats.assignedToUserId,
+      })
+      .from(chats)
+      .where(and(eq(chats.orgId, orgId), eq(chats.id, chatId)))
+      .limit(1);
+
+    if (!chatRecord) return false;
+
+    // Check Level 1: Session access
+    if (!user.hasAllSessionsAccess) {
+      const { userSessionAccess } = await import('../../db/schema.js');
+      const [access] = await db
+        .select({ id: userSessionAccess.id })
+        .from(userSessionAccess)
+        .where(
+          and(
+            eq(userSessionAccess.userId, user.userId),
+            eq(userSessionAccess.sessionId, chatRecord.sessionId)
+          )
+        )
+        .limit(1);
+      
+      if (!access) return false;
+    }
+
+    // Check Level 2: Chat assignment
+    if (chatRecord.assignedToUserId !== null && chatRecord.assignedToUserId !== user.userId) {
+      return false;
+    }
+
+    return true;
   }
 
   /**
@@ -328,6 +393,7 @@ export class ChatService {
     if (data.mutedUntil !== undefined) updateData.mutedUntil = data.mutedUntil;
     if (data.name !== undefined) updateData.name = data.name;
     if (data.avatarUrl !== undefined) updateData.avatarUrl = data.avatarUrl;
+    if (data.assignedToUserId !== undefined) updateData.assignedToUserId = data.assignedToUserId;
 
     const [result] = await db
       .update(chats)

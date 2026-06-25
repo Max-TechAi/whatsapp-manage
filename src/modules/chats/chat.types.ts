@@ -19,6 +19,7 @@ export interface Chat {
   lastMessagePreview: string | null;
   lastMessageAt: Date | null;
   metadata: Record<string, unknown>;
+  assignedToUserId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -44,4 +45,5 @@ export interface ChatUpdatePayload {
   mutedUntil?: Date | null;
   name?: string;
   avatarUrl?: string;
+  assignedToUserId?: string | null;
 }

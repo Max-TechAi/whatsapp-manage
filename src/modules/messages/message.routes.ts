@@ -37,6 +37,27 @@ messageRouter.post('/', async (req, res) => {
 
     const { sessionId, recipientJid, body } = parsed.data;
 
+    // Level 1: Verify session access
+    if (req.user!.role !== 'admin' && !req.user!.hasAllSessionsAccess) {
+      const { userSessionAccess } = await import('../../db/schema.js');
+      const { db } = await import('../../config/database.js');
+      const { eq, and } = await import('drizzle-orm');
+      const [access] = await db
+        .select()
+        .from(userSessionAccess)
+        .where(
+          and(
+            eq(userSessionAccess.userId, req.user!.userId),
+            eq(userSessionAccess.sessionId, sessionId)
+          )
+        )
+        .limit(1);
+
+      if (!access) {
+        return res.status(403).json({ error: 'Access denied: you do not have permission for this WhatsApp session' });
+      }
+    }
+
     // Validate that session exists and belongs to the user's organization
     const activeSession = sessionManager.getSession(sessionId);
     if (!activeSession || activeSession.orgId !== orgId) {
@@ -55,12 +76,19 @@ messageRouter.post('/', async (req, res) => {
       return res.status(500).json({ error: 'Failed to create or resolve chat thread' });
     }
 
+    // Level 2: Verify chat access
+    const hasChatAccess = await chatService.hasChatAccess(orgId, chatId, req.user!);
+    if (!hasChatAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
+    }
+
     // Publish outbound job to the event bus
     const jobId = await eventBus.publishMessageOutbound(sessionId, orgId, {
       chatId,
       waChatJid,
       type: 'text',
       content: body,
+      sentByUserId: req.user!.userId,
     });
 
     return res.status(202).json({
@@ -86,6 +114,11 @@ messageRouter.get('/chats/:chatId/messages', async (req, res) => {
   try {
     const { chatId } = req.params;
     const orgId = req.user!.orgId;
+
+    const hasAccess = await chatService.hasChatAccess(orgId, chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
+    }
 
     const cursorParam = req.query.cursor as string | undefined;
     let cursor;
@@ -212,6 +245,12 @@ messageRouter.get('/:id', async (req, res) => {
     if (!message) {
       return res.status(404).json({ error: 'Message not found' });
     }
+
+    const hasAccess = await chatService.hasChatAccess(req.user!.orgId, message.chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this message' });
+    }
+
     return res.json(message);
   } catch (err) {
     logger.error('Failed to get message', { error: (err as Error).message });
@@ -225,6 +264,16 @@ messageRouter.get('/:id', async (req, res) => {
  */
 messageRouter.patch('/:id/star', async (req, res) => {
   try {
+    const message = await messageService.getMessageById(req.user!.orgId, req.params.id);
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    const hasAccess = await chatService.hasChatAccess(req.user!.orgId, message.chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this message' });
+    }
+
     const { starred } = z.object({ starred: z.boolean() }).parse(req.body);
     await messageService.toggleStar(req.user!.orgId, req.params.id, starred);
     return res.json({ success: true });
@@ -240,6 +289,16 @@ messageRouter.patch('/:id/star', async (req, res) => {
  */
 messageRouter.delete('/:id', async (req, res) => {
   try {
+    const message = await messageService.getMessageById(req.user!.orgId, req.params.id);
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    const hasAccess = await chatService.hasChatAccess(req.user!.orgId, message.chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this message' });
+    }
+
     await messageService.deleteMessage(req.user!.orgId, req.params.id);
     return res.json({ success: true });
   } catch (err) {

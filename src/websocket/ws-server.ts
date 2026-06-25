@@ -24,6 +24,8 @@ export class WsServer {
   private wss!: WebSocketServer;
   private httpServer!: http.Server;
   private clients: Map<string, Set<AuthenticatedSocket>> = new Map();
+  private sessionAccessCache = new Map<string, { sessions: Set<string> | 'all', timestamp: number }>();
+  private chatAssigneeCache = new Map<string, { assignedToUserId: string | null, timestamp: number }>();
   private heartbeatInterval!: NodeJS.Timeout;
   private streamReaderRunning = false;
   private streamRedis?: typeof redis;
@@ -191,16 +193,89 @@ export class WsServer {
     return false;
   }
 
+  private async getSessionAccess(userId: string, hasAllSessionsAccess: boolean): Promise<Set<string> | 'all'> {
+    if (hasAllSessionsAccess) return 'all';
+
+    const cached = this.sessionAccessCache.get(userId);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < 5000) {
+      return cached.sessions;
+    }
+
+    const { userSessionAccess } = await import('../db/schema.js');
+    const { db } = await import('../config/database.js');
+    const { eq } = await import('drizzle-orm');
+
+    const rows = await db
+      .select({ sessionId: userSessionAccess.sessionId })
+      .from(userSessionAccess)
+      .where(eq(userSessionAccess.userId, userId));
+
+    const sessions = new Set(rows.map(r => r.sessionId));
+    this.sessionAccessCache.set(userId, { sessions, timestamp: now });
+    return sessions;
+  }
+
+  private async getChatAssignee(chatId: string): Promise<string | null> {
+    const cached = this.chatAssigneeCache.get(chatId);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < 5000) {
+      return cached.assignedToUserId;
+    }
+
+    const { chats } = await import('../db/schema.js');
+    const { db } = await import('../config/database.js');
+    const { eq } = await import('drizzle-orm');
+
+    const [chatRecord] = await db
+      .select({ assignedToUserId: chats.assignedToUserId })
+      .from(chats)
+      .where(eq(chats.id, chatId))
+      .limit(1);
+
+    const assignedToUserId = chatRecord ? chatRecord.assignedToUserId : null;
+    this.chatAssigneeCache.set(chatId, { assignedToUserId, timestamp: now });
+    return assignedToUserId;
+  }
+
+  private async checkAccess(client: AuthenticatedSocket, data: any): Promise<boolean> {
+    if (client.user.role === 'admin') return true;
+
+    const sessionId = data.sessionId || (data.message && data.message.sessionId);
+    const chatId = data.chatId || (data.message && data.message.chatId);
+
+    // Level 1: Session access
+    if (sessionId) {
+      const sessions = await this.getSessionAccess(client.user.userId, client.user.hasAllSessionsAccess);
+      if (sessions !== 'all' && !sessions.has(sessionId)) {
+        return false;
+      }
+    }
+
+    // Level 2: Chat assignment
+    if (chatId) {
+      const assignedToUserId = await this.getChatAssignee(chatId);
+      if (assignedToUserId !== null && assignedToUserId !== client.user.userId) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   /**
    * Broadcast a message to all subscribers of a channel within an org.
    */
-  broadcastToChannel(channel: string, data: any, exclude?: AuthenticatedSocket): void {
+  async broadcastToChannel(channel: string, data: any, exclude?: AuthenticatedSocket): Promise<void> {
     for (const [, clients] of this.clients) {
       for (const client of clients) {
         if (client === exclude) continue;
         if (client.readyState !== WebSocket.OPEN) continue;
         if (client.subscriptions.has(channel)) {
-          client.send(JSON.stringify(data));
+          const hasAccess = await this.checkAccess(client, data);
+          if (hasAccess) {
+            client.send(JSON.stringify(data));
+          }
         }
       }
     }
@@ -209,14 +284,17 @@ export class WsServer {
   /**
    * Broadcast to all clients in an org.
    */
-  broadcastToOrg(orgId: string, data: any): void {
+  async broadcastToOrg(orgId: string, data: any): Promise<void> {
     const orgClients = this.clients.get(`org:${orgId}`);
     if (!orgClients) return;
 
     const payload = JSON.stringify(data);
     for (const client of orgClients) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(payload);
+        const hasAccess = await this.checkAccess(client, data);
+        if (hasAccess) {
+          client.send(payload);
+        }
       }
     }
   }
@@ -267,15 +345,15 @@ export class WsServer {
 
                   // Broadcast based on event type
                   if (data.orgId) {
-                    this.broadcastToOrg(data.orgId, { type: event, ...data });
+                    await this.broadcastToOrg(data.orgId, { type: event, ...data });
                   }
 
                   // Also broadcast to specific channels
                   if (data.sessionId) {
-                    this.broadcastToChannel(`session:${data.sessionId}`, { type: event, ...data });
+                    await this.broadcastToChannel(`session:${data.sessionId}`, { type: event, ...data });
                   }
                   if (data.chatId) {
-                    this.broadcastToChannel(`chat:${data.chatId}`, { type: event, ...data });
+                    await this.broadcastToChannel(`chat:${data.chatId}`, { type: event, ...data });
                   }
 
                   // Acknowledge using general client (non-blocking)
@@ -330,6 +408,20 @@ export class WsServer {
     } catch (err) {
       logger.error('Failed to start PG listener', { error: (err as Error).message });
     }
+  }
+
+  /**
+   * Invalidate the session access cache for a user.
+   */
+  invalidateSessionAccess(userId: string): void {
+    this.sessionAccessCache.delete(userId);
+  }
+
+  /**
+   * Invalidate the chat assignee cache for a chat.
+   */
+  invalidateChatAssignee(chatId: string): void {
+    this.chatAssigneeCache.delete(chatId);
   }
 
   /**

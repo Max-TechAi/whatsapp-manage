@@ -48,8 +48,8 @@ const router = Router();
 // Apply authentication to all session routes
 router.use(authenticate);
 
-// Parameter guard to validate session UUID format and prevent PostgreSQL syntax errors
-router.param('id', (req, res, next, id) => {
+// Parameter guard to validate session UUID format, verify ownership, and enforce level-1 permission checks
+router.param('id', async (req, res, next, id) => {
   if (!isValidUuid(id)) {
     logger.warn('Invalid UUID parameter detected in session routes', {
       param: 'id',
@@ -60,7 +60,54 @@ router.param('id', (req, res, next, id) => {
     res.status(400).json({ error: 'Invalid ID format' });
     return;
   }
-  next();
+
+  try {
+    const { orgId, role, userId, hasAllSessionsAccess } = req.user!;
+    const { userSessionAccess } = await import('../../db/schema.js');
+
+    // Admins and agents with 'hasAllSessionsAccess' bypass session-level restrictions
+    if (role === 'admin' || hasAllSessionsAccess) {
+      const [sessionRecord] = await db
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(and(eq(sessions.id, id), eq(sessions.orgId, orgId)))
+        .limit(1);
+
+      if (!sessionRecord) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+      return next();
+    }
+
+    // Regular agents: check userSessionAccess table
+    const [accessRecord] = await db
+      .select({ id: sessions.id })
+      .from(userSessionAccess)
+      .innerJoin(sessions, eq(userSessionAccess.sessionId, sessions.id))
+      .where(
+        and(
+          eq(userSessionAccess.userId, userId),
+          eq(userSessionAccess.sessionId, id),
+          eq(sessions.orgId, orgId)
+        )
+      )
+      .limit(1);
+
+    if (!accessRecord) {
+      res.status(403).json({ error: 'Access denied: you do not have permission for this WhatsApp session' });
+      return;
+    }
+
+    next();
+  } catch (error) {
+    logger.error('Error during session parameter access check', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      sessionId: id,
+      userId: req.user?.userId,
+    });
+    res.status(500).json({ error: 'Internal server error during access check' });
+  }
 });
 
 // ─── POST / — Create a new session ────────────────────────────────────────
@@ -111,20 +158,44 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
 
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { orgId } = req.user!;
+    const { orgId, role, userId, hasAllSessionsAccess } = req.user!;
+    const { userSessionAccess } = await import('../../db/schema.js');
 
-    const orgSessions = await db
-      .select({
-        id: sessions.id,
-        sessionName: sessions.sessionName,
-        phoneNumber: sessions.phoneNumber,
-        status: sessions.status,
-        lastConnectedAt: sessions.lastConnectedAt,
-        createdAt: sessions.createdAt,
-      })
-      .from(sessions)
-      .where(eq(sessions.orgId, orgId))
-      .orderBy(sessions.createdAt);
+    let orgSessions;
+    if (role === 'admin' || hasAllSessionsAccess) {
+      orgSessions = await db
+        .select({
+          id: sessions.id,
+          sessionName: sessions.sessionName,
+          phoneNumber: sessions.phoneNumber,
+          status: sessions.status,
+          lastConnectedAt: sessions.lastConnectedAt,
+          createdAt: sessions.createdAt,
+        })
+        .from(sessions)
+        .where(eq(sessions.orgId, orgId))
+        .orderBy(sessions.createdAt);
+    } else {
+      const rows = await db
+        .select({
+          id: sessions.id,
+          sessionName: sessions.sessionName,
+          phoneNumber: sessions.phoneNumber,
+          status: sessions.status,
+          lastConnectedAt: sessions.lastConnectedAt,
+          createdAt: sessions.createdAt,
+        })
+        .from(sessions)
+        .innerJoin(userSessionAccess, eq(sessions.id, userSessionAccess.sessionId))
+        .where(
+          and(
+            eq(sessions.orgId, orgId),
+            eq(userSessionAccess.userId, userId)
+          )
+        )
+        .orderBy(sessions.createdAt);
+      orgSessions = rows;
+    }
 
     // Enrich with live status from the session manager
     const enriched = orgSessions.map((session) => ({

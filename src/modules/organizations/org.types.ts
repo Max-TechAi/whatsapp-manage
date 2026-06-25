@@ -28,5 +28,6 @@ export interface OrgMember {
   displayName: string | null;
   role: string;
   isActive: boolean;
+  hasAllSessionsAccess: boolean;
   lastLoginAt: Date | null;
 }

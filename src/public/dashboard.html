@@ -45,6 +45,9 @@
         <button id="navBtnWebhooks" class="nav-link" onclick="switchTab('webhooks')">
           <span>🔗</span> Webhook Settings
         </button>
+        <button id="navBtnTeam" class="nav-link" onclick="switchTab('team')" style="display: none;">
+          <span>👥</span> Team Settings
+        </button>
       </div>
 
       <div>
@@ -118,12 +121,26 @@
             <!-- Main active message screen (initially hidden) -->
             <div id="activeChatWrapper" style="display: none; flex: 1; flex-direction: column; overflow: hidden;">
               <!-- Header -->
-              <div class="active-chat-header">
+              <div class="active-chat-header" style="display: flex; justify-content: space-between; align-items: center;">
                 <div class="active-chat-user">
                   <div class="chat-avatar" id="activeChatAvatar">👤</div>
                   <div class="active-chat-details">
                     <span class="active-chat-name" id="activeChatName">Contact Name</span>
                     <span class="active-chat-jid" id="activeChatJid"> JID JID </span>
+                  </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <!-- Reset encryption session -->
+                  <button class="btn btn-secondary" onclick="handleResetContactSession()" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; height: auto;">
+                    🔄 Reset Encryption
+                  </button>
+                  
+                  <!-- Assign chat dropdown -->
+                  <div id="assignChatContainer" style="display: none; align-items: center; gap: 0.25rem;">
+                    <span style="font-size: 0.8rem; color: var(--text-muted);">Assignee:</span>
+                    <select id="chatAssigneeSelect" onchange="handleAssignChatChange()" style="padding: 0.3rem; font-size: 0.8rem; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; height: auto; cursor: pointer;">
+                      <option value="">Unassigned</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -262,6 +279,55 @@
         </div>
       </div>
 
+      <!-- ─── TEAM TAB ───────────────────────────────────────── -->
+      <div id="tab-team" class="tab-content">
+        <div class="grid-2">
+          <!-- Invite Form -->
+          <div class="card">
+            <div class="card-title">Invite New Team Member</div>
+            <form id="inviteForm" onsubmit="handleInviteMember(event)">
+              <div class="input-group">
+                <label>Email Address</label>
+                <input type="email" id="inviteEmail" placeholder="employee@yourdomain.com" required>
+              </div>
+              <div class="input-group">
+                <label>Role</label>
+                <select id="inviteRole" required>
+                  <option value="agent" selected>Agent</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <button type="submit" class="btn">Invite Member</button>
+            </form>
+          </div>
+
+          <!-- Members list -->
+          <div class="card">
+            <div class="card-title">Team Members</div>
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Display Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="teamListBody">
+                  <tr>
+                    <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                      Loading team members...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </main>
   </div>
 
@@ -306,6 +372,59 @@
         <div id="syncErrorText" style="color: var(--danger); font-size: 0.85rem; margin-bottom: 1rem;">Sync failed.</div>
         <button class="btn" id="syncRetryBtn" onclick="handleSyncRetry()">Retry Sync</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ─── MEMBER EDIT MODAL ──────────────────────────────────── -->
+  <div id="teamModalOverlay" class="qr-modal-overlay">
+    <div class="qr-modal-card" style="max-width: 500px; text-align: left;">
+      <div class="card-title" id="teamModalTitle">Edit Team Member</div>
+      <form id="editMemberForm" onsubmit="handleSaveMember(event)">
+        <input type="hidden" id="editUserId">
+        
+        <div class="input-group" style="margin-bottom: 1rem;">
+          <label>Display Name</label>
+          <input type="text" id="editDisplayName" placeholder="John Doe" required>
+        </div>
+
+        <div class="input-group" style="margin-bottom: 1rem;">
+          <label>Role</label>
+          <select id="editRole" onchange="toggleEditRoleSettings()" required>
+            <option value="agent">Agent</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+
+        <div class="input-group" style="margin-bottom: 1rem;">
+          <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text-main);">
+            <input type="checkbox" id="editIsActive"> Active User
+          </label>
+        </div>
+
+        <!-- Session Access Gating (Only for Agents) -->
+        <div id="sessionAccessContainer" style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
+          <h4 style="margin: 0 0 0.5rem 0; font-size: 0.95rem; color: var(--text-main);">WhatsApp Session Permissions</h4>
+          
+          <div class="input-group" style="margin-bottom: 0.75rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text-main);">
+              <input type="checkbox" id="editAllSessionsAccess" onchange="toggleAllSessionsCheckbox()"> Access to All Sessions (current & future)
+            </label>
+          </div>
+
+          <div id="specificSessionsGroup" style="padding-left: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; max-height: 150px; overflow-y: auto;">
+            <!-- Checkboxes will be populated dynamically -->
+          </div>
+          
+          <div id="adminSessionsNote" style="display: none; color: var(--text-muted); font-size: 0.85rem; font-style: italic;">
+            Admins automatically have access to all sessions.
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
+          <button type="button" class="btn btn-secondary" onclick="closeTeamModal()">Cancel</button>
+          <button type="submit" class="btn">Save Changes</button>
+        </div>
+      </form>
     </div>
   </div>
 

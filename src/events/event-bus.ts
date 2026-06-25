@@ -162,6 +162,7 @@ export class EventBus {
       mediaUrl?: string;
       caption?: string;
       quotedWaMessageId?: string;
+      sentByUserId?: string | null;
     }
   ): Promise<string> {
     const queue = this.getQueue(QUEUES.MESSAGE_OUTBOUND);

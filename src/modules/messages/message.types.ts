@@ -41,6 +41,8 @@ export interface Message {
   isEdited?: boolean;
   editedAt?: Date | null;
   isDeleted?: boolean;
+  sentByUserId?: string | null;
+  sentByDisplayName?: string | null;
   createdAt: Date;
   updatedAt: Date | null;
   deletedAt: Date | null;
@@ -55,6 +57,7 @@ export interface SendMessageRequest {
   caption?: string;
   quotedMessageId?: string;
   mentions?: string[];
+  sentByUserId?: string | null;
 }
 
 export interface PaginationCursor {
