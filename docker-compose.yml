@@ -120,7 +120,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wa-session-runner
     restart: unless-stopped
     command: ["node", "dist/session-runner.js"]
     environment:
