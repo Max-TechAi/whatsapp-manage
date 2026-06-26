@@ -67,6 +67,12 @@ class SessionManager {
   /** Map of sessionId → consecutive lock renewal failures */
   private lockRenewalFailures: Map<string, number> = new Map();
 
+  /** Map of sessionId → last successful lock renewal timestamp */
+  private lastSuccessfulRenewal: Map<string, number> = new Map();
+
+  /** Map of sessionId → watchdog interval */
+  private watchdogIntervals: Map<string, NodeJS.Timeout> = new Map();
+
   /** Map of sessionId → array of active BullMQ Worker instances */
   private dynamicWorkers: Map<string, Worker[]> = new Map();
 
@@ -1272,7 +1278,9 @@ class SessionManager {
   private startLockRenewal(sessionId: string): void {
     this.clearLockRenewal(sessionId);
     this.lockRenewalFailures.set(sessionId, 0);
+    this.lastSuccessfulRenewal.set(sessionId, Date.now());
     
+    // 1. Heartbeat loop (runs every 3s to renew lease in Redis)
     const interval = setInterval(async () => {
       const lockKey = `session:${sessionId}:owner`;
       try {
@@ -1289,7 +1297,8 @@ class SessionManager {
           logger.error('Failed to renew lock: Ownership changed or expired. Self-terminating socket.', { sessionId });
           await this.forceTerminateSocket(sessionId);
         } else {
-          // Success, reset consecutive failures
+          // Success, update timestamp and reset consecutive failures
+          this.lastSuccessfulRenewal.set(sessionId, Date.now());
           this.lockRenewalFailures.set(sessionId, 0);
         }
       } catch (err) {
@@ -1305,6 +1314,21 @@ class SessionManager {
     }, 3000); // Heartbeat every 3s
     
     this.lockRenewals.set(sessionId, interval);
+
+    // 2. Local watchdog loop (runs every 2s, completely independent of Redis calls)
+    const watchdogInterval = setInterval(async () => {
+      const lastRenewal = this.lastSuccessfulRenewal.get(sessionId);
+      if (lastRenewal) {
+        const elapsed = Date.now() - lastRenewal;
+        const maxElapsed = 8000; // 8 seconds fail-safe (under 10s Redis TTL)
+        if (elapsed > maxElapsed) {
+          logger.error('Watchdog: Lock renewal has not succeeded for 8s. Forcibly self-terminating socket.', { sessionId, elapsed });
+          await this.forceTerminateSocket(sessionId);
+        }
+      }
+    }, 2000);
+
+    this.watchdogIntervals.set(sessionId, watchdogInterval);
   }
 
   private clearLockRenewal(sessionId: string): void {
@@ -1313,7 +1337,13 @@ class SessionManager {
       clearInterval(interval);
       this.lockRenewals.delete(sessionId);
     }
+    const watchdog = this.watchdogIntervals.get(sessionId);
+    if (watchdog) {
+      clearInterval(watchdog);
+      this.watchdogIntervals.delete(sessionId);
+    }
     this.lockRenewalFailures.delete(sessionId);
+    this.lastSuccessfulRenewal.delete(sessionId);
   }
 
   async forceTerminateSocket(sessionId: string): Promise<void> {
