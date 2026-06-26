@@ -1363,7 +1363,7 @@ class SessionManager {
     logger.info('Starting dynamic workers for session', { sessionId });
     
     // 1. Outbound messages worker
-    const outboundQueue = `queue:session:${sessionId}:outbound`;
+    const outboundQueue = `queue-session-${sessionId}-outbound`;
     const outboundWorker = new Worker(
       outboundQueue,
       async (job: any) => {
@@ -1432,7 +1432,7 @@ class SessionManager {
     );
     
     // 2. Media download worker
-    const mediaQueue = `queue:session:${sessionId}:media`;
+    const mediaQueue = `queue-session-${sessionId}-media`;
     const mediaWorker = new Worker(
       mediaQueue,
       async (job: any) => {
@@ -1496,7 +1496,7 @@ class SessionManager {
     );
     
     // 3. Control commands worker
-    const controlQueue = `queue:session:${sessionId}:control`;
+    const controlQueue = `queue-session-${sessionId}-control`;
     const controlWorker = new Worker(
       controlQueue,
       async (job: any) => {

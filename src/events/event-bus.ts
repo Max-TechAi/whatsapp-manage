@@ -185,7 +185,7 @@ export class EventBus {
       sentByUserId?: string | null;
     }
   ): Promise<string> {
-    const queueName = `queue:session:${sessionId}:outbound`;
+    const queueName = `queue-session-${sessionId}-outbound`;
     const queue = this.getDynamicQueue(queueName);
 
     const job = await queue.add(
@@ -209,7 +209,7 @@ export class EventBus {
     messageId: string,
     messageData: any
   ): Promise<void> {
-    const queueName = `queue:session:${sessionId}:media`;
+    const queueName = `queue-session-${sessionId}-media`;
     const queue = this.getDynamicQueue(queueName);
     await queue.add(
       'download',
@@ -237,7 +237,7 @@ export class EventBus {
     action: 'restart' | 'destroy' | 'reset-contact-session' | 'mark-read' | 'fetch-history',
     payload: Record<string, any> = {}
   ): Promise<string> {
-    const queueName = `queue:session:${sessionId}:control`;
+    const queueName = `queue-session-${sessionId}-control`;
     const queue = this.getDynamicQueue(queueName);
     
     const job = await queue.add(
