@@ -38,6 +38,7 @@ export const QUEUES = {
   WEBHOOK_DELIVERY: 'webhook-delivery',
   CONTACT_SYNC: 'contact-sync',
   CHAT_SYNC: 'chat-sync',
+  SESSIONS_ORCHESTRATION: 'sessions-orchestration',
 } as const;
 
 /** Redis Streams for fan-out event broadcasting */
@@ -53,6 +54,7 @@ type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
 export class EventBus {
   private queues: Map<string, Queue> = new Map();
   private queueEvents: Map<string, QueueEvents> = new Map();
+  private dynamicQueues: Map<string, Queue> = new Map();
 
   constructor() {
     // Initialize all queues
@@ -76,6 +78,24 @@ export class EventBus {
   getQueue(name: QueueName): Queue {
     const queue = this.queues.get(name);
     if (!queue) throw new Error(`Queue ${name} not found`);
+    return queue;
+  }
+
+  /** Get or dynamically create a session-specific queue */
+  getDynamicQueue(name: string): Queue {
+    let queue = this.dynamicQueues.get(name);
+    if (!queue) {
+      queue = new Queue(name, {
+        connection: queueRedis.duplicate() as any,
+        defaultJobOptions: {
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 1000 },
+          removeOnComplete: true,
+          removeOnFail: { count: 100 },
+        },
+      });
+      this.dynamicQueues.set(name, queue);
+    }
     return queue;
   }
 
@@ -165,13 +185,13 @@ export class EventBus {
       sentByUserId?: string | null;
     }
   ): Promise<string> {
-    const queue = this.getQueue(QUEUES.MESSAGE_OUTBOUND);
+    const queueName = `queue:session:${sessionId}:outbound`;
+    const queue = this.getDynamicQueue(queueName);
 
     const job = await queue.add(
       'send-message',
       { sessionId, orgId, ...data, enqueuedAt: new Date().toISOString() },
       {
-        // Rate limit: 1 message every 2 seconds per session
         delay: 0,
         jobId: `out-${sessionId}-${Date.now()}`,
       }
@@ -189,7 +209,8 @@ export class EventBus {
     messageId: string,
     messageData: any
   ): Promise<void> {
-    const queue = this.getQueue(QUEUES.MEDIA_DOWNLOAD);
+    const queueName = `queue:session:${sessionId}:media`;
+    const queue = this.getDynamicQueue(queueName);
     await queue.add(
       'download',
       {
@@ -206,6 +227,50 @@ export class EventBus {
         },
       }
     );
+  }
+
+  /**
+   * Publish session control command (restart, destroy, reset-contact-session, etc.).
+   */
+  async publishSessionControl(
+    sessionId: string,
+    action: 'restart' | 'destroy' | 'reset-contact-session' | 'mark-read' | 'fetch-history',
+    payload: Record<string, any> = {}
+  ): Promise<string> {
+    const queueName = `queue:session:${sessionId}:control`;
+    const queue = this.getDynamicQueue(queueName);
+    
+    const job = await queue.add(
+      action,
+      { sessionId, action, payload, enqueuedAt: new Date().toISOString() },
+      {
+        attempts: 3,
+        backoff: { type: 'fixed', delay: 2000 }
+      }
+    );
+    
+    return job.id!;
+  }
+
+  /**
+   * Publish session orchestration startup command.
+   */
+  async publishSessionOrchestration(
+    sessionId: string,
+    orgId: string,
+    action: 'start'
+  ): Promise<string> {
+    const queue = this.getQueue(QUEUES.SESSIONS_ORCHESTRATION);
+    const job = await queue.add(
+      action,
+      { sessionId, orgId, action },
+      {
+        jobId: `orchestrate-${action}-${sessionId}`, // Deduplication by job ID
+        attempts: 3,
+        backoff: { type: 'fixed', delay: 5000 }
+      }
+    );
+    return job.id!;
   }
 
   /**
@@ -369,6 +434,10 @@ export class EventBus {
     for (const [name, queue] of this.queues) {
       await queue.close();
       logger.debug(`Queue ${name} closed`);
+    }
+    for (const [name, queue] of this.dynamicQueues) {
+      await queue.close();
+      logger.debug(`Dynamic queue ${name} closed`);
     }
     for (const [, events] of this.queueEvents) {
       await events.close();

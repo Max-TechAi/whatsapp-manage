@@ -8,6 +8,8 @@
     "dev": "tsx --env-file=.env watch src/index.ts",
     "build": "tsc",
     "start": "node --env-file=.env dist/index.js",
+    "session-runner:dev": "tsx --env-file=.env watch src/session-runner.ts",
+    "session-runner:start": "node --env-file=.env dist/session-runner.js",
     "worker": "tsx --env-file=.env src/events/worker-entry.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=.env src/db/migrate.ts",

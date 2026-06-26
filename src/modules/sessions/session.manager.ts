@@ -22,6 +22,7 @@ import pino from 'pino';
 import { v4 as uuidv4 } from 'uuid';
 import { eq, and, inArray, sql, lte, ne, desc } from 'drizzle-orm';
 import { Boom } from '@hapi/boom';
+import { Worker } from 'bullmq';
 
 import { db } from '../../config/database.js';
 import { sessions, sessionKeys, messages } from '../../db/schema.js';
@@ -57,6 +58,15 @@ export function isValidUuid(id: unknown): boolean {
  * their lifecycle against the PostgreSQL session records.
  */
 class SessionManager {
+  /** Unique identifier for this session-runner process/replica */
+  readonly replicaId = uuidv4();
+
+  /** Map of sessionId → lock renewal interval */
+  private lockRenewals: Map<string, NodeJS.Timeout> = new Map();
+
+  /** Map of sessionId → array of active BullMQ Worker instances */
+  private dynamicWorkers: Map<string, Worker[]> = new Map();
+
   /** Map of sessionId → active Baileys socket and metadata */
   private activeSessions: Map<string, ActiveSession> = new Map();
 
@@ -109,7 +119,12 @@ class SessionManager {
     });
 
     // Initialize the Baileys socket (async, will emit QR events)
-    await this.initializeSocket(sessionId, orgId);
+    if (process.env.RUN_SESSION_RUNNER === 'true') {
+      await this.initializeSocket(sessionId, orgId);
+    } else {
+      const { eventBus } = await import('../../events/event-bus.js');
+      await eventBus.publishSessionOrchestration(sessionId, orgId, 'start');
+    }
 
     // Return the session record
     const session: WhatsAppSession = {
@@ -142,6 +157,13 @@ class SessionManager {
       logger.warn('initializeSocket skipped for invalid sessionId or orgId', { sessionId, orgId, stack: new Error().stack });
       return;
     }
+
+    // Decoupled: only run Baileys sockets on runner replicas
+    if (process.env.RUN_SESSION_RUNNER !== 'true') {
+      logger.info('initializeSocket called on API container, skipping local socket initialization', { sessionId });
+      return;
+    }
+
     if (this.initializingSessions.has(sessionId)) {
       logger.warn('Socket initialization already in progress for session', { sessionId });
       return;
@@ -149,6 +171,35 @@ class SessionManager {
     this.initializingSessions.add(sessionId);
 
     try {
+      // 1. Try to acquire/renew the Redis lock
+      const lockKey = `session:${sessionId}:owner`;
+      const currentOwner = await redis.get(lockKey);
+      if (currentOwner && currentOwner !== this.replicaId) {
+        logger.warn('Session is owned by another replica, skipping initialization', { sessionId, currentOwner });
+        return;
+      }
+      
+      let acquired: string | null = null;
+      if (currentOwner === this.replicaId) {
+        acquired = await redis.set(lockKey, this.replicaId, 'EX', 10, 'XX');
+      } else if (!currentOwner) {
+        acquired = await redis.set(lockKey, this.replicaId, 'EX', 10, 'NX');
+      }
+      if (!acquired) {
+        logger.warn('Failed to acquire lock for session, skipping initialization', { sessionId });
+        return;
+      }
+
+      // 2. Fencing Delay (Lease Safety Check)
+      logger.info('Acquired session lock. Waiting 1.5s fencing delay...', { sessionId });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const postDelayOwner = await redis.get(lockKey);
+      if (postDelayOwner !== this.replicaId) {
+        logger.error('Lost lock during fencing delay, aborting socket initialization', { sessionId });
+        return;
+      }
+
       // Clear any pending reconnect timeout
       const reconnectTimeout = this.pendingReconnects.get(sessionId);
       if (reconnectTimeout) {
@@ -221,6 +272,10 @@ class SessionManager {
         isInitialSyncConnection: !historySyncCompleted,
       });
 
+      // Start lock renewal heartbeat and dynamic workers
+      this.startLockRenewal(sessionId);
+      this.startDynamicWorkers(sessionId, orgId);
+
       logger.info('Baileys socket initialized', { sessionId });
     } catch (error) {
       logger.error('Failed to initialize Baileys socket', {
@@ -283,6 +338,11 @@ class SessionManager {
     // Update DB status
     await this.updateSessionStatus(sessionId, 'disconnected');
 
+    // Clean up lock and workers
+    this.clearLockRenewal(sessionId);
+    this.stopDynamicWorkers(sessionId);
+    await this.releaseLock(sessionId);
+
     // Clean up signal keys
     try {
       await db
@@ -317,6 +377,10 @@ class SessionManager {
    * and reinitializes their sockets. This enables seamless restarts.
    */
   async restoreAllSessions(): Promise<void> {
+    if (process.env.RUN_SESSION_RUNNER !== 'true') {
+      logger.info('restoreAllSessions called on API container, skipping restoration');
+      return;
+    }
     logger.info('Restoring all active sessions...');
 
     try {
@@ -1087,6 +1151,8 @@ class SessionManager {
     const active = this.activeSessions.get(sessionId);
     if (active) {
       this.clearPresenceKeepAlive(active);
+      this.clearLockRenewal(sessionId);
+      this.stopDynamicWorkers(sessionId);
       this.activeSessions.delete(sessionId);
     }
   }
@@ -1197,6 +1263,267 @@ class SessionManager {
         status,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
+    }
+  }
+
+  private startLockRenewal(sessionId: string): void {
+    this.clearLockRenewal(sessionId);
+    
+    const interval = setInterval(async () => {
+      const lockKey = `session:${sessionId}:owner`;
+      try {
+        // Lua script to renew lock if we still own it
+        const result = await redis.eval(`
+          if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('expire', KEYS[1], ARGV[2])
+          else
+            return 0
+          end
+        `, 1, lockKey, this.replicaId, '10');
+        
+        if (Number(result) === 0) {
+          logger.error('Failed to renew lock: Ownership changed or expired. Self-terminating socket.', { sessionId });
+          await this.forceTerminateSocket(sessionId);
+        }
+      } catch (err) {
+        logger.error('Error during lock renewal heartbeat', { sessionId, error: (err as Error).message });
+      }
+    }, 3000); // Heartbeat every 3s
+    
+    this.lockRenewals.set(sessionId, interval);
+  }
+
+  private clearLockRenewal(sessionId: string): void {
+    const interval = this.lockRenewals.get(sessionId);
+    if (interval) {
+      clearInterval(interval);
+      this.lockRenewals.delete(sessionId);
+    }
+  }
+
+  async forceTerminateSocket(sessionId: string): Promise<void> {
+    logger.warn('Forcibly terminating socket connection', { sessionId });
+    this.clearLockRenewal(sessionId);
+    this.stopDynamicWorkers(sessionId);
+    
+    const active = this.activeSessions.get(sessionId);
+    if (active) {
+      try {
+        active.socket.ev.removeAllListeners('connection.update');
+        active.socket.ev.removeAllListeners('creds.update');
+        active.socket.ev.removeAllListeners('messages.upsert');
+        active.socket.ev.removeAllListeners('messages.update');
+        active.socket.ev.removeAllListeners('message-receipt.update');
+        active.socket.ev.removeAllListeners('messaging-history.set');
+        active.socket.end(undefined);
+      } catch (err) {
+        logger.warn('Error closing socket in forceTerminate', { sessionId, error: (err as Error).message });
+      }
+      this.activeSessions.delete(sessionId);
+    }
+    
+    await this.releaseLock(sessionId);
+    await this.updateSessionStatus(sessionId, 'disconnected');
+  }
+
+  private async releaseLock(sessionId: string): Promise<void> {
+    const lockKey = `session:${sessionId}:owner`;
+    try {
+      await redis.eval(`
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+          return redis.call('del', KEYS[1])
+        else
+          return 0
+        end
+      `, 1, lockKey, this.replicaId);
+      logger.info('Released Redis session lock', { sessionId });
+    } catch (err) {
+      logger.warn('Failed to release Redis lock', { sessionId, error: (err as Error).message });
+    }
+  }
+
+  private startDynamicWorkers(sessionId: string, orgId: string): void {
+    this.stopDynamicWorkers(sessionId);
+    
+    logger.info('Starting dynamic workers for session', { sessionId });
+    
+    // 1. Outbound messages worker
+    const outboundQueue = `queue:session:${sessionId}:outbound`;
+    const outboundWorker = new Worker(
+      outboundQueue,
+      async (job: any) => {
+        const { type, content, waChatJid, quotedWaMessageId, sentByUserId, chatId } = job.data;
+        logger.info('Dynamic outbound worker processing job', { jobId: job.id, sessionId, waChatJid });
+        
+        // Fencing check before send
+        const owner = await redis.get(`session:${sessionId}:owner`);
+        if (owner !== this.replicaId) {
+          logger.error('Outbound aborted: Lock ownership lost.', { sessionId });
+          await this.forceTerminateSocket(sessionId);
+          throw new Error('Lock ownership lost');
+        }
+        
+        const active = this.activeSessions.get(sessionId);
+        if (!active || !active.socket) {
+          throw new Error(`Socket not active locally for session ${sessionId}`);
+        }
+        
+        // Send message
+        let result;
+        if (type === 'text') {
+          if (!content) throw new Error('Content is required');
+          const sendOptions: any = {};
+          if (quotedWaMessageId) {
+            sendOptions.quoted = {
+              key: { remoteJid: waChatJid, fromMe: false, id: quotedWaMessageId },
+              message: { conversation: '' }
+            };
+          }
+          result = await active.socket.sendMessage(waChatJid, { text: content }, sendOptions);
+        } else {
+          throw new Error(`Unsupported outbound type: ${type}`);
+        }
+        
+        if (!result?.key?.id) throw new Error('No message ID returned from Baileys');
+        
+        // Save to database
+        const { messageService } = await import('../messages/message.service.js');
+        const timestamp = result.messageTimestamp ? new Date(Number(result.messageTimestamp) * 1000) : new Date();
+        const dbMessage = await messageService.upsertMessage({
+          orgId,
+          sessionId,
+          chatId,
+          waMessageId: result.key.id,
+          senderJid: 'me',
+          fromMe: true,
+          messageType: type,
+          content: content || null,
+          status: 'sent',
+          metadata: { ...(quotedWaMessageId ? { quotedWaMessageId } : {}) },
+          sentByUserId: sentByUserId ?? null,
+          createdAt: timestamp,
+        });
+        
+        // Broadcast new message
+        const { eventBus, STREAMS } = await import('../../events/event-bus.js');
+        await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+          sessionId,
+          orgId,
+          chatId,
+          message: dbMessage,
+        });
+      },
+      { connection: redis.duplicate() as any }
+    );
+    
+    // 2. Media download worker
+    const mediaQueue = `queue:session:${sessionId}:media`;
+    const mediaWorker = new Worker(
+      mediaQueue,
+      async (job: any) => {
+        const { messageId, messageData } = job.data;
+        logger.info('Dynamic media worker processing job', { jobId: job.id, sessionId, messageId });
+        
+        const active = this.activeSessions.get(sessionId);
+        if (!active || !active.socket) throw new Error(`Socket not active locally for session ${sessionId}`);
+        
+        const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
+        const buffer = await downloadMediaMessage(
+          messageData,
+          'buffer',
+          {},
+          { logger: undefined as any, reuploadRequest: active.socket.updateMediaMessage }
+        );
+        
+        if (!buffer || buffer.length === 0) return { messageId, status: 'empty' };
+        
+        const mediaMsg = messageData.message?.imageMessage ?? messageData.message?.videoMessage ?? messageData.message?.audioMessage ?? messageData.message?.documentMessage ?? messageData.message?.stickerMessage;
+        const mimeType = mediaMsg?.mimetype ?? 'application/octet-stream';
+        const filename = mediaMsg?.fileName ?? `media-${messageId}`;
+        
+        const { mediaService } = await import('../media/media.service.js');
+        const result = await mediaService.upload({
+          orgId,
+          sessionId,
+          messageId,
+          buffer: Buffer.from(buffer),
+          filename,
+          mimeType,
+        });
+        
+        const { messageService } = await import('../messages/message.service.js');
+        const dbMessage = await messageService.getMessageById(orgId, messageId);
+        if (dbMessage) {
+          const updatedMessage = await messageService.upsertMessage({
+            ...dbMessage,
+            mediaUrl: result.objectKey,
+            mediaMimeType: mimeType,
+            mediaSize: result.sizeBytes,
+            metadata: {
+              ...dbMessage.metadata,
+              mediaFileId: result.fileId,
+              thumbnailKey: result.thumbnailUrl ? result.objectKey.replace(/(\.[^.]+)$/, '_thumb.jpg') : undefined,
+              checksum: result.checksumSha256,
+              mediaStatus: 'downloaded',
+            },
+          });
+          
+          const { eventBus, STREAMS } = await import('../../events/event-bus.js');
+          await eventBus.publishToStream(STREAMS.MESSAGES, 'message:media_update', {
+            sessionId,
+            orgId,
+            chatId: dbMessage.chatId,
+            message: updatedMessage,
+          });
+        }
+      },
+      { connection: redis.duplicate() as any }
+    );
+    
+    // 3. Control commands worker
+    const controlQueue = `queue:session:${sessionId}:control`;
+    const controlWorker = new Worker(
+      controlQueue,
+      async (job: any) => {
+        const { action, payload } = job.data;
+        logger.info('Dynamic control worker processing job', { jobId: job.id, sessionId, action });
+        
+        if (action === 'restart') {
+          await this.forceTerminateSocket(sessionId);
+          await this.initializeSocket(sessionId, orgId);
+        } else if (action === 'destroy') {
+          await this.destroySession(sessionId);
+        } else if (action === 'reset-contact-session') {
+          const active = this.activeSessions.get(sessionId);
+          if (active && active.socket) {
+            const { contactJid } = payload;
+            const resolvedJid = await resolveLidJid(sessionId, contactJid);
+            const jidsToDelete = Array.from(new Set([contactJid, resolvedJid]));
+            await active.socket.signalRepository.deleteSession(jidsToDelete);
+            logger.info('Reset encryption session for contact via control worker', { sessionId, contactJid, jidsToDelete });
+          }
+        }
+      },
+      { connection: redis.duplicate() as any }
+    );
+
+    outboundWorker.on('error', (err: any) => logger.error('Outbound dynamic worker error', { sessionId, error: err.message }));
+    mediaWorker.on('error', (err: any) => logger.error('Media dynamic worker error', { sessionId, error: err.message }));
+    controlWorker.on('error', (err: any) => logger.error('Control dynamic worker error', { sessionId, error: err.message }));
+
+    this.dynamicWorkers.set(sessionId, [outboundWorker, mediaWorker, controlWorker]);
+  }
+
+  private stopDynamicWorkers(sessionId: string): void {
+    const workers = this.dynamicWorkers.get(sessionId);
+    if (workers) {
+      logger.info('Stopping dynamic workers for session', { sessionId });
+      for (const worker of workers) {
+        worker.close().catch((err: any) => {
+          logger.warn('Error closing dynamic worker', { sessionId, error: err.message });
+        });
+      }
+      this.dynamicWorkers.delete(sessionId);
     }
   }
 }

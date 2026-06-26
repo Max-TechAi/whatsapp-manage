@@ -19,12 +19,14 @@ import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 
 import { db } from '../../config/database.js';
-import { sessions } from '../../db/schema.js';
+import { sessions, chats } from '../../db/schema.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { sessionManager, updateSyncProgress, isValidUuid } from './session.manager.js';
 import { logger } from '../../observability/logger.js';
 import { redis } from '../../config/redis.js';
 import { resolveLidJid } from './lid-mapping.js';
+import { eventBus } from '../../events/event-bus.js';
+import type { SessionStatus } from './session.types.js';
 
 /** Request body schema for session creation */
 const createSessionSchema = z.object({
@@ -197,11 +199,27 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
       orgSessions = rows;
     }
 
-    // Enrich with live status from the session manager
-    const enriched = orgSessions.map((session) => ({
-      ...session,
-      liveStatus: sessionManager.getSessionStatus(session.id),
-    }));
+    // Enrich with live status from Redis and DB status fallback
+    const sessionIds = orgSessions.map((s) => s.id);
+    let owners: Array<[Error | null, string | null]> | null = null;
+    if (sessionIds.length > 0) {
+      try {
+        const pipeline = redis.pipeline();
+        sessionIds.forEach((id) => pipeline.get(`session:${id}:owner`));
+        owners = (await pipeline.exec()) as Array<[Error | null, string | null]>;
+      } catch (err) {
+        logger.error('Failed to pipeline fetch session owners from Redis', { error: (err as Error).message });
+      }
+    }
+
+    const enriched = orgSessions.map((session, index) => {
+      const owner = owners ? owners[index]?.[1] : null;
+      const liveStatus: SessionStatus = owner ? (session.status as SessionStatus) : 'disconnected';
+      return {
+        ...session,
+        liveStatus,
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -243,12 +261,14 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
     }
 
     const sessionData = session[0];
+    const owner = await redis.get(`session:${sessionId}:owner`).catch(() => null);
+    const liveStatus: SessionStatus = owner ? (sessionData.status as SessionStatus) : 'disconnected';
 
     res.status(200).json({
       success: true,
       data: {
         ...sessionData,
-        liveStatus: sessionManager.getSessionStatus(sessionId),
+        liveStatus,
       },
     });
   } catch (error) {
@@ -335,26 +355,34 @@ router.get('/:id/groups', async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const activeSession = sessionManager.getSession(sessionId);
-    if (!activeSession) {
-      res.status(400).json({ error: 'Session is not active or connected' });
-      return;
-    }
+    // Fetch groups from chats database table (synced from Baileys)
+    const groups = await db
+      .select({
+        id: chats.waChatId,
+        subject: chats.name,
+        metadata: chats.metadata,
+      })
+      .from(chats)
+      .where(
+        and(
+          eq(chats.sessionId, sessionId),
+          eq(chats.orgId, orgId),
+          eq(chats.chatType, 'group')
+        )
+      );
 
-    // Fetch groups from Baileys socket
-    const groupsDict = await activeSession.socket.groupFetchAllParticipating();
-    const groups = Object.values(groupsDict).map((g) => ({
+    const data = groups.map((g) => ({
       id: g.id,
-      subject: g.subject,
-      owner: g.owner,
-      creation: g.creation,
-      desc: g.desc,
-      participantsCount: g.participants?.length || 0,
+      subject: g.subject || 'Unnamed Group',
+      owner: null,
+      creation: null,
+      desc: null,
+      participantsCount: (g.metadata as any)?.participantsCount ?? 0,
     }));
 
     res.status(200).json({
       success: true,
-      data: groups,
+      data,
     });
   } catch (error) {
     logger.error('Failed to fetch groups', {
@@ -387,18 +415,8 @@ router.post('/:id/restart', async (req: Request, res: Response): Promise<void> =
 
     logger.info('Restarting session via API', { sessionId, orgId });
 
-    // Destroy existing socket connection (keeps DB record)
-    const activeSession = sessionManager.getSession(sessionId);
-    if (activeSession) {
-      try {
-        activeSession.socket.end(undefined);
-      } catch {
-        // Socket may already be closed
-      }
-    }
-
-    // Reinitialize the socket (will generate new QR if needed)
-    await sessionManager.initializeSocket(sessionId, orgId);
+    // Publish restart command to the session control queue
+    await eventBus.publishSessionControl(sessionId, 'restart');
 
     res.status(200).json({
       success: true,
@@ -437,12 +455,13 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    logger.info('Deleting session via API', { sessionId, orgId });
+    // Enqueue destroy command so runner cleans up if online
+    await eventBus.publishSessionControl(sessionId, 'destroy').catch(() => {});
 
-    // Destroy socket, keys, and clean up
-    await sessionManager.destroySession(sessionId);
+    // Delete ownership lock immediately to force self-termination if runner missed command
+    await redis.del(`session:${sessionId}:owner`).catch(() => {});
 
-    // Delete the session record itself
+    // Delete the session record itself (cascades to signal keys, chats, messages)
     await db
       .delete(sessions)
       .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)));
@@ -556,11 +575,8 @@ router.post('/:id/sync-retry', async (req: Request, res: Response): Promise<void
       })
       .where(eq(sessions.id, sessionId));
 
-    // Destroy active session (keeps credentials and database record)
-    await sessionManager.destroySession(sessionId);
-
-    // Reinitialize the socket connection to force Baileys to re-fetch/sync history
-    await sessionManager.initializeSocket(sessionId, orgId);
+    // Publish restart command to control queue so the runner recreates socket to trigger full sync
+    await eventBus.publishSessionControl(sessionId, 'restart');
 
     // Update progress state
     await updateSyncProgress(sessionId, 'pending', 0, 0);
@@ -615,29 +631,14 @@ router.post('/:id/reset-contact-session', async (req: Request, res: Response): P
       return;
     }
 
-    // Get the active socket session
-    const active = sessionManager.getSession(sessionId);
-    if (!active || !active.socket) {
-      res.status(400).json({
-        error: 'Session is not active or connected. Please make sure the device is connected before resetting contact sessions.',
-      });
-      return;
-    }
+    // Publish reset Signal session control command to session runner
+    await eventBus.publishSessionControl(sessionId, 'reset-contact-session', { contactJid });
 
-    logger.info('Manually resetting Signal session for contact', { sessionId, orgId, contactJid });
-
-    // Resolve LID mapping if exists
-    const resolvedJid = await resolveLidJid(sessionId, contactJid);
-    const jidsToDelete = Array.from(new Set([contactJid, resolvedJid]));
-
-    // Delete the session key
-    await active.socket.signalRepository.deleteSession(jidsToDelete);
-
-    logger.info('Successfully reset encryption session for contact', { sessionId, orgId, contactJid, jidsToDelete });
+    logger.info('Enqueued manually resetting Signal session for contact', { sessionId, orgId, contactJid });
 
     res.status(200).json({
       success: true,
-      message: 'Successfully reset encryption session for contact. A new secure session will establish on the next message.',
+      message: 'Successfully enqueued reset encryption session request. A new secure session will establish on the next message.',
     });
   } catch (error) {
     logger.error('Failed to reset contact session', {

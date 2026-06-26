@@ -14,6 +14,7 @@ import { sessionManager } from '../sessions/session.manager.js';
 import { db } from '../../config/database.js';
 import { sessions, chats } from '../../db/schema.js';
 import { eq, and } from 'drizzle-orm';
+import { redis } from '../../config/redis.js';
 
 export const messageRouter = Router();
 
@@ -42,13 +43,17 @@ messageRouter.post('/', async (req, res) => {
 
     // Verify that the session belongs to the user's organization
     const [sessionRecord] = await db
-      .select({ id: sessions.id })
+      .select({ id: sessions.id, status: sessions.status })
       .from(sessions)
       .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)))
       .limit(1);
 
     if (!sessionRecord) {
       return res.status(404).json({ error: 'Session not found' });
+    }
+
+    if (sessionRecord.status === 'banned') {
+      return res.status(400).json({ error: 'WhatsApp session is banned and cannot send messages' });
     }
 
     // Level 1: Verify session access
@@ -72,11 +77,7 @@ messageRouter.post('/', async (req, res) => {
       }
     }
 
-    // Validate that session exists and belongs to the user's organization
-    const activeSession = sessionManager.getSession(sessionId);
-    if (!activeSession || activeSession.orgId !== orgId) {
-      return res.status(404).json({ error: 'Active session not found or access denied' });
-    }
+
 
     // Standardize recipient JID (e.g. 966500000000 -> 966500000000@s.whatsapp.net)
     let waChatJid = recipientJid.trim();
@@ -159,8 +160,9 @@ messageRouter.get('/chats/:chatId/messages', async (req, res) => {
           lastMessageAt: chat.lastMessageAt,
         });
 
-        const session = sessionManager.getSession(chat.sessionId);
-        if (session && session.socket) {
+        // Check if there is an active owner of the session to trigger on-demand sync
+        const owner = await redis.get(`session:${chat.sessionId}:owner`).catch(() => null);
+        if (owner) {
           const oldestMsgKey = {
             remoteJid: chat.waChatId,
             fromMe: false,
@@ -170,21 +172,24 @@ messageRouter.get('/chats/:chatId/messages', async (req, res) => {
             ? chat.lastMessageAt.getTime() 
             : Date.now();
 
-          session.socket.fetchMessageHistory(50, oldestMsgKey, oldestMsgTimestamp)
-            .then((msgId) => {
-              logger.info('Requested on-demand history sync from phone', {
-                chatId,
-                waChatId: chat.waChatId,
-                msgId,
-              });
-            })
-            .catch((err) => {
-              logger.error('Failed to request on-demand history sync', {
-                chatId,
-                waChatId: chat.waChatId,
-                error: err.message,
-              });
+          await eventBus.publishSessionControl(chat.sessionId, 'fetch-history', {
+            waChatId: chat.waChatId,
+            limit: 50,
+            oldestMsgKey,
+            oldestMsgTimestamp,
+          }).then((msgId) => {
+            logger.info('Enqueued on-demand history sync request from phone to session runner', {
+              chatId,
+              waChatId: chat.waChatId,
+              msgId,
             });
+          }).catch((err) => {
+            logger.error('Failed to request on-demand history sync', {
+              chatId,
+              waChatId: chat.waChatId,
+              error: err.message,
+            });
+          });
         }
       }
     }

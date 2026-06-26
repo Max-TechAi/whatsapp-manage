@@ -28,8 +28,6 @@ import { mediaService } from './modules/media/media.service.js';
 import { closePool } from './config/database.js';
 import { closeRedis } from './config/redis.js';
 import { apiRateLimiter } from './security/rate-limiter.js';
-import { createOutboundWorker } from './events/workers/outbound.worker.js';
-import { createMediaWorker } from './events/workers/media.worker.js';
 import { emailService } from './modules/email/email.service.js';
 
 const env = getEnv();
@@ -103,13 +101,6 @@ async function startServer(): Promise<void> {
 
     // 2. Start WebSocket server
     await wsServer.start();
-
-    // 3. Restore WhatsApp sessions
-    await sessionManager.restoreAllSessions();
-
-    // 4. Start outbound and media workers (run in API process to access active sockets)
-    outboundWorker = createOutboundWorker();
-    mediaWorker = createMediaWorker();
 
     // 5. Start HTTP Server
     httpServer.listen(env.PORT, () => {

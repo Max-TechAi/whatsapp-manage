@@ -9,9 +9,9 @@ import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
 import { messages, users, userSessionAccess, sessions } from '../../db/schema.js';
-import { sessionManager } from '../sessions/session.manager.js';
 import { desc, eq, and, or, sql } from 'drizzle-orm';
 import { wsServer } from '../../websocket/ws-server.js';
+import { eventBus } from '../../events/event-bus.js';
 
 export const chatRouter = Router();
 
@@ -155,60 +155,39 @@ chatRouter.post('/:id/read', async (req, res) => {
     // 2. Mark as read in local DB
     await chatService.markAsRead(orgId, chatId);
 
-    // 3. Mark as read on WhatsApp if session is active
-    const session = sessionManager.getSession(chat.sessionId);
-    if (session && session.socket) {
-      if (chat.waChatId.endsWith('@lid')) {
-        logger.warn('Skipping marking chat as read on WhatsApp server because JID is an unresolved LID', { chatId, waChatId: chat.waChatId });
-      } else {
-        try {
-          // Fetch the last inbound message to pass to chatModify/readMessages
-          const [lastInboundMsg] = await db
-            .select({
-              waMessageId: messages.waMessageId,
-              createdAt: messages.createdAt,
-            })
-            .from(messages)
-            .where(
-              and(
-                eq(messages.chatId, chatId),
-                eq(messages.fromMe, false)
-              )
-            )
-            .orderBy(desc(messages.createdAt), desc(messages.id))
-            .limit(1);
+    // 3. Queue marking as read on WhatsApp via the session control queue
+    try {
+      // Fetch the last inbound message to pass to chatModify/readMessages
+      const [lastInboundMsg] = await db
+        .select({
+          waMessageId: messages.waMessageId,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .where(
+          and(
+            eq(messages.chatId, chatId),
+            eq(messages.fromMe, false)
+          )
+        )
+        .orderBy(desc(messages.createdAt), desc(messages.id))
+        .limit(1);
 
-          if (lastInboundMsg) {
-            // Mark the last inbound message as read
-            await session.socket.readMessages([{
-              remoteJid: chat.waChatId,
-              id: lastInboundMsg.waMessageId,
-              fromMe: false,
-            }]);
-            
-            // Also modify the chat to mark as read
-            await session.socket.chatModify({
-              markRead: true,
-              lastMessages: [{
-                key: {
-                  remoteJid: chat.waChatId,
-                  id: lastInboundMsg.waMessageId,
-                  fromMe: false,
-                },
-                messageTimestamp: Math.floor(lastInboundMsg.createdAt.getTime() / 1000),
-              }],
-            }, chat.waChatId);
-            logger.info('Marked chat as read on WhatsApp', { chatId, waChatId: chat.waChatId });
-          } else {
-            logger.info('No inbound messages to mark as read on WhatsApp server', { chatId, waChatId: chat.waChatId });
-          }
-        } catch (err) {
-          logger.warn('Failed to mark chat as read on WhatsApp phone', {
-            chatId,
-            error: (err as Error).message,
-          });
-        }
+      if (lastInboundMsg) {
+        await eventBus.publishSessionControl(chat.sessionId, 'mark-read', {
+          waChatId: chat.waChatId,
+          lastInboundMsg: {
+            waMessageId: lastInboundMsg.waMessageId,
+            createdAt: lastInboundMsg.createdAt.toISOString(),
+          },
+        });
+        logger.info('Enqueued mark-read command to session runner', { sessionId: chat.sessionId, waChatId: chat.waChatId });
       }
+    } catch (err) {
+      logger.warn('Failed to enqueue mark-read command', {
+        chatId,
+        error: (err as Error).message,
+      });
     }
 
     return res.json({ success: true });

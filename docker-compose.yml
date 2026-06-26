@@ -79,6 +79,7 @@ services:
     command: ["node", "dist/index.js"]
     environment:
       NODE_ENV: production
+      RUN_SESSION_RUNNER: "false"
       DATABASE_URL: postgresql://whatsapp:${DB_PASSWORD:-secret_password}@postgres:5432/whatsapp_db
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       REDIS_HOST: redis
@@ -115,6 +116,39 @@ services:
     networks:
       - wa-network
 
+  session-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wa-session-runner
+    restart: unless-stopped
+    command: ["node", "dist/session-runner.js"]
+    environment:
+      NODE_ENV: production
+      RUN_SESSION_RUNNER: "true"
+      DATABASE_URL: postgresql://whatsapp:${DB_PASSWORD:-secret_password}@postgres:5432/whatsapp_db
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secret_password}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio_secret_password}
+      MINIO_BUCKET: ${MINIO_BUCKET:-whatsapp-media}
+      MINIO_USE_SSL: "false"
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - wa-network
+
   worker:
     build:
       context: .
@@ -124,6 +158,7 @@ services:
     command: ["node", "dist/events/worker-entry.js"]
     environment:
       NODE_ENV: production
+      RUN_SESSION_RUNNER: "false"
       DATABASE_URL: postgresql://whatsapp:${DB_PASSWORD:-secret_password}@postgres:5432/whatsapp_db
       DB_POOL_MAX: 5
       REDIS_HOST: redis
