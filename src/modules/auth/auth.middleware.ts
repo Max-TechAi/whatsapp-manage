@@ -2,6 +2,9 @@ import type { Request, Response, NextFunction } from 'express';
 import { verifyToken } from './auth.service.js';
 import { logger } from '../../observability/logger.js';
 import type { JwtPayload } from './auth.types.js';
+import { db } from '../../config/database.js';
+import { users } from '../../db/schema.js';
+import { eq } from 'drizzle-orm';
 
 /* ------------------------------------------------------------------ */
 /*  Augment Express Request with authenticated user payload            */
@@ -26,7 +29,7 @@ declare global {
  *
  * Returns 401 if the token is missing or invalid.
  */
-export function authenticate(req: Request, res: Response, next: NextFunction): void {
+export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     let token: string | undefined;
     const authHeader = req.headers.authorization;
@@ -42,7 +45,32 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
       return;
     }
 
-    req.user = verifyToken(token);
+    const payload = verifyToken(token);
+
+    // Fetch latest user status and permissions from database
+    const [dbUser] = await db
+      .select({
+        id: users.id,
+        role: users.role,
+        isActive: users.isActive,
+        hasAllSessionsAccess: users.hasAllSessionsAccess,
+      })
+      .from(users)
+      .where(eq(users.id, payload.userId))
+      .limit(1);
+
+    if (!dbUser || !dbUser.isActive) {
+      res.status(401).json({ error: 'User account is deactivated or does not exist' });
+      return;
+    }
+
+    // Attach user payload with fresh role and access flags from DB
+    req.user = {
+      ...payload,
+      role: dbUser.role,
+      hasAllSessionsAccess: dbUser.hasAllSessionsAccess,
+    };
+
     next();
   } catch (error) {
     logger.warn('Authentication failed', {
