@@ -105,7 +105,7 @@ export async function getMembers(orgId: string): Promise<OrgMember[]> {
     lastLoginAt: users.lastLoginAt,
   })
     .from(users)
-    .where(eq(users.orgId, orgId));
+    .where(and(eq(users.orgId, orgId), eq(users.isActive, true)));
 
   return rows;
 }
@@ -126,13 +126,42 @@ export async function inviteMember(
   role: string,
 ): Promise<OrgMember> {
   // Check for existing user with this email
-  const existing = await db.select({ id: users.id })
+  const existing = await db.select({ id: users.id, isActive: users.isActive })
     .from(users)
     .where(eq(users.email, email.toLowerCase()))
     .limit(1);
 
-  if (existing.length > 0) {
-    throw new Error('EMAIL_EXISTS');
+  const existingUser = existing[0];
+  if (existingUser) {
+    if (existingUser.isActive) {
+      throw new Error('EMAIL_EXISTS');
+    }
+
+    // Reactivate soft-deleted user
+    const tempPassword = generateRandomKey(16);
+    const passwordHash = await hashPassword(tempPassword);
+    const now = new Date();
+
+    const rows = await db.update(users)
+      .set({
+        orgId,
+        role: role as 'admin' | 'agent',
+        passwordHash,
+        isActive: true,
+        updatedAt: now,
+      })
+      .where(eq(users.id, existingUser.id))
+      .returning({
+        id: users.id,
+        email: users.email,
+        displayName: users.displayName,
+        role: users.role,
+        isActive: users.isActive,
+        hasAllSessionsAccess: users.hasAllSessionsAccess,
+        lastLoginAt: users.lastLoginAt,
+      });
+
+    return rows[0]!;
   }
 
   // Generate a temporary password — in production, send a password-reset link instead
