@@ -30,6 +30,7 @@ import { closeRedis } from './config/redis.js';
 import { apiRateLimiter } from './security/rate-limiter.js';
 import { createOutboundWorker } from './events/workers/outbound.worker.js';
 import { createMediaWorker } from './events/workers/media.worker.js';
+import { emailService } from './modules/email/email.service.js';
 
 const env = getEnv();
 const app = express();
@@ -96,6 +97,9 @@ async function startServer(): Promise<void> {
 
     // 1. Initialize MinIO bucket
     await mediaService.initialize();
+
+    // 0. Verify SMTP connection
+    await emailService.verifySmtpConnection();
 
     // 2. Start WebSocket server
     await wsServer.start();

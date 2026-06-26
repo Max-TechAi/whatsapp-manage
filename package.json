@@ -18,9 +18,10 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^7.0.0-rc.13",
     "@bull-board/api": "^6.5.0",
     "@bull-board/express": "^6.5.0",
+    "@types/nodemailer": "^8.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc.13",
     "bcrypt": "^5.1.1",
     "bullmq": "^5.30.0",
     "cors": "^2.8.5",
@@ -31,6 +32,7 @@
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.2",
     "minio": "^8.0.2",
+    "nodemailer": "^9.0.1",
     "pg": "^8.13.0",
     "pino": "^9.5.0",
     "prom-client": "^15.1.3",

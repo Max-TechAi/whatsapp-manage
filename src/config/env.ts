@@ -43,6 +43,17 @@ const envSchema = z.object({
   RATE_LIMIT_AUTH: z.coerce.number().int().default(5),
   RATE_LIMIT_API: z.coerce.number().int().default(100),
   RATE_LIMIT_WA_MESSAGES: z.coerce.number().int().default(20),
+
+  // SMTP Email Configuration
+  SMTP_HOST: z.string().default('localhost'),
+  SMTP_PORT: z.coerce.number().int().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  SMTP_SECURE: z.preprocess(
+    (val) => val === 'true' || val === '1' || val === true,
+    z.boolean()
+  ).default(false),
+  EMAIL_FROM: z.string().default('"WhatsApp Platform" <no-reply@yourdomain.com>'),
 });
 
 export type Env = z.infer<typeof envSchema>;

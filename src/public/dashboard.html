@@ -65,6 +65,12 @@
         ⚠️ You are not logged in. Redirecting to auth panel...
       </div>
 
+      <!-- ─── EMAIL VERIFICATION BANNER ──────────────────────── -->
+      <div id="emailVerificationBanner" class="auth-warning-banner" style="display: none; background: rgba(245, 158, 11, 0.15); border-bottom: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; padding: 0.75rem 2rem; display: none; justify-content: space-between; align-items: center; gap: 1rem; width: 100%; box-sizing: border-box; font-weight: 500;">
+        <span>⚠️ Your email address is not verified. Please check your inbox for the verification link.</span>
+        <button id="resendVerificationBtn" onclick="handleResendVerification()" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; background: #f59e0b; color: #0b0f19; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s;">Resend Email</button>
+      </div>
+
       <!-- ─── CHAT INBOX TAB ─────────────────────────────────── -->
       <div id="tab-inbox" class="tab-content active" style="height: 100%;">
         <div class="chat-window">
@@ -393,6 +399,11 @@
             <option value="agent">Agent</option>
             <option value="admin">Admin</option>
           </select>
+        </div>
+
+        <div class="input-group" style="margin-bottom: 1rem;">
+          <label>Reset Password (leave blank to keep current)</label>
+          <input type="password" id="editPassword" placeholder="••••••••" minlength="8">
         </div>
 
         <div class="input-group" style="margin-bottom: 1rem;">

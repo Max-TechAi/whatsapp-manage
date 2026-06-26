@@ -64,6 +64,7 @@ export const users = pgTable(
     displayName: varchar('display_name', { length: 255 }),
     role: userRoleEnum('role').notNull().default('agent'),
     hasAllSessionsAccess: boolean('has_all_sessions_access').notNull().default(false),
+    emailVerified: boolean('email_verified').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

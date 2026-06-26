@@ -200,6 +200,7 @@ export async function updateMember(
     role?: 'admin' | 'agent';
     isActive?: boolean;
     hasAllSessionsAccess?: boolean;
+    password?: string;
   }
 ): Promise<OrgMember | null> {
   const updatePayload: Record<string, any> = {
@@ -216,6 +217,10 @@ export async function updateMember(
   // If role is admin, they implicitly have all session access
   if (data.role === 'admin') {
     updatePayload.hasAllSessionsAccess = true;
+  }
+
+  if (data.password !== undefined && data.password.trim() !== '') {
+    updatePayload.passwordHash = await hashPassword(data.password);
   }
 
   const member = await db.transaction(async (tx) => {

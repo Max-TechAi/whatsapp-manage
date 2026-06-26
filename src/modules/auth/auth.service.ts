@@ -83,6 +83,7 @@ export async function register(data: RegisterRequest): Promise<AuthResponse> {
     email: data.email.toLowerCase(),
     role: 'admin',
     hasAllSessionsAccess: true,
+    emailVerified: false,
   };
 
   const tokens = generateTokens(payload);
@@ -140,6 +141,7 @@ export async function login(data: LoginRequest): Promise<AuthResponse> {
     email: user.email,
     role: user.role as 'admin' | 'agent',
     hasAllSessionsAccess: user.hasAllSessionsAccess,
+    emailVerified: user.emailVerified,
   };
 
   const tokens = generateTokens(payload);
@@ -209,6 +211,7 @@ export function verifyToken(token: string): JwtPayload {
     email: decoded.email,
     role: decoded.role,
     hasAllSessionsAccess: decoded.hasAllSessionsAccess,
+    emailVerified: decoded.emailVerified,
   };
 }
 
@@ -236,7 +239,64 @@ export function refreshTokens(refreshToken: string): AuthTokens {
     email: decoded.email,
     role: decoded.role,
     hasAllSessionsAccess: decoded.hasAllSessionsAccess,
+    emailVerified: decoded.emailVerified,
   };
 
   return generateTokens(payload);
+}
+
+/**
+ * Generate a token for email verification.
+ */
+export function generateVerificationToken(userId: string): string {
+  const env = getEnv();
+  return jwt.sign(
+    { type: 'email_verification', userId },
+    env.JWT_SECRET,
+    { expiresIn: '24h', issuer: 'whatsapp-api' }
+  );
+}
+
+/**
+ * Generate a token for member invitation.
+ */
+export function generateInvitationToken(userId: string, orgId: string): string {
+  const env = getEnv();
+  return jwt.sign(
+    { type: 'member_invitation', userId, orgId },
+    env.JWT_SECRET,
+    { expiresIn: '48h', issuer: 'whatsapp-api' }
+  );
+}
+
+/**
+ * Verify an email verification token.
+ */
+export function verifyVerificationToken(token: string): { userId: string } {
+  const env = getEnv();
+  const decoded = jwt.verify(token, env.JWT_SECRET, {
+    issuer: 'whatsapp-api',
+  }) as { type?: string; userId: string };
+
+  if (decoded.type !== 'email_verification') {
+    throw new Error('INVALID_TOKEN_TYPE');
+  }
+
+  return { userId: decoded.userId };
+}
+
+/**
+ * Verify a member invitation token.
+ */
+export function verifyInvitationToken(token: string): { userId: string; orgId: string } {
+  const env = getEnv();
+  const decoded = jwt.verify(token, env.JWT_SECRET, {
+    issuer: 'whatsapp-api',
+  }) as { type?: string; userId: string; orgId: string };
+
+  if (decoded.type !== 'member_invitation') {
+    throw new Error('INVALID_TOKEN_TYPE');
+  }
+
+  return { userId: decoded.userId, orgId: decoded.orgId };
 }

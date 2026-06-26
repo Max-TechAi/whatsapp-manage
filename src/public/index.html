@@ -635,6 +635,15 @@
         connectWS();
         refreshActiveSessions();
       }
+
+      // Check if redirected from successful email verification
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('email_verified') === 'true') {
+        logTerminal('AUTH', 'Email verified successfully! You can now log in.', 'var(--accent)');
+        // Remove the query param from URL bar without reload
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+      }
     });
 
     function switchTab(tabId) {

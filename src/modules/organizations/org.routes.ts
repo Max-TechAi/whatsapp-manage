@@ -5,6 +5,8 @@ import { authenticate, requireRole } from '../auth/auth.middleware.js';
 import * as orgService from './org.service.js';
 import { logger } from '../../observability/logger.js';
 import { wsServer } from '../../websocket/ws-server.js';
+import { generateInvitationToken } from '../auth/auth.service.js';
+import { emailService } from '../email/email.service.js';
 
 /* ------------------------------------------------------------------ */
 /*  Validation Schemas                                                 */
@@ -122,7 +124,34 @@ orgRouter.post('/members', async (req: Request, res: Response) => {
       parsed.data.role,
     );
 
-    res.status(201).json({ member });
+    // Fetch organization details for email template
+    const org = await orgService.getOrganization(req.user!.orgId);
+    const orgName = org?.name || 'our organization';
+    const inviterName = req.user!.email;
+
+    // Generate stateless invitation token
+    const inviteToken = generateInvitationToken(member.id, req.user!.orgId);
+    const inviteLink = `${req.protocol}://${req.get('host')}/set-password.html?token=${inviteToken}`;
+
+    // Attempt to send email
+    let emailSent = false;
+    try {
+      await emailService.sendInviteEmail(member.email, inviteLink, orgName, inviterName);
+      emailSent = true;
+    } catch (emailErr: any) {
+      logger.error('Failed to send member invitation email', {
+        userId: member.id,
+        email: member.email,
+        error: emailErr.message,
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      member,
+      inviteLink,
+      emailSent,
+    });
   } catch (error) {
     if (error instanceof Error && error.message === 'EMAIL_EXISTS') {
       res.status(400).json({ error: 'Email is already registered' });
@@ -168,6 +197,7 @@ const updateMemberSchema = z.object({
   displayName: z.string().min(1).max(255).optional(),
   role: z.enum(['admin', 'agent']).optional(),
   isActive: z.boolean().optional(),
+  password: z.string().min(8, 'Password must be at least 8 characters').optional(),
 });
 
 const updatePermissionsSchema = z.object({

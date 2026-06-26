@@ -8,6 +8,7 @@ export interface JwtPayload {
   email: string;
   role: 'admin' | 'agent';
   hasAllSessionsAccess: boolean;
+  emailVerified: boolean;
 }
 
 /**

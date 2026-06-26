@@ -257,7 +257,15 @@ if (!token) {
     userRole = payload.role || 'agent';
     userHasAllSessionsAccess = !!payload.hasAllSessionsAccess;
     userDisplayName = payload.displayName || payload.email || 'Agent';
+    const userEmailVerified = !!payload.emailVerified;
+
     document.getElementById('headerUserName').textContent = userDisplayName;
+
+    // Show email verification banner if not verified
+    if (!userEmailVerified) {
+      const banner = document.getElementById('emailVerificationBanner');
+      if (banner) banner.style.display = 'flex';
+    }
 
     // Show team settings tab link for admin
     if (userRole === 'admin') {
@@ -1737,7 +1745,15 @@ async function handleInviteMember(e) {
 
     emailInput.value = '';
     roleSelect.value = 'agent';
-    alert('Member invited successfully!');
+    
+    if (resData.emailSent) {
+      alert(`Invitation email sent successfully to ${resData.member.email}!`);
+    } else {
+      prompt(
+        'Member created, but email delivery failed (check SMTP settings). Please share this link with them manually so they can set their password:',
+        resData.inviteLink
+      );
+    }
     loadTeamMembers();
   } catch (err) {
     alert(err.message);
@@ -1780,6 +1796,11 @@ async function openTeamModal(userId) {
   document.getElementById('editDisplayName').value = member.displayName || '';
   document.getElementById('editRole').value = member.role;
   document.getElementById('editIsActive').checked = member.isActive;
+  
+  const editPasswordInput = document.getElementById('editPassword');
+  if (editPasswordInput) {
+    editPasswordInput.value = '';
+  }
 
   // Load org sessions list
   try {
@@ -1864,12 +1885,20 @@ async function handleSaveMember(e) {
   const role = document.getElementById('editRole').value;
   const isActive = document.getElementById('editIsActive').checked;
   const hasAllSessionsAccess = document.getElementById('editAllSessionsAccess').checked;
+  
+  const passwordInput = document.getElementById('editPassword');
+  const password = passwordInput ? passwordInput.value.trim() : '';
 
   const btn = e.target.querySelector('button[type="submit"]');
 
   try {
     btn.disabled = true;
     btn.textContent = 'Saving...';
+
+    const updatePayload = { displayName, role, isActive };
+    if (password) {
+      updatePayload.password = password;
+    }
 
     // 1. Update basic details
     const patchRes = await fetch(`/api/orgs/members/${userId}`, {
@@ -1878,7 +1907,7 @@ async function handleSaveMember(e) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({ displayName, role, isActive })
+      body: JSON.stringify(updatePayload)
     });
 
     if (!patchRes.ok) {
@@ -1925,3 +1954,54 @@ window.toggleEditRoleSettings = toggleEditRoleSettings;
 window.toggleAllSessionsCheckbox = toggleAllSessionsCheckbox;
 window.handleSaveMember = handleSaveMember;
 window.handleAssignChatChange = handleAssignChatChange;
+
+async function handleResendVerification() {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const email = payload.email;
+    if (!email) {
+      alert('Email not found in session.');
+      return;
+    }
+
+    const btn = document.getElementById('resendVerificationBtn');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+    }
+
+    const response = await fetch('/api/auth/resend-verification', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ email })
+    });
+
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to resend verification email');
+
+    alert('Verification email resent successfully! Please check your inbox.');
+    if (btn) btn.textContent = 'Sent!';
+  } catch (err) {
+    alert(err.message);
+    const btn = document.getElementById('resendVerificationBtn');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Resend Email';
+    }
+  }
+}
+window.handleResendVerification = handleResendVerification;
+
+async function handleResetContactSession(event) {
+  if (!activeChatId) {
+    alert('No active chat selected.');
+    return;
+  }
+  if (!confirm(`Are you sure you want to reset the secure encryption session for this contact (${activeChatId})?`)) {
+    return;
+  }
+  await resetContactSession(event, activeChatId);
+}
+window.handleResetContactSession = handleResetContactSession;
