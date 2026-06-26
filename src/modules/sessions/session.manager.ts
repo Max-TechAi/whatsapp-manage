@@ -26,7 +26,7 @@ import { Worker } from 'bullmq';
 
 import { db } from '../../config/database.js';
 import { sessions, sessionKeys, messages } from '../../db/schema.js';
-import { redis } from '../../config/redis.js';
+import { redis, workerRedis } from '../../config/redis.js';
 import { logger } from '../../observability/logger.js';
 import { usePostgresAuthState } from './session.auth-state.js';
 import { SessionEventType, normalizeJid } from './session.events.js';
@@ -1428,7 +1428,7 @@ class SessionManager {
           message: dbMessage,
         });
       },
-      { connection: redis.duplicate() as any }
+      { connection: workerRedis.duplicate() as any }
     );
     
     // 2. Media download worker
@@ -1492,7 +1492,7 @@ class SessionManager {
           });
         }
       },
-      { connection: redis.duplicate() as any }
+      { connection: workerRedis.duplicate() as any }
     );
     
     // 3. Control commands worker
@@ -1519,7 +1519,7 @@ class SessionManager {
           }
         }
       },
-      { connection: redis.duplicate() as any }
+      { connection: workerRedis.duplicate() as any }
     );
 
     outboundWorker.on('error', (err: any) => logger.error('Outbound dynamic worker error', { sessionId, error: err.message }));
