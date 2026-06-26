@@ -679,8 +679,25 @@ class SessionManager {
             const timeout = setTimeout(async () => {
               try {
                 this.pendingReconnects.delete(sessionId);
-                // Remove stale socket before reinitializing
-                this.removeActiveSession(sessionId);
+                
+                // End the old socket and remove its event listeners to prevent any background reconnects/leaks,
+                // but DO NOT clear lock renewal or watchdog yet, as they need to remain active in case initialization hangs.
+                const active = this.activeSessions.get(sessionId);
+                if (active) {
+                  try {
+                    active.socket.ev.removeAllListeners('connection.update');
+                    active.socket.ev.removeAllListeners('creds.update');
+                    active.socket.ev.removeAllListeners('messages.upsert');
+                    active.socket.ev.removeAllListeners('messages.update');
+                    active.socket.ev.removeAllListeners('message-receipt.update');
+                    active.socket.ev.removeAllListeners('messaging-history.set');
+                    active.socket.end(undefined);
+                  } catch (err) {
+                    logger.warn('Error closing stale socket during reconnect', { sessionId, error: (err as Error).message });
+                  }
+                  this.activeSessions.delete(sessionId);
+                }
+
                 await this.initializeSocket(sessionId, orgId);
               } catch (error) {
                 logger.error('Reconnection failed', {
@@ -1162,6 +1179,20 @@ class SessionManager {
       this.clearPresenceKeepAlive(active);
       this.clearLockRenewal(sessionId);
       this.stopDynamicWorkers(sessionId);
+      
+      // Explicitly remove listeners and end the socket to prevent leaks/reconnections
+      try {
+        active.socket.ev.removeAllListeners('connection.update');
+        active.socket.ev.removeAllListeners('creds.update');
+        active.socket.ev.removeAllListeners('messages.upsert');
+        active.socket.ev.removeAllListeners('messages.update');
+        active.socket.ev.removeAllListeners('message-receipt.update');
+        active.socket.ev.removeAllListeners('messaging-history.set');
+        active.socket.end(undefined);
+      } catch (err) {
+        logger.warn('Error closing socket in removeActiveSession', { sessionId, error: (err as Error).message });
+      }
+
       this.activeSessions.delete(sessionId);
     }
   }
@@ -1279,6 +1310,7 @@ class SessionManager {
     this.clearLockRenewal(sessionId);
     this.lockRenewalFailures.set(sessionId, 0);
     this.lastSuccessfulRenewal.set(sessionId, Date.now());
+    logger.info('Watchdog timer started for session', { sessionId });
     
     // 1. Heartbeat loop (runs every 3s to renew lease in Redis)
     const interval = setInterval(async () => {
@@ -1341,6 +1373,7 @@ class SessionManager {
     if (watchdog) {
       clearInterval(watchdog);
       this.watchdogIntervals.delete(sessionId);
+      logger.info('Watchdog timer cleared for session', { sessionId });
     }
     this.lockRenewalFailures.delete(sessionId);
     this.lastSuccessfulRenewal.delete(sessionId);
@@ -1348,6 +1381,15 @@ class SessionManager {
 
   async forceTerminateSocket(sessionId: string): Promise<void> {
     logger.warn('Forcibly terminating socket connection', { sessionId });
+    
+    // Clear reconnection timeout
+    const reconnectTimeout = this.pendingReconnects.get(sessionId);
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      this.pendingReconnects.delete(sessionId);
+    }
+    
+    this.clearSyncTimeout(sessionId);
     this.clearLockRenewal(sessionId);
     this.stopDynamicWorkers(sessionId);
     
@@ -1367,8 +1409,13 @@ class SessionManager {
       this.activeSessions.delete(sessionId);
     }
     
-    await this.releaseLock(sessionId);
-    await this.updateSessionStatus(sessionId, 'disconnected');
+    // Release Redis lock and update status asynchronously (do not await to prevent hanging)
+    this.releaseLock(sessionId).catch(err => {
+      logger.warn('releaseLock async error in forceTerminate', { sessionId, error: err.message });
+    });
+    this.updateSessionStatus(sessionId, 'disconnected').catch(err => {
+      logger.warn('updateSessionStatus async error in forceTerminate', { sessionId, error: err.message });
+    });
   }
 
   private async releaseLock(sessionId: string): Promise<void> {
