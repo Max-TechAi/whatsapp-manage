@@ -64,6 +64,9 @@ class SessionManager {
   /** Map of sessionId → lock renewal interval */
   private lockRenewals: Map<string, NodeJS.Timeout> = new Map();
 
+  /** Map of sessionId → consecutive lock renewal failures */
+  private lockRenewalFailures: Map<string, number> = new Map();
+
   /** Map of sessionId → array of active BullMQ Worker instances */
   private dynamicWorkers: Map<string, Worker[]> = new Map();
 
@@ -1268,6 +1271,7 @@ class SessionManager {
 
   private startLockRenewal(sessionId: string): void {
     this.clearLockRenewal(sessionId);
+    this.lockRenewalFailures.set(sessionId, 0);
     
     const interval = setInterval(async () => {
       const lockKey = `session:${sessionId}:owner`;
@@ -1284,9 +1288,19 @@ class SessionManager {
         if (Number(result) === 0) {
           logger.error('Failed to renew lock: Ownership changed or expired. Self-terminating socket.', { sessionId });
           await this.forceTerminateSocket(sessionId);
+        } else {
+          // Success, reset consecutive failures
+          this.lockRenewalFailures.set(sessionId, 0);
         }
       } catch (err) {
-        logger.error('Error during lock renewal heartbeat', { sessionId, error: (err as Error).message });
+        const failures = (this.lockRenewalFailures.get(sessionId) || 0) + 1;
+        this.lockRenewalFailures.set(sessionId, failures);
+        logger.error('Error during lock renewal heartbeat', { sessionId, failures, error: (err as Error).message });
+        
+        if (failures >= 3) {
+          logger.error('Consecutive heartbeat failures exceeded limit. Self-terminating socket.', { sessionId, failures });
+          await this.forceTerminateSocket(sessionId);
+        }
       }
     }, 3000); // Heartbeat every 3s
     
@@ -1299,6 +1313,7 @@ class SessionManager {
       clearInterval(interval);
       this.lockRenewals.delete(sessionId);
     }
+    this.lockRenewalFailures.delete(sessionId);
   }
 
   async forceTerminateSocket(sessionId: string): Promise<void> {
