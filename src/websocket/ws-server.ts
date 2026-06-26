@@ -7,12 +7,15 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import { redis, subRedis } from '../config/redis.js';
-import { getDirectClient } from '../config/database.js';
+import { getDirectClient, db } from '../config/database.js';
 import { verifyToken } from '../modules/auth/auth.service.js';
 import { STREAMS } from '../events/event-bus.js';
 import { logger } from '../observability/logger.js';
 import { getEnv } from '../config/env.js';
 import type { JwtPayload } from '../modules/auth/auth.types.js';
+import { chats, sessions } from '../db/schema.js';
+import { eq, and } from 'drizzle-orm';
+import { sessionManager } from '../modules/sessions/session.manager.js';
 
 interface AuthenticatedSocket extends WebSocket {
   user: JwtPayload;
@@ -130,13 +133,13 @@ export class WsServer {
   /**
    * Handle client messages (subscribe/unsubscribe/typing).
    */
-  private handleClientMessage(socket: AuthenticatedSocket, msg: any): void {
+  private async handleClientMessage(socket: AuthenticatedSocket, msg: any): Promise<void> {
     switch (msg.type) {
       case 'subscribe': {
         const channels = Array.isArray(msg.channels) ? msg.channels : [msg.channel];
         for (const ch of channels) {
           // Validate channel belongs to user's org
-          if (this.isAuthorizedChannel(socket.user, ch)) {
+          if (await this.isAuthorizedChannel(socket.user, ch)) {
             socket.subscriptions.add(ch);
           }
         }
@@ -185,11 +188,47 @@ export class WsServer {
   /**
    * Validate that a subscription channel belongs to the user's org.
    */
-  private isAuthorizedChannel(user: JwtPayload, channel: string): boolean {
-    // All channels for this user's org are allowed
+  private async isAuthorizedChannel(user: JwtPayload, channel: string): Promise<boolean> {
     // Format: session:{sessionId}, chat:{chatId}, org:{orgId}
-    if (channel.startsWith('org:') && channel === `org:${user.orgId}`) return true;
-    if (channel.startsWith('session:') || channel.startsWith('chat:')) return true;
+    if (channel.startsWith('org:')) {
+      return channel === `org:${user.orgId}`;
+    }
+
+    if (channel.startsWith('session:')) {
+      const sessionId = channel.slice(8);
+      const active = sessionManager.getSession(sessionId);
+      if (active) {
+        return active.orgId === user.orgId;
+      }
+      
+      try {
+        const [sessionRecord] = await db
+          .select({ orgId: sessions.orgId })
+          .from(sessions)
+          .where(eq(sessions.id, sessionId))
+          .limit(1);
+        return sessionRecord?.orgId === user.orgId;
+      } catch (err) {
+        logger.error('Failed to authorize session channel subscription', { sessionId, error: (err as Error).message });
+        return false;
+      }
+    }
+
+    if (channel.startsWith('chat:')) {
+      const chatId = channel.slice(5);
+      try {
+        const [chatRecord] = await db
+          .select({ orgId: chats.orgId })
+          .from(chats)
+          .where(eq(chats.id, chatId))
+          .limit(1);
+        return chatRecord?.orgId === user.orgId;
+      } catch (err) {
+        logger.error('Failed to authorize chat channel subscription', { chatId, error: (err as Error).message });
+        return false;
+      }
+    }
+
     return false;
   }
 
@@ -239,20 +278,72 @@ export class WsServer {
   }
 
   private async checkAccess(client: AuthenticatedSocket, data: any): Promise<boolean> {
-    if (client.user.role === 'admin') return true;
+    const userOrgId = client.user.orgId;
+
+    // 1. If data contains orgId, verify it matches client's organization
+    if (data.orgId && data.orgId !== userOrgId) {
+      return false;
+    }
 
     const sessionId = data.sessionId || (data.message && data.message.sessionId);
     const chatId = data.chatId || (data.message && data.message.chatId);
 
-    // Level 1: Session access
+    // 2. Verify Session organization if sessionId is present
     if (sessionId) {
-      const sessions = await this.getSessionAccess(client.user.userId, client.user.hasAllSessionsAccess);
-      if (sessions !== 'all' && !sessions.has(sessionId)) {
+      const active = sessionManager.getSession(sessionId);
+      let sessionOrgId: string | null = null;
+      if (active) {
+        sessionOrgId = active.orgId;
+      } else {
+        try {
+          const [sessionRecord] = await db
+            .select({ orgId: sessions.orgId })
+            .from(sessions)
+            .where(eq(sessions.id, sessionId))
+            .limit(1);
+          sessionOrgId = sessionRecord?.orgId ?? null;
+        } catch (err) {
+          logger.error('Failed to verify session orgId in checkAccess', { sessionId, error: (err as Error).message });
+          return false;
+        }
+      }
+
+      if (sessionOrgId !== userOrgId) {
         return false;
       }
     }
 
-    // Level 2: Chat assignment
+    // 3. Verify Chat organization if chatId is present
+    if (chatId) {
+      try {
+        const [chatRecord] = await db
+          .select({ orgId: chats.orgId })
+          .from(chats)
+          .where(eq(chats.id, chatId))
+          .limit(1);
+        
+        if (!chatRecord || chatRecord.orgId !== userOrgId) {
+          return false;
+        }
+      } catch (err) {
+        logger.error('Failed to verify chat orgId in checkAccess', { chatId, error: (err as Error).message });
+        return false;
+      }
+    }
+
+    // --- Organization boundary verified ---
+    // Now apply role and level permissions within the organization
+    if (client.user.role === 'admin') return true;
+
+    // Check Level 1: Session access
+    if (sessionId) {
+      const userSessions = await this.getSessionAccess(client.user.userId, client.user.hasAllSessionsAccess);
+      if (userSessions !== 'all' && !userSessions.has(sessionId)) {
+        return false;
+      }
+    }
+
+    // Check Level 2: Chat assignment
     if (chatId) {
       const assignedToUserId = await this.getChatAssignee(chatId);
       if (assignedToUserId !== null && assignedToUserId !== client.user.userId) {

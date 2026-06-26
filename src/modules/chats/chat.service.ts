@@ -4,7 +4,7 @@
  */
 
 import { db } from '../../config/database.js';
-import { chats, contacts, messages } from '../../db/schema.js';
+import { chats, contacts, messages, sessions } from '../../db/schema.js';
 import { eq, and, desc, lt, sql, ne, notLike, or, isNull } from 'drizzle-orm';
 import { logger } from '../../observability/logger.js';
 import { resolveLidJid } from '../sessions/lid-mapping.js';
@@ -121,7 +121,13 @@ export class ChatService {
       const [existing] = await db
         .select({ id: chats.id })
         .from(chats)
-        .where(and(eq(chats.sessionId, sessionId), eq(chats.waChatId, normalizedChatJid)))
+        .where(
+          and(
+            eq(chats.orgId, orgId),
+            eq(chats.sessionId, sessionId),
+            eq(chats.waChatId, normalizedChatJid)
+          )
+        )
         .limit(1);
 
       if (existing) return existing.id;
@@ -146,7 +152,13 @@ export class ChatService {
       const [raceResult] = await db
         .select({ id: chats.id })
         .from(chats)
-        .where(and(eq(chats.sessionId, sessionId), eq(chats.waChatId, normalizedChatJid)))
+        .where(
+          and(
+            eq(chats.orgId, orgId),
+            eq(chats.sessionId, sessionId),
+            eq(chats.waChatId, normalizedChatJid)
+          )
+        )
         .limit(1);
 
       return raceResult?.id ?? null;
@@ -439,18 +451,43 @@ export class ChatService {
     logger.info('Starting database merge for LID to Phone JID', { sessionId, lidJid: normalizedLid, phoneJid: normalizedPhone });
 
     try {
+      // First resolve the orgId from the session
+      const [sessionRecord] = await db
+        .select({ orgId: sessions.orgId })
+        .from(sessions)
+        .where(eq(sessions.id, sessionId))
+        .limit(1);
+
+      if (!sessionRecord) {
+        logger.error('Failed to merge LID chat/contact: Session not found', { sessionId, lidJid, phoneJid });
+        return;
+      }
+      const orgId = sessionRecord.orgId;
+
       await db.transaction(async (tx) => {
         // 1. Merge Contacts
         const [lidContact] = await tx
           .select()
           .from(contacts)
-          .where(and(eq(contacts.sessionId, sessionId), eq(contacts.waId, normalizedLid)))
+          .where(
+            and(
+              eq(contacts.orgId, orgId),
+              eq(contacts.sessionId, sessionId),
+              eq(contacts.waId, normalizedLid)
+            )
+          )
           .limit(1);
 
         const [phoneContact] = await tx
           .select()
           .from(contacts)
-          .where(and(eq(contacts.sessionId, sessionId), eq(contacts.waId, normalizedPhone)))
+          .where(
+            and(
+              eq(contacts.orgId, orgId),
+              eq(contacts.sessionId, sessionId),
+              eq(contacts.waId, normalizedPhone)
+            )
+          )
           .limit(1);
 
         if (lidContact) {
@@ -465,18 +502,18 @@ export class ChatService {
               await tx
                 .update(contacts)
                 .set(updateFields)
-                .where(eq(contacts.id, phoneContact.id));
+                .where(and(eq(contacts.orgId, orgId), eq(contacts.id, phoneContact.id)));
             }
 
             // Delete lid contact
-            await tx.delete(contacts).where(eq(contacts.id, lidContact.id));
+            await tx.delete(contacts).where(and(eq(contacts.orgId, orgId), eq(contacts.id, lidContact.id)));
             logger.info('Deleted duplicate LID contact and merged metadata', { lidContactId: lidContact.id, phoneContactId: phoneContact.id });
           } else {
             // Simply update lid contact to phone contact
             await tx
               .update(contacts)
               .set({ waId: normalizedPhone, updatedAt: new Date() })
-              .where(eq(contacts.id, lidContact.id));
+              .where(and(eq(contacts.orgId, orgId), eq(contacts.id, lidContact.id)));
             logger.info('Renamed contact JID from LID to Phone JID', { contactId: lidContact.id, oldJid: normalizedLid, newJid: normalizedPhone });
           }
         }
@@ -485,13 +522,25 @@ export class ChatService {
         const [lidChat] = await tx
           .select()
           .from(chats)
-          .where(and(eq(chats.sessionId, sessionId), eq(chats.waChatId, normalizedLid)))
+          .where(
+            and(
+              eq(chats.orgId, orgId),
+              eq(chats.sessionId, sessionId),
+              eq(chats.waChatId, normalizedLid)
+            )
+          )
           .limit(1);
 
         const [phoneChat] = await tx
           .select()
           .from(chats)
-          .where(and(eq(chats.sessionId, sessionId), eq(chats.waChatId, normalizedPhone)))
+          .where(
+            and(
+              eq(chats.orgId, orgId),
+              eq(chats.sessionId, sessionId),
+              eq(chats.waChatId, normalizedPhone)
+            )
+          )
           .limit(1);
 
         if (lidChat) {
@@ -500,9 +549,10 @@ export class ChatService {
             // Delete messages from lidChat that have the same waMessageId in phoneChat to avoid unique constraint violations
             await tx.execute(sql`
               DELETE FROM messages 
-              WHERE chat_id = ${lidChat.id} 
+              WHERE org_id = ${orgId}
+                AND chat_id = ${lidChat.id} 
                 AND wa_message_id IN (
-                  SELECT wa_message_id FROM messages WHERE chat_id = ${phoneChat.id}
+                  SELECT wa_message_id FROM messages WHERE org_id = ${orgId} AND chat_id = ${phoneChat.id}
                 )
             `);
 
@@ -510,7 +560,7 @@ export class ChatService {
             await tx
               .update(messages)
               .set({ chatId: phoneChat.id, updatedAt: new Date() })
-              .where(eq(messages.chatId, lidChat.id));
+              .where(and(eq(messages.orgId, orgId), eq(messages.chatId, lidChat.id)));
 
             // Merge unread count, lastMessageAt, lastMessagePreview
             const newUnreadCount = (phoneChat.unreadCount || 0) + (lidChat.unreadCount || 0);
@@ -531,17 +581,17 @@ export class ChatService {
                 lastMessagePreview: newLastMessagePreview,
                 updatedAt: new Date(),
               })
-              .where(eq(chats.id, phoneChat.id));
+              .where(and(eq(chats.orgId, orgId), eq(chats.id, phoneChat.id)));
 
             // Delete lidChat
-            await tx.delete(chats).where(eq(chats.id, lidChat.id));
+            await tx.delete(chats).where(and(eq(chats.orgId, orgId), eq(chats.id, lidChat.id)));
             logger.info('Merged LID chat messages and metadata, deleted LID chat', { lidChatId: lidChat.id, phoneChatId: phoneChat.id });
           } else {
             // Simply update lidChat to phoneChat
             await tx
               .update(chats)
               .set({ waChatId: normalizedPhone, updatedAt: new Date() })
-              .where(eq(chats.id, lidChat.id));
+              .where(and(eq(chats.orgId, orgId), eq(chats.id, lidChat.id)));
             logger.info('Renamed chat JID from LID to Phone JID', { chatId: lidChat.id, oldJid: normalizedLid, newJid: normalizedPhone });
           }
         }
