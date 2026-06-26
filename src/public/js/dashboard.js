@@ -246,10 +246,7 @@ function showDesktopNotification(message, chatObj, chatDbId) {
 
 // Auth Guard on start
 if (!token) {
-  document.getElementById('authWarning').style.display = 'block';
-  setTimeout(() => {
-    window.location.href = '/';
-  }, 2000);
+  window.location.href = '/';
 } else {
   // Decode JWT to get display name and role
   try {
@@ -267,13 +264,17 @@ if (!token) {
       if (banner) banner.style.display = 'flex';
     }
 
-    // Show team settings tab link for admin
+    // Show team settings and dev console link for admin
     if (userRole === 'admin') {
       const navBtnTeam = document.getElementById('navBtnTeam');
       if (navBtnTeam) navBtnTeam.style.display = 'flex';
+      const navBtnDevConsole = document.getElementById('navBtnDevConsole');
+      if (navBtnDevConsole) navBtnDevConsole.style.display = 'flex';
     }
   } catch (e) {
     console.error('Failed to parse token payload', e);
+    localStorage.removeItem('token');
+    window.location.href = '/';
   }
 
   // Connect WebSocket & Init data
