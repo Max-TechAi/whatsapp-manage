@@ -1,5 +1,5 @@
 import { db } from '../src/config/database.js';
-import { organizations, users, sessions, chats } from '../src/db/schema.js';
+import { organizations, users, sessions, chats, messages } from '../src/db/schema.js';
 import { generateTokens } from '../src/modules/auth/auth.service.js';
 import { eq, and } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
@@ -147,12 +147,18 @@ async function runTests() {
     emailVerified: true
   }).accessToken;
 
-  let success = true;
+  let test1Success = false;
+  let test2Success = false;
+  let test3Success = false;
+  let test4Success = false;
+  let test5Success = false;
 
   // -------------------------------------------------------------
   // Test 1: HTTP API isolation checks
   // -------------------------------------------------------------
   console.log('\n--- Running Test 1: HTTP API Cross-Tenant Isolation ---');
+  let t1a = false;
+  let t1b = false;
   
   // Org B Admin fetching Org A's chat list
   try {
@@ -162,15 +168,14 @@ async function runTests() {
     console.log(`Org B Admin GET Org A chats status: ${res.status} (Expected: 403 or 404)`);
     const body = await res.json();
     console.log('Response body:', body);
-    if (res.status !== 403 && res.status !== 404) {
-      console.error('❌ SECURITY FAILURE: Org B Admin could access Org A chat list HTTP endpoint!');
-      success = false;
-    } else {
+    if (res.status === 403 || res.status === 404) {
       console.log('✅ Success: Org B Admin HTTP access to Org A chats is blocked.');
+      t1a = true;
+    } else {
+      console.error('❌ SECURITY FAILURE: Org B Admin could access Org A chat list HTTP endpoint!');
     }
   } catch (err) {
-    console.log('Error fetching:', err);
-    success = false;
+    console.log('Error fetching Test 1a:', err);
   }
 
   // Org B Admin fetching Org A's chat detail directly
@@ -181,16 +186,17 @@ async function runTests() {
     console.log(`Org B Admin GET Org A chat detail status: ${res.status} (Expected: 404)`);
     const body = await res.json();
     console.log('Response body:', body);
-    if (res.status !== 404) {
-      console.error('❌ SECURITY FAILURE: Org B Admin could access Org A chat detail HTTP endpoint!');
-      success = false;
-    } else {
+    if (res.status === 404) {
       console.log('✅ Success: Org B Admin HTTP access to Org A chat details is blocked.');
+      t1b = true;
+    } else {
+      console.error('❌ SECURITY FAILURE: Org B Admin could access Org A chat detail HTTP endpoint!');
     }
   } catch (err) {
-    console.log('Error fetching:', err);
-    success = false;
+    console.log('Error fetching Test 1b:', err);
   }
+  
+  test1Success = t1a && t1b;
 
   // -------------------------------------------------------------
   // Test 2: WebSocket Subscription Isolation
@@ -198,7 +204,6 @@ async function runTests() {
   console.log('\n--- Running Test 2: WebSocket Cross-Tenant Subscription Isolation ---');
 
   const wsB = new WebSocket(`ws://localhost:${wsPort}/ws?token=${tokenB}`);
-  
   let subConfirmation: any = null;
 
   await new Promise<void>((resolve) => {
@@ -233,7 +238,6 @@ async function runTests() {
   
   if (!subConfirmation) {
     console.error('❌ FAILURE: Did not receive subscription confirmation.');
-    success = false;
   } else {
     const hasSessionA = subConfirmation.includes(`session:${sessionAId}`);
     const hasChatA = subConfirmation.includes(`chat:${chatAId}`);
@@ -247,13 +251,92 @@ async function runTests() {
 
     if (hasSessionA || hasChatA) {
       console.error('❌ SECURITY FAILURE: Org B was able to subscribe to Org A channels!');
-      success = false;
     } else if (!hasSessionB || !hasChatB) {
       console.error('❌ FUNCTIONAL FAILURE: Org B was NOT able to subscribe to its own channels!');
-      success = false;
     } else {
       console.log('✅ SECURITY SUCCESS: Cross-tenant WebSocket subscriptions are blocked!');
+      test2Success = true;
     }
+  }
+
+  // -------------------------------------------------------------
+  // Test 3: Cross-Org Message Send
+  // -------------------------------------------------------------
+  console.log('\n--- Running Test 3: HTTP API Cross-Org Message Send ---');
+  try {
+    const res = await fetch(`http://localhost:${apiPort}/api/messages`, {
+      method: 'POST',
+      headers: { 
+        'Authorization': `Bearer ${tokenB}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        sessionId: sessionAId,
+        recipientJid: '12345@s.whatsapp.net',
+        body: 'Unauthorized message cross-org'
+      })
+    });
+    console.log(`Org B Admin POST message to Org A session status: ${res.status} (Expected: 403 or 404)`);
+    const body = await res.json();
+    console.log('Response body:', body);
+
+    // Verify DB state: check that NO message row was created in chats/messages for Org A
+    const messageRows = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.chatId, chatAId));
+    console.log(`Verified DB: Found ${messageRows.length} messages in Org A's chat (Expected: 0)`);
+
+    if ((res.status === 403 || res.status === 404) && messageRows.length === 0) {
+      console.log('✅ Success: Cross-org message send is blocked and no database side effects occurred.');
+      test3Success = true;
+    } else {
+      console.error('❌ SECURITY FAILURE: Org B Admin could send message to Org A or database state was modified!');
+    }
+  } catch (err) {
+    console.log('Error in Test 3:', err);
+  }
+
+  // -------------------------------------------------------------
+  // Test 4: Cross-Org Message Search
+  // -------------------------------------------------------------
+  console.log('\n--- Running Test 4: HTTP API Cross-Org Message Search ---');
+  try {
+    const res = await fetch(`http://localhost:${apiPort}/api/messages/search?q=test&sessionId=${sessionAId}`, {
+      headers: { 'Authorization': `Bearer ${tokenB}` }
+    });
+    console.log(`Org B Admin GET search messages with Org A sessionId status: ${res.status} (Expected: 403 or 404)`);
+    const body = await res.json();
+    console.log('Response body:', body);
+    if (res.status === 403 || res.status === 404) {
+      console.log('✅ Success: Cross-org message search is blocked.');
+      test4Success = true;
+    } else {
+      console.error('❌ SECURITY FAILURE: Org B Admin could call search messages for Org A!');
+    }
+  } catch (err) {
+    console.log('Error in Test 4:', err);
+  }
+
+  // -------------------------------------------------------------
+  // Test 5: Cross-Org Sync Progress Read
+  // -------------------------------------------------------------
+  console.log('\n--- Running Test 5: HTTP API Cross-Org Sync Progress Read ---');
+  try {
+    const res = await fetch(`http://localhost:${apiPort}/api/messages/sync/progress/${sessionAId}`, {
+      headers: { 'Authorization': `Bearer ${tokenB}` }
+    });
+    console.log(`Org B Admin GET sync progress of Org A session status: ${res.status} (Expected: 403 or 404)`);
+    const body = await res.json();
+    console.log('Response body:', body);
+    if (res.status === 403 || res.status === 404) {
+      console.log('✅ Success: Cross-org sync progress read is blocked.');
+      test5Success = true;
+    } else {
+      console.error('❌ SECURITY FAILURE: Org B Admin could read sync progress of Org A!');
+    }
+  } catch (err) {
+    console.log('Error in Test 5:', err);
   }
 
   // -------------------------------------------------------------
@@ -279,7 +362,16 @@ async function runTests() {
   await closePool();
   await closeRedis();
 
-  if (success) {
+  console.log('\n=== SECURITY TEST SUMMARY ===');
+  console.log(`Test 1: HTTP API Isolation (Chat List/Detail)   -> ${test1Success ? 'PASSED ✅' : 'FAILED ❌'}`);
+  console.log(`Test 2: WS Subscription Isolation               -> ${test2Success ? 'PASSED ✅' : 'FAILED ❌'}`);
+  console.log(`Test 3: Cross-Org Message Send                  -> ${test3Success ? 'PASSED ✅' : 'FAILED ❌'}`);
+  console.log(`Test 4: Cross-Org Message Search                -> ${test4Success ? 'PASSED ✅' : 'FAILED ❌'}`);
+  console.log(`Test 5: Cross-Org Sync Progress Read            -> ${test5Success ? 'PASSED ✅' : 'FAILED ❌'}`);
+
+  const allPassed = test1Success && test2Success && test3Success && test4Success && test5Success;
+
+  if (allPassed) {
     console.log('\n🎉 ALL TESTS PASSED SUCCESSFULLY! ✅');
     process.exit(0);
   } else {
