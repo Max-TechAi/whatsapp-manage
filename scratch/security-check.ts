@@ -8,6 +8,10 @@ import WebSocket from 'ws';
 async function runTests() {
   console.log('=== STARTING MULTI-TENANT SECURITY INTEGRATION TEST ===');
 
+  const apiPort = process.env.PORT || '3000';
+  const wsPort = process.env.WS_PORT || '3001';
+  console.log(`Targeting local API on port ${apiPort} and WebSocket on port ${wsPort}\n`);
+
   // 1. Create two test organizations
   const orgAId = uuidv4();
   const orgBId = uuidv4();
@@ -143,22 +147,6 @@ async function runTests() {
     emailVerified: true
   }).accessToken;
 
-  // Let's import the server components and start them
-  process.env.PORT = '4000';
-  process.env.WS_PORT = '4001';
-
-  // Dynamic import of index/wsServer to run the server
-  const { wsServer } = await import('../src/websocket/ws-server.js');
-  
-  // Let's override starting workers to avoid starting real whatsapp and queue logic
-  // We can just start the wsServer and http server
-  await wsServer.start();
-  
-  // Wait a moment for server to listen
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  console.log('Server started on PORT 4000 and WS_PORT 4001.');
-
   let success = true;
 
   // -------------------------------------------------------------
@@ -168,13 +156,13 @@ async function runTests() {
   
   // Org B Admin fetching Org A's chat list
   try {
-    const res = await fetch(`http://localhost:4000/api/chats?sessionId=${sessionAId}`, {
+    const res = await fetch(`http://localhost:${apiPort}/api/chats?sessionId=${sessionAId}`, {
       headers: { 'Authorization': `Bearer ${tokenB}` }
     });
-    console.log(`Org B Admin GET Org A chats status: ${res.status} (Expected: 403 or 404 or 401 depending on route protection)`);
+    console.log(`Org B Admin GET Org A chats status: ${res.status} (Expected: 403 or 404)`);
     const body = await res.json();
     console.log('Response body:', body);
-    if (res.status !== 403 && res.status !== 404 && res.status !== 401) {
+    if (res.status !== 403 && res.status !== 404) {
       console.error('❌ SECURITY FAILURE: Org B Admin could access Org A chat list HTTP endpoint!');
       success = false;
     } else {
@@ -187,7 +175,7 @@ async function runTests() {
 
   // Org B Admin fetching Org A's chat detail directly
   try {
-    const res = await fetch(`http://localhost:4000/api/chats/${chatAId}`, {
+    const res = await fetch(`http://localhost:${apiPort}/api/chats/${chatAId}`, {
       headers: { 'Authorization': `Bearer ${tokenB}` }
     });
     console.log(`Org B Admin GET Org A chat detail status: ${res.status} (Expected: 404)`);
@@ -209,9 +197,8 @@ async function runTests() {
   // -------------------------------------------------------------
   console.log('\n--- Running Test 2: WebSocket Cross-Tenant Subscription Isolation ---');
 
-  const wsB = new WebSocket(`ws://localhost:4001/ws?token=${tokenB}`);
+  const wsB = new WebSocket(`ws://localhost:${wsPort}/ws?token=${tokenB}`);
   
-  let wsBSubscribed = false;
   let subConfirmation: any = null;
 
   await new Promise<void>((resolve) => {
@@ -229,7 +216,6 @@ async function runTests() {
           channels: [`session:${sessionAId}`, `session:${sessionBId}`, `chat:${chatAId}`, `chat:${chatBId}`]
         }));
       } else if (msg.type === 'subscribed') {
-        wsBSubscribed = true;
         subConfirmation = msg.channels;
         wsB.close();
         resolve();
@@ -286,14 +272,6 @@ async function runTests() {
     console.log('Cleanup complete.');
   } catch (err) {
     console.error('Error during cleanup:', err);
-  }
-
-  // Close the server and databases
-  console.log('Shutting down server...');
-  try {
-    await wsServer.close();
-  } catch (err) {
-    console.error('Error closing wsServer:', err);
   }
 
   const { closePool } = await import('../src/config/database.js');
