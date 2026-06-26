@@ -7,6 +7,7 @@ import { logger } from '../../observability/logger.js';
 import { wsServer } from '../../websocket/ws-server.js';
 import { generateInvitationToken } from '../auth/auth.service.js';
 import { emailService } from '../email/email.service.js';
+import { redis } from '../../config/redis.js';
 
 /* ------------------------------------------------------------------ */
 /*  Validation Schemas                                                 */
@@ -28,6 +29,14 @@ const inviteMemberSchema = z.object({
 /* ------------------------------------------------------------------ */
 /*  Router                                                             */
 /* ------------------------------------------------------------------ */
+
+async function invalidateUserCache(userId: string): Promise<void> {
+  try {
+    await redis.del(`user_auth:${userId}`);
+  } catch (err) {
+    logger.warn('Failed to invalidate user auth cache', { userId, error: (err as Error).message });
+  }
+}
 
 export const orgRouter = Router();
 
@@ -180,6 +189,7 @@ orgRouter.delete('/members/:userId', async (req: Request, res: Response) => {
 
     await orgService.removeMember(req.user!.orgId, userId);
     wsServer.invalidateSessionAccess(userId);
+    await invalidateUserCache(userId);
     res.status(200).json({ message: 'Member removed successfully' });
   } catch (error) {
     if (error instanceof Error && error.message === 'USER_NOT_FOUND') {
@@ -228,6 +238,7 @@ orgRouter.patch('/members/:userId', async (req: Request, res: Response) => {
     }
 
     wsServer.invalidateSessionAccess(userId);
+    await invalidateUserCache(userId);
     res.status(200).json({ member });
   } catch (error) {
     logger.error('Failed to update member', {
@@ -276,6 +287,7 @@ orgRouter.put('/members/:userId/permissions', async (req: Request, res: Response
 
     await orgService.updateMemberPermissions(req.user!.orgId, userId, parsed.data);
     wsServer.invalidateSessionAccess(userId);
+    await invalidateUserCache(userId);
     res.status(200).json({ success: true, message: 'Permissions updated successfully' });
   } catch (error) {
     if (error instanceof Error && error.message === 'USER_NOT_FOUND') {

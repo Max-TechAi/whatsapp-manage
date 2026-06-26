@@ -5,6 +5,7 @@ import type { JwtPayload } from './auth.types.js';
 import { db } from '../../config/database.js';
 import { users } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
+import { redis } from '../../config/redis.js';
 
 /* ------------------------------------------------------------------ */
 /*  Augment Express Request with authenticated user payload            */
@@ -47,17 +48,41 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
 
     const payload = verifyToken(token);
 
-    // Fetch latest user status and permissions from database
-    const [dbUser] = await db
-      .select({
-        id: users.id,
-        role: users.role,
-        isActive: users.isActive,
-        hasAllSessionsAccess: users.hasAllSessionsAccess,
-      })
-      .from(users)
-      .where(eq(users.id, payload.userId))
-      .limit(1);
+    const cacheKey = `user_auth:${payload.userId}`;
+    let dbUser: { id: string; role: 'admin' | 'agent'; isActive: boolean; hasAllSessionsAccess: boolean } | null = null;
+
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        dbUser = JSON.parse(cached);
+      }
+    } catch (err) {
+      logger.warn('Failed to fetch auth from cache', { error: (err as Error).message });
+    }
+
+    if (!dbUser) {
+      // Fetch latest user status and permissions from database
+      const [user] = await db
+        .select({
+          id: users.id,
+          role: users.role,
+          isActive: users.isActive,
+          hasAllSessionsAccess: users.hasAllSessionsAccess,
+        })
+        .from(users)
+        .where(eq(users.id, payload.userId))
+        .limit(1);
+
+      if (user) {
+        dbUser = user;
+        try {
+          // Cache user auth details for 30 seconds
+          await redis.setex(cacheKey, 30, JSON.stringify(user));
+        } catch (err) {
+          logger.warn('Failed to store auth in cache', { error: (err as Error).message });
+        }
+      }
+    }
 
     if (!dbUser || !dbUser.isActive) {
       res.status(401).json({ error: 'User account is deactivated or does not exist' });
