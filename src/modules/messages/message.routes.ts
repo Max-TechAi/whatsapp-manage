@@ -11,6 +11,9 @@ import { logger } from '../../observability/logger.js';
 import { eventBus } from '../../events/event-bus.js';
 import { chatService } from '../chats/chat.service.js';
 import { sessionManager } from '../sessions/session.manager.js';
+import { db } from '../../config/database.js';
+import { sessions, chats } from '../../db/schema.js';
+import { eq, and } from 'drizzle-orm';
 
 export const messageRouter = Router();
 
@@ -36,6 +39,17 @@ messageRouter.post('/', async (req, res) => {
     }
 
     const { sessionId, recipientJid, body } = parsed.data;
+
+    // Verify that the session belongs to the user's organization
+    const [sessionRecord] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)))
+      .limit(1);
+
+    if (!sessionRecord) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
 
     // Level 1: Verify session access
     if (req.user!.role !== 'admin' && !req.user!.hasAllSessionsAccess) {
@@ -211,6 +225,28 @@ messageRouter.get('/search', async (req, res) => {
       return res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
     }
 
+    if (parsed.data.sessionId) {
+      const [sessionRecord] = await db
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(and(eq(sessions.id, parsed.data.sessionId), eq(sessions.orgId, orgId)))
+        .limit(1);
+      if (!sessionRecord) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+    }
+
+    if (parsed.data.chatId) {
+      const [chatRecord] = await db
+        .select({ id: chats.id })
+        .from(chats)
+        .where(and(eq(chats.id, parsed.data.chatId), eq(chats.orgId, orgId)))
+        .limit(1);
+      if (!chatRecord) {
+        return res.status(404).json({ error: 'Chat not found' });
+      }
+    }
+
     let cursor;
     if (parsed.data.cursor) {
       try {
@@ -313,6 +349,16 @@ messageRouter.delete('/:id', async (req, res) => {
  */
 messageRouter.get('/sync/progress/:sessionId', async (req, res) => {
   try {
+    const [sessionRecord] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.id, req.params.sessionId), eq(sessions.orgId, req.user!.orgId)))
+      .limit(1);
+
+    if (!sessionRecord) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
     const progress = await messageSyncService.getSyncProgress(req.params.sessionId);
     if (!progress) {
       return res.status(404).json({ error: 'No sync progress found' });

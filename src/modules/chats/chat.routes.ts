@@ -8,7 +8,7 @@ import { chatService } from './chat.service.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
-import { messages, users, userSessionAccess } from '../../db/schema.js';
+import { messages, users, userSessionAccess, sessions } from '../../db/schema.js';
 import { sessionManager } from '../sessions/session.manager.js';
 import { desc, eq, and, or, sql } from 'drizzle-orm';
 import { wsServer } from '../../websocket/ws-server.js';
@@ -33,6 +33,17 @@ chatRouter.get('/', async (req, res) => {
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
+    }
+
+    // Verify that the session belongs to the user's organization
+    const [sessionRecord] = await db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(and(eq(sessions.id, parsed.data.sessionId), eq(sessions.orgId, req.user!.orgId)))
+      .limit(1);
+
+    if (!sessionRecord) {
+      return res.status(404).json({ error: 'Session not found' });
     }
 
     if (req.user!.role !== 'admin' && !req.user!.hasAllSessionsAccess) {
