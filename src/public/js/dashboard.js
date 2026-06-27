@@ -618,8 +618,7 @@ function renderChatsList(chatList) {
       const hasUnread = typeof c.unreadCount !== 'undefined' && c.unreadCount !== null && Number(c.unreadCount) > 0;
       const unread = hasUnread ? `<span class="chat-badge" title="${c.unreadCount} unread messages">${c.unreadCount}</span>` : '';
       
-      // Fallback phone number formatted with '+'
-      const displayName = formatPhoneNumberFallback(c.name || c.waChatId.split('@')[0]);
+      const displayName = getChatDisplayName(c);
 
       return `
         <div class="chat-item ${isActive}" onclick="selectChat('${c.id}', '${c.waChatId}', '${escapeHtml(displayName)}')">
@@ -925,7 +924,7 @@ async function markChatAsRead(chatDbId) {
 function handleChatSearch() {
   const query = document.getElementById('chatSearchInput').value.toLowerCase();
   const filtered = chats.filter(c => {
-    const name = (c.name || c.waChatId.split('@')[0]).toLowerCase();
+    const name = getChatDisplayName(c).toLowerCase();
     return name.includes(query) || c.waChatId.toLowerCase().includes(query);
   });
   renderChatsList(filtered);
