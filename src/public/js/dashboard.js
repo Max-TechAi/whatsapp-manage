@@ -183,17 +183,7 @@ function getChatDisplayName(chatObj) {
   }
   const phone = jid.split('@')[0];
 
-  // Debug block for Hanaa's JID
-  if (chatObj.waChatId.includes('963962623406')) {
-    console.log('[DEBUG HANAA]', {
-      waChatId: chatObj.waChatId,
-      nameField: chatObj.name,
-      resolvedJid: jid,
-      inContactsMap: contactsMap[jid] !== undefined,
-      contactsMapValue: contactsMap[jid],
-      contactsMapPhoneValue: contactsMap[phone],
-    });
-  }
+
 
   // Resolve via contactsMap (which uses resolveNameFromContact)
   const fromContacts = contactsMap[jid] || contactsMap[phone];
@@ -1287,11 +1277,14 @@ async function loadLidMappingsForSession() {
 async function loadContactsForSession() {
   if (!activeSessionId) return;
   try {
-    const response = await fetch(`/api/contacts?sessionId=${activeSessionId}&limit=2000`, {
+    const response = await fetch(`/api/contacts?sessionId=${activeSessionId}&limit=5000`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     const resData = await response.json();
-    if (response.ok && resData.contacts) {
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}: ${resData.error || 'Unknown error'}`);
+    }
+    if (resData.contacts) {
       contactsMap = {};
       resData.contacts.forEach(c => {
         const name = resolveNameFromContact(c);
@@ -1308,7 +1301,7 @@ async function loadContactsForSession() {
       }
     }
   } catch (err) {
-    console.error('Failed to load contacts for mentions:', err);
+    console.error('Failed to load contacts for session:', err);
   }
 }
 

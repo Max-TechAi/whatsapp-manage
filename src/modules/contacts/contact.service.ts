@@ -92,7 +92,7 @@ export class ContactService {
    * List contacts with optional search and pagination.
    */
   async getContacts(orgId: string, query: ContactListQuery): Promise<ContactListResponse> {
-    const limit = Math.min(query.limit ?? 50, 1000);
+    const limit = Math.min(query.limit ?? 50, 5000);
     const offset = query.offset ?? 0;
 
     const conditions = [
