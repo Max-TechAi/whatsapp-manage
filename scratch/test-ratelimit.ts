@@ -2,6 +2,9 @@ import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import { redis } from '../src/config/redis.js';
 import { getEnv } from '../src/config/env.js';
+import { db } from '../src/config/database.js';
+import { users } from '../src/db/schema.js';
+import { eq } from 'drizzle-orm';
 
 const env = getEnv();
 const API_URL = `http://localhost:${env.PORT || 3000}`;
@@ -15,13 +18,31 @@ async function main() {
     await redis.del(...oldKeys);
   }
 
-  // 1. Generate a mock valid token using the JWT_SECRET from .env
+  // Find a real active user from the database to bypass the authentication database-check
+  console.log('Searching database for an active user...');
+  const [activeUser] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      orgId: users.orgId,
+      role: users.role,
+    })
+    .from(users)
+    .where(eq(users.isActive, true))
+    .limit(1);
+
+  if (!activeUser) {
+    throw new Error('No active user found in the database. Please register/create a user first.');
+  }
+  console.log(`Found active user: ${activeUser.email} (ID: ${activeUser.id}, Org: ${activeUser.orgId})`);
+
+  // Generate a valid token using the JWT_SECRET from .env and the active user details
   const secret = env.JWT_SECRET;
   const payload = {
-    userId: 'user-ratelimit-test-id',
-    orgId: 'org-ratelimit-test-id',
-    email: 'test@ratelimit.com',
-    role: 'admin',
+    userId: activeUser.id,
+    orgId: activeUser.orgId,
+    email: activeUser.email,
+    role: activeUser.role as 'admin' | 'agent',
   };
   const token = jwt.sign(payload, secret, { expiresIn: '1h' });
 
@@ -41,11 +62,12 @@ async function main() {
     const keys = await redis.keys('ratelimit:api:*');
     console.log('Ratelimit keys found in Redis:', keys);
 
-    const userKeyExists = keys.some(k => k.includes('org-ratelimit-test-id:user-ratelimit-test-id'));
-    const ipKeyExists = keys.some(k => !k.includes('org-ratelimit-test-id') && k.includes('ratelimit:api:'));
+    const userKeyPrefix = `ratelimit:api:${activeUser.orgId}:${activeUser.id}`;
+    const userKeyExists = keys.some(k => k.includes(userKeyPrefix));
+    const ipKeyExists = keys.some(k => !k.includes(activeUser.orgId) && k.includes('ratelimit:api:'));
 
     if (userKeyExists && !ipKeyExists) {
-      console.log('SUCCESS: Rate limit key is correctly user-scoped! (Format: ratelimit:api:orgId:userId)');
+      console.log(`SUCCESS: Rate limit key is correctly user-scoped! (Found key containing: ${userKeyPrefix})`);
     } else {
       console.log('FAILURE: Rate limit key is NOT user-scoped (or IP fallback key was created instead).');
     }
