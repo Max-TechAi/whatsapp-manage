@@ -1158,12 +1158,12 @@ class SessionManager {
       });
     }, 5000);
 
-    // Call periodically every 5 minutes (300000 ms)
+    // Call periodically every 15 minutes (900000 ms)
     active.presenceInterval = setInterval(() => {
       active.socket.sendPresenceUpdate('unavailable').catch((err) => {
         logger.warn('Failed to send unavailable presence update in keep-alive', { sessionId: active.sessionId, error: err.message });
       });
-    }, 300000);
+    }, 900000);
   }
 
   private clearPresenceKeepAlive(active: ActiveSession): void {
