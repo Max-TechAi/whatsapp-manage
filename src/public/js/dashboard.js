@@ -11,6 +11,7 @@ let qrPollInterval = null;
 let currentQrSessionId = null;
 let contactsMap = {};
 let lidMappings = {};
+let currentLoadToken = null;
 let processedMessageIds = new Set();
 
 let userRole = 'agent';
@@ -611,6 +612,9 @@ function handleInboxSessionChange() {
 async function loadChats() {
   if (!activeSessionId) return;
 
+  const loadToken = Math.random().toString(36).substring(2);
+  currentLoadToken = loadToken;
+
   try {
     const response = await fetch(`/api/chats?sessionId=${activeSessionId}&limit=50`, {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -618,10 +622,65 @@ async function loadChats() {
     const resData = await response.json();
     if (!response.ok) throw new Error(resData.error || 'Failed to load chats');
 
+    // Guard: if load token or session changed during fetch, abort
+    if (currentLoadToken !== loadToken || activeSessionId !== (resData.chats[0]?.sessionId || activeSessionId)) return;
+
     chats = resData.chats || [];
     renderChatsList(chats);
+
+    // If more chats exist, spawn background loop
+    if (resData.hasMore && resData.nextCursor) {
+      loadMoreChatsBackground(activeSessionId, resData.nextCursor, loadToken);
+    }
   } catch (err) {
-    console.error(err);
+    console.error('Failed to load initial chats:', err);
+  }
+}
+
+async function loadMoreChatsBackground(sessionId, cursor, loadToken, iteration = 1) {
+  const MAX_ITERATIONS = 40; // Circuit breaker: max 2,000 chats
+  if (iteration > MAX_ITERATIONS) {
+    console.warn('[CHAT LOAD] Reached maximum background iteration cap.');
+    return;
+  }
+
+  // Guard: abort if token or session changed
+  if (loadToken !== currentLoadToken || sessionId !== activeSessionId) return;
+
+  try {
+    // Insert a 200ms delay to keep the UI thread fully responsive
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    if (loadToken !== currentLoadToken || sessionId !== activeSessionId) return;
+
+    const response = await fetch(`/api/chats?sessionId=${sessionId}&limit=50&cursor=${encodeURIComponent(cursor)}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to load background chats');
+
+    if (loadToken !== currentLoadToken || sessionId !== activeSessionId) return;
+
+    const newChats = resData.chats || [];
+    if (newChats.length === 0) return;
+
+    // Merge strategy: prevent duplicates
+    const existingIds = new Set(chats.map(c => c.id));
+    const merged = [...chats];
+    newChats.forEach(c => {
+      if (!existingIds.has(c.id)) {
+        merged.push(c);
+      }
+    });
+
+    chats = merged;
+    renderChatsList(chats);
+
+    if (resData.hasMore && resData.nextCursor) {
+      loadMoreChatsBackground(sessionId, resData.nextCursor, loadToken, iteration + 1);
+    }
+  } catch (err) {
+    console.error('Failed to load background chats:', err);
   }
 }
 
