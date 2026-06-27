@@ -60,8 +60,24 @@ export function createSyncWorker(): Worker {
     }
   );
 
+  worker.on('completed', (job) => {
+    if (job?.data?.orgId) {
+      eventBus.decrementActiveJobs(job.data.orgId, QUEUES.HISTORY_SYNC).catch((err) => {
+        logger.warn('Failed to decrement active jobs on completion', { error: err.message });
+      });
+    }
+  });
+
   worker.on('failed', (job, err) => {
     logger.error(`Sync job ${job?.id} failed`, { error: err.message });
+    if (job?.data?.orgId) {
+      const attempts = job.opts?.attempts ?? 1;
+      if (job.attemptsMade >= attempts) {
+        eventBus.decrementActiveJobs(job.data.orgId, QUEUES.HISTORY_SYNC).catch((err) => {
+          logger.warn('Failed to decrement active jobs on failure', { error: err.message });
+        });
+      }
+    }
   });
 
   return worker;
@@ -120,6 +136,26 @@ export function createContactSyncWorker(): Worker {
       concurrency: 5,
     }
   );
+
+  worker.on('completed', (job) => {
+    if (job?.data?.orgId) {
+      eventBus.decrementActiveJobs(job.data.orgId, QUEUES.CONTACT_SYNC).catch((err) => {
+        logger.warn('Failed to decrement active jobs on completion', { error: err.message });
+      });
+    }
+  });
+
+  worker.on('failed', (job, err) => {
+    logger.error(`Contact sync job ${job?.id} failed`, { error: err.message });
+    if (job?.data?.orgId) {
+      const attempts = job.opts?.attempts ?? 1;
+      if (job.attemptsMade >= attempts) {
+        eventBus.decrementActiveJobs(job.data.orgId, QUEUES.CONTACT_SYNC).catch((err) => {
+          logger.warn('Failed to decrement active jobs on failure', { error: err.message });
+        });
+      }
+    }
+  });
 
   return worker;
 }
@@ -206,6 +242,26 @@ export function createChatSyncWorker(): Worker {
       concurrency: 5,
     }
   );
+
+  worker.on('completed', (job) => {
+    if (job?.data?.orgId) {
+      eventBus.decrementActiveJobs(job.data.orgId, QUEUES.CHAT_SYNC).catch((err) => {
+        logger.warn('Failed to decrement active jobs on completion', { error: err.message });
+      });
+    }
+  });
+
+  worker.on('failed', (job, err) => {
+    logger.error(`Chat sync job ${job?.id} failed`, { error: err.message });
+    if (job?.data?.orgId) {
+      const attempts = job.opts?.attempts ?? 1;
+      if (job.attemptsMade >= attempts) {
+        eventBus.decrementActiveJobs(job.data.orgId, QUEUES.CHAT_SYNC).catch((err) => {
+          logger.warn('Failed to decrement active jobs on failure', { error: err.message });
+        });
+      }
+    }
+  });
 
   return worker;
 }

@@ -9,7 +9,7 @@ import { workerRedis } from '../../config/redis.js';
 import { db } from '../../config/database.js';
 import { webhooks, webhookDeliveries } from '../../db/schema.js';
 import { eq, and, sql } from 'drizzle-orm';
-import { QUEUES } from '../event-bus.js';
+import { QUEUES, eventBus } from '../event-bus.js';
 import { logger } from '../../observability/logger.js';
 
 interface WebhookDeliveryJob {
@@ -150,8 +150,24 @@ export function createWebhookWorker(): Worker {
     }
   );
 
+  worker.on('completed', (job) => {
+    if (job?.data?.orgId) {
+      eventBus.decrementActiveJobs(job.data.orgId, QUEUES.WEBHOOK_DELIVERY).catch((err) => {
+        logger.warn('Failed to decrement active jobs on completion', { error: err.message });
+      });
+    }
+  });
+
   worker.on('failed', (job, err) => {
     logger.error(`Webhook job ${job?.id} failed`, { error: err.message });
+    if (job?.data?.orgId) {
+      const attempts = job.opts?.attempts ?? 1;
+      if (job.attemptsMade >= attempts) {
+        eventBus.decrementActiveJobs(job.data.orgId, QUEUES.WEBHOOK_DELIVERY).catch((err) => {
+          logger.warn('Failed to decrement active jobs on failure', { error: err.message });
+        });
+      }
+    }
   });
 
   return worker;

@@ -9,6 +9,7 @@ import { users } from '../../db/schema.js';
 import { logger } from '../../observability/logger.js';
 import { emailService } from '../email/email.service.js';
 import { hashPassword } from '../../security/encryption.js';
+import { authRateLimiter } from '../../security/rate-limiter.js';
 
 /* ------------------------------------------------------------------ */
 /*  Validation Schemas                                                 */
@@ -40,7 +41,7 @@ export const authRouter = Router();
  * POST /register
  * Create a new organization and admin user.
  */
-authRouter.post('/register', async (req: Request, res: Response) => {
+authRouter.post('/register', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -81,7 +82,7 @@ authRouter.post('/register', async (req: Request, res: Response) => {
  * POST /login
  * Authenticate with email and password.
  */
-authRouter.post('/login', async (req: Request, res: Response) => {
+authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -221,7 +222,7 @@ authRouter.get('/verify-email', async (req: Request, res: Response) => {
  * POST /api/auth/resend-verification
  * Resend verification email for an unverified account.
  */
-authRouter.post('/resend-verification', async (req: Request, res: Response) => {
+authRouter.post('/resend-verification', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const schema = z.object({
       email: z.string().email(),
@@ -270,7 +271,7 @@ authRouter.post('/resend-verification', async (req: Request, res: Response) => {
  * POST /api/auth/set-password-from-invite
  * Set password for a newly invited team member using invitation token.
  */
-authRouter.post('/set-password-from-invite', async (req: Request, res: Response) => {
+authRouter.post('/set-password-from-invite', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const schema = z.object({
       token: z.string().min(1, 'Token is required'),

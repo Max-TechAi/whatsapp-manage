@@ -113,6 +113,9 @@ export class EventBus {
 
     for (const msg of messages) {
       const rawJobId = generateInboundJobId(sessionId, msg.key?.id ?? String(Date.now()));
+      const activeJobs = await this.incrementActiveJobs(orgId, QUEUES.MESSAGE_INBOUND);
+      // Real-time notifications get higher base priority (lower values) than historical/append syncs
+      const priority = type === 'notify' ? Math.min(activeJobs, 500) : Math.min(activeJobs + 100, 1000);
       try {
         await queue.add(
           `msg-${type}`,
@@ -125,7 +128,7 @@ export class EventBus {
           },
           {
             jobId: rawJobId,
-            priority: type === 'notify' ? 1 : 10, // Real-time messages get priority
+            priority,
           }
         );
       } catch (err) {
@@ -148,7 +151,7 @@ export class EventBus {
             },
             {
               jobId: fallbackJobId,
-              priority: type === 'notify' ? 1 : 10,
+              priority,
             }
           );
         } catch (retryErr) {
@@ -293,6 +296,8 @@ export class EventBus {
       messageSignature = `${data.messages.length}_${firstId}_${lastId}`;
     }
     const rawJobId = generateHistorySyncJobId(sessionId, syncType, chunkOrder, messageSignature);
+    const activeJobs = await this.incrementActiveJobs(orgId, QUEUES.HISTORY_SYNC);
+    const priority = Math.min(activeJobs, 1000);
 
     try {
       await queue.add(
@@ -302,7 +307,7 @@ export class EventBus {
           jobId: rawJobId, // Unique job ID for BullMQ deduplication
           attempts: 3,
           backoff: { type: 'fixed', delay: 5000 },
-          priority: 5,
+          priority,
           removeOnComplete: true,
         }
       );
@@ -322,7 +327,7 @@ export class EventBus {
             jobId: fallbackJobId,
             attempts: 3,
             backoff: { type: 'fixed', delay: 5000 },
-            priority: 5,
+            priority,
             removeOnComplete: true,
           }
         );
@@ -344,11 +349,15 @@ export class EventBus {
     payload: Record<string, unknown>
   ): Promise<void> {
     const queue = this.getQueue(QUEUES.WEBHOOK_DELIVERY);
+    const activeJobs = await this.incrementActiveJobs(orgId, QUEUES.WEBHOOK_DELIVERY);
+    const priority = Math.min(activeJobs, 1000);
     await queue.add('deliver', {
       orgId,
       event,
       payload,
       timestamp: new Date().toISOString(),
+    }, {
+      priority,
     });
   }
 
@@ -361,7 +370,9 @@ export class EventBus {
     contacts: any[]
   ): Promise<void> {
     const queue = this.getQueue(QUEUES.CONTACT_SYNC);
-    await queue.add('sync', { sessionId, orgId, contacts });
+    const activeJobs = await this.incrementActiveJobs(orgId, QUEUES.CONTACT_SYNC);
+    const priority = Math.min(activeJobs, 1000);
+    await queue.add('sync', { sessionId, orgId, contacts }, { priority });
   }
 
   /**
@@ -374,7 +385,9 @@ export class EventBus {
     action: 'upsert' | 'update' | 'delete'
   ): Promise<void> {
     const queue = this.getQueue(QUEUES.CHAT_SYNC);
-    await queue.add(action, { sessionId, orgId, chats: chatsData, action });
+    const activeJobs = await this.incrementActiveJobs(orgId, QUEUES.CHAT_SYNC);
+    const priority = Math.min(activeJobs, 1000);
+    await queue.add(action, { sessionId, orgId, chats: chatsData, action }, { priority });
   }
 
   // ─── Redis Streams (Fan-out Broadcast) ─────────────────────
@@ -405,6 +418,38 @@ export class EventBus {
         event,
         error: (err as Error).message,
       });
+    }
+  }
+
+  /**
+   * Increment active job count for an organization on a specific queue.
+   * Returns the new count to be used as the job priority.
+   */
+  async incrementActiveJobs(orgId: string, queueName: string): Promise<number> {
+    const key = `queue_count:${orgId}:${queueName}`;
+    try {
+      const count = await redis.incr(key);
+      // Set TTL to 1 hour so the key eventually expires if there is a crash/leak
+      await redis.expire(key, 3600);
+      return count;
+    } catch (err) {
+      logger.error('Failed to increment active jobs counter in Redis', { orgId, queueName, error: (err as Error).message });
+      return 1;
+    }
+  }
+
+  /**
+   * Decrement active job count for an organization on a specific queue.
+   */
+  async decrementActiveJobs(orgId: string, queueName: string): Promise<void> {
+    const key = `queue_count:${orgId}:${queueName}`;
+    try {
+      const count = await redis.decr(key);
+      if (count <= 0) {
+        await redis.del(key);
+      }
+    } catch (err) {
+      logger.error('Failed to decrement active jobs counter in Redis', { orgId, queueName, error: (err as Error).message });
     }
   }
 

@@ -27,7 +27,7 @@ import { sessionManager } from './modules/sessions/session.manager.js';
 import { mediaService } from './modules/media/media.service.js';
 import { closePool } from './config/database.js';
 import { closeRedis } from './config/redis.js';
-import { apiRateLimiter } from './security/rate-limiter.js';
+import { apiRateLimiter, decodeOptionalAuth } from './security/rate-limiter.js';
 import { emailService } from './modules/email/email.service.js';
 
 const env = getEnv();
@@ -54,6 +54,7 @@ app.use('/health', healthRouter);
 
 // Apply API-wide rate limiting to all business endpoints
 const apiBase = express.Router();
+apiBase.use(decodeOptionalAuth);
 apiBase.use(apiRateLimiter);
 
 apiBase.use('/auth', authRouter);

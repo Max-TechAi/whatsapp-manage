@@ -2,11 +2,38 @@ import type { Request, Response, NextFunction } from 'express';
 import { redis } from '../config/redis.js';
 import { getEnv } from '../config/env.js';
 import { logger } from '../observability/logger.js';
+import { verifyToken } from '../modules/auth/auth.service.js';
 
 interface RateLimitConfig {
   windowMs: number;
   max: number;
   keyPrefix: string;
+}
+
+/**
+ * Lightweight middleware that optionally decodes a JWT token if present.
+ * Populates req.user with the payload so the rate limiter can use it.
+ * Fails silently for public routes / missing tokens, leaving req.user undefined.
+ */
+export function decodeOptionalAuth(req: Request, res: Response, next: NextFunction): void {
+  try {
+    let token: string | undefined;
+    const authHeader = req.headers.authorization;
+
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.slice(7); // Strip 'Bearer '
+    } else if (req.query.token) {
+      token = req.query.token as string;
+    }
+
+    if (token) {
+      const payload = verifyToken(token);
+      req.user = payload;
+    }
+  } catch (err) {
+    // Fail silently: downstream auth middleware will handle throwing 401
+  }
+  next();
 }
 
 /**

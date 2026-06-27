@@ -312,10 +312,23 @@ export function createMessageWorker(): Worker {
 
   worker.on('completed', (job) => {
     logger.debug(`Message job ${job.id} completed`);
+    if (job?.data?.orgId) {
+      eventBus.decrementActiveJobs(job.data.orgId, QUEUES.MESSAGE_INBOUND).catch((err) => {
+        logger.warn('Failed to decrement active jobs on completion', { error: err.message });
+      });
+    }
   });
 
   worker.on('failed', (job, err) => {
     logger.error(`Message job ${job?.id} failed`, { error: err.message });
+    if (job?.data?.orgId) {
+      const attempts = job.opts?.attempts ?? 1;
+      if (job.attemptsMade >= attempts) {
+        eventBus.decrementActiveJobs(job.data.orgId, QUEUES.MESSAGE_INBOUND).catch((err) => {
+          logger.warn('Failed to decrement active jobs on failure', { error: err.message });
+        });
+      }
+    }
   });
 
   return worker;
