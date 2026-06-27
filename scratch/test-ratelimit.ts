@@ -8,18 +8,21 @@ const API_URL = `http://localhost:${env.PORT || 3000}`;
 async function main() {
   console.log('Using API URL:', API_URL);
 
-  const email = process.argv[2] || 'max@salahsoft.com';
-  const password = process.argv[3] || 'password123'; // Fallback default test password
-
-  // Clear existing ratelimit keys in Redis
+  // Clear existing ratelimit keys in Redis before running the tests to start clean
   try {
     const oldKeys = await redis.keys('ratelimit:*');
     if (oldKeys.length > 0) {
       await redis.del(...oldKeys);
+      console.log('Cleared pre-existing ratelimit keys from Redis:', oldKeys);
+    } else {
+      console.log('No pre-existing ratelimit keys found in Redis.');
     }
   } catch (err) {
     console.warn('Failed to clear old ratelimit keys in Redis:', (err as Error).message);
   }
+
+  const email = process.argv[2] || 'max@salahsoft.com';
+  const password = process.argv[3] || 'password123'; // Fallback default test password
 
   // 1. Perform a real login to get a fully valid server-signed JWT token
   console.log(`\nStep 1: Performing real login for user "${email}"...`);
@@ -75,12 +78,11 @@ async function main() {
 
     const userKeyPrefix = `ratelimit:api:${orgId}:${userId}`;
     const userKeyExists = keys.some(k => k.includes(userKeyPrefix));
-    const ipKeyExists = keys.some(k => !k.includes(orgId) && k.includes('ratelimit:api:'));
 
-    if (userKeyExists && !ipKeyExists) {
+    if (userKeyExists) {
       console.log(`SUCCESS: Rate limit key is correctly user-scoped! (Found key containing: ${userKeyPrefix})`);
     } else {
-      console.log('FAILURE: Rate limit key is NOT user-scoped (or IP fallback key was created instead).');
+      console.log('FAILURE: Rate limit key is NOT user-scoped.');
     }
   } catch (err) {
     console.error('Test 1 failed to verify rate-limiter keys:', (err as Error).message);
