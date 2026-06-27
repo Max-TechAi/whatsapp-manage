@@ -177,8 +177,23 @@ function resolveNameFromContact(contact) {
 function getChatDisplayName(chatObj) {
   if (!chatObj) return 'Unknown';
 
-  const jid = chatObj.waChatId || '';
+  let jid = chatObj.waChatId || '';
+  if (jid.endsWith('@lid') && lidMappings[jid]) {
+    jid = lidMappings[jid];
+  }
   const phone = jid.split('@')[0];
+
+  // Debug block for Hanaa's JID
+  if (chatObj.waChatId.includes('963962623406')) {
+    console.log('[DEBUG HANAA]', {
+      waChatId: chatObj.waChatId,
+      nameField: chatObj.name,
+      resolvedJid: jid,
+      inContactsMap: contactsMap[jid] !== undefined,
+      contactsMapValue: contactsMap[jid],
+      contactsMapPhoneValue: contactsMap[phone],
+    });
+  }
 
   // Resolve via contactsMap (which uses resolveNameFromContact)
   const fromContacts = contactsMap[jid] || contactsMap[phone];
@@ -1272,7 +1287,7 @@ async function loadLidMappingsForSession() {
 async function loadContactsForSession() {
   if (!activeSessionId) return;
   try {
-    const response = await fetch(`/api/contacts?sessionId=${activeSessionId}&limit=1000`, {
+    const response = await fetch(`/api/contacts?sessionId=${activeSessionId}&limit=2000`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     const resData = await response.json();
