@@ -74,7 +74,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wa-api
     restart: unless-stopped
     command: ["node", "dist/index.js"]
     environment:
@@ -103,9 +102,6 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_SECURE: ${SMTP_SECURE}
       EMAIL_FROM: ${EMAIL_FROM}
-    ports:
-      - "3000:3000"
-      - "3001:3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,7 +155,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: wa-worker
     restart: unless-stopped
     command: ["node", "dist/events/worker-entry.js"]
     environment:
