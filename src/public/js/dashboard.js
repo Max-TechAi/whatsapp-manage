@@ -130,9 +130,47 @@ function getMessagePreviewText(message) {
 }
 
 /**
- * Resolves the best display name for a chat object, reusing the same
- * priority chain used for the chat list: pushName → saved contact name
- * → chat.name → formatted phone number.
+ * Helper to check if a string is a valid, real saved display name.
+ * It is invalid if it is null, empty, contains '∙', or matches standard digits/phone format.
+ */
+function isValidDisplayName(name) {
+  if (!name) return false;
+  const trimmed = name.trim();
+  if (trimmed === '') return false;
+  // Contains bullet character or is pure digits/plus/spaces phone number
+  if (trimmed.includes('∙') || /^[+\d\s]+$/.test(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Resolves the best name from a raw database contact object.
+ * Prioritizes displayName, then pushName (~prefix), then formatted phone.
+ */
+function resolveNameFromContact(contact) {
+  if (!contact) return '';
+  let resolved = '';
+  let reason = '';
+  
+  if (isValidDisplayName(contact.displayName)) {
+    resolved = contact.displayName;
+    reason = 'valid displayName';
+  } else if (contact.pushName && contact.pushName.trim() !== '') {
+    resolved = `~${contact.pushName.trim()}`;
+    reason = 'pushName fallback';
+  } else {
+    const phone = (contact.waId || '').split('@')[0];
+    resolved = formatPhoneNumberFallback(phone || contact.phoneNumber);
+    reason = 'phone fallback';
+  }
+
+  console.log(`[NAME RESOLUTION] JID: ${contact.waId} resolved to "${resolved}" via ${reason} (Original displayName: "${contact.displayName}", pushName: "${contact.pushName}")`);
+  return resolved;
+}
+
+/**
+ * Resolves the best display name for a chat object, reusing the canonical priority chain.
  * @param {object} chatObj - A chat entry from the in-memory `chats` array.
  * @returns {string}
  */
@@ -142,12 +180,16 @@ function getChatDisplayName(chatObj) {
   const jid = chatObj.waChatId || '';
   const phone = jid.split('@')[0];
 
-  // Resolve via contactsMap (same lookup used in renderChatsList)
+  // Resolve via contactsMap (which uses resolveNameFromContact)
   const fromContacts = contactsMap[jid] || contactsMap[phone];
   if (fromContacts) return fromContacts;
 
-  // Fall back to the chat's own name field
-  if (chatObj.name) return chatObj.name;
+  // Fall back to the chat's own name field (e.g. for group chats, or fallback for unsaved chats)
+  if (chatObj.name) {
+    if (jid.endsWith('@g.us') || isValidDisplayName(chatObj.name)) {
+      return chatObj.name;
+    }
+  }
 
   return formatPhoneNumberFallback(phone) || jid;
 }
@@ -1237,7 +1279,7 @@ async function loadContactsForSession() {
     if (response.ok && resData.contacts) {
       contactsMap = {};
       resData.contacts.forEach(c => {
-        const name = c.displayName || (c.pushName ? `~${c.pushName}` : null) || c.phoneNumber || c.waId.split('@')[0];
+        const name = resolveNameFromContact(c);
         contactsMap[c.waId] = name;
         const phone = c.waId.split('@')[0];
         contactsMap[phone] = name;
