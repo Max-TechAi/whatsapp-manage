@@ -1,10 +1,6 @@
 import axios from 'axios';
-import jwt from 'jsonwebtoken';
 import { redis } from '../src/config/redis.js';
 import { getEnv } from '../src/config/env.js';
-import { db } from '../src/config/database.js';
-import { users } from '../src/db/schema.js';
-import { eq } from 'drizzle-orm';
 
 const env = getEnv();
 const API_URL = `http://localhost:${env.PORT || 3000}`;
@@ -12,39 +8,53 @@ const API_URL = `http://localhost:${env.PORT || 3000}`;
 async function main() {
   console.log('Using API URL:', API_URL);
 
+  const email = process.argv[2] || 'max@salahsoft.com';
+  const password = process.argv[3] || 'password123'; // Fallback default test password
+
   // Clear existing ratelimit keys in Redis
-  const oldKeys = await redis.keys('ratelimit:*');
-  if (oldKeys.length > 0) {
-    await redis.del(...oldKeys);
+  try {
+    const oldKeys = await redis.keys('ratelimit:*');
+    if (oldKeys.length > 0) {
+      await redis.del(...oldKeys);
+    }
+  } catch (err) {
+    console.warn('Failed to clear old ratelimit keys in Redis:', (err as Error).message);
   }
 
-  // Find a real active user from the database to bypass the authentication database-check
-  console.log('Searching database for an active user...');
-  const [activeUser] = await db
-    .select({
-      id: users.id,
-      email: users.email,
-      orgId: users.orgId,
-      role: users.role,
-    })
-    .from(users)
-    .where(eq(users.isActive, true))
-    .limit(1);
+  // 1. Perform a real login to get a fully valid server-signed JWT token
+  console.log(`\nStep 1: Performing real login for user "${email}"...`);
+  let token = '';
+  let orgId = '';
+  let userId = '';
 
-  if (!activeUser) {
-    throw new Error('No active user found in the database. Please register/create a user first.');
+  try {
+    const loginRes = await axios.post(`${API_URL}/api/auth/login`, {
+      email,
+      password,
+    }, {
+      validateStatus: () => true,
+      timeout: 5000,
+    });
+
+    if (loginRes.status !== 200) {
+      console.error(`\nFAILURE: Login failed with status ${loginRes.status}:`, loginRes.data);
+      console.log('\nUsage Note: If you are using custom credentials, please run the script with them as arguments:');
+      console.log('  npx tsx --env-file=.env scratch/test-ratelimit.ts <email> <password>');
+      await redis.quit();
+      process.exit(1);
+    }
+
+    token = loginRes.data.tokens.accessToken;
+    orgId = loginRes.data.user.orgId;
+    userId = loginRes.data.user.id;
+
+    console.log(`Login successful! Resolves to user: ${email} (ID: ${userId}, Org: ${orgId})`);
+  } catch (err) {
+    console.error('\nFAILURE: Failed to communicate with the API server for login.', (err as Error).message);
+    console.log('Make sure the API server is running on the host first!');
+    await redis.quit();
+    process.exit(1);
   }
-  console.log(`Found active user: ${activeUser.email} (ID: ${activeUser.id}, Org: ${activeUser.orgId})`);
-
-  // Generate a valid token using the JWT_SECRET from .env and the active user details
-  const secret = env.JWT_SECRET;
-  const payload = {
-    userId: activeUser.id,
-    orgId: activeUser.orgId,
-    email: activeUser.email,
-    role: activeUser.role as 'admin' | 'agent',
-  };
-  const token = jwt.sign(payload, secret, { expiresIn: '1h' });
 
   console.log('\n--- TEST 1: User-Scoped Rate Limiter Verification ---');
   console.log('Sending authenticated request to /api/auth/me...');
@@ -53,7 +63,8 @@ async function main() {
       headers: {
         Authorization: `Bearer ${token}`,
       },
-      validateStatus: () => true, // Don't throw on error codes
+      validateStatus: () => true,
+      timeout: 5000,
     });
 
     console.log(`Response Status: ${res.status}`);
@@ -62,9 +73,9 @@ async function main() {
     const keys = await redis.keys('ratelimit:api:*');
     console.log('Ratelimit keys found in Redis:', keys);
 
-    const userKeyPrefix = `ratelimit:api:${activeUser.orgId}:${activeUser.id}`;
+    const userKeyPrefix = `ratelimit:api:${orgId}:${userId}`;
     const userKeyExists = keys.some(k => k.includes(userKeyPrefix));
-    const ipKeyExists = keys.some(k => !k.includes(activeUser.orgId) && k.includes('ratelimit:api:'));
+    const ipKeyExists = keys.some(k => !k.includes(orgId) && k.includes('ratelimit:api:'));
 
     if (userKeyExists && !ipKeyExists) {
       console.log(`SUCCESS: Rate limit key is correctly user-scoped! (Found key containing: ${userKeyPrefix})`);
@@ -72,7 +83,7 @@ async function main() {
       console.log('FAILURE: Rate limit key is NOT user-scoped (or IP fallback key was created instead).');
     }
   } catch (err) {
-    console.error('Test 1 failed to communicate with API server. Make sure the API server is running on the host first!', (err as Error).message);
+    console.error('Test 1 failed to verify rate-limiter keys:', (err as Error).message);
   }
 
   console.log('\n--- TEST 2: Login Brute-Force Rate Limiter Verification ---');
@@ -86,6 +97,7 @@ async function main() {
         password: 'wrongpassword',
       }, {
         validateStatus: () => true,
+        timeout: 5000,
       });
 
       console.log(`Request #${i} Response Status: ${res.status}`);
@@ -104,10 +116,15 @@ async function main() {
     console.log('\nFAILURE: Did not receive 429 status code on 6th attempt. Brute-force auth limiter failed.');
   }
 
+  // Gracefully quit Redis connection and exit
+  await redis.quit();
   process.exit(0);
 }
 
-main().catch(err => {
-  console.error(err);
+main().catch(async (err) => {
+  console.error('Unhandled test execution error:', err);
+  try {
+    await redis.quit();
+  } catch {}
   process.exit(1);
 });
