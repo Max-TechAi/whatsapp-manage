@@ -391,24 +391,13 @@ export class WsServer {
   }
 
   /**
-   * Read Redis Streams and broadcast events to WebSocket clients.
+   * Read Redis Streams directly and broadcast events to WebSocket clients.
+   * Uses direct XREAD with in-memory offset tracking (Option C) to ensure every
+   * replica receives every event, avoiding consumer group load-balancing.
    */
   private async startStreamReader(): Promise<void> {
     this.streamReaderRunning = true;
-    const consumerGroup = 'ws-server';
-    const consumerName = `ws-${process.pid}`;
     const streams = Object.values(STREAMS);
-
-    // Create consumer groups
-    for (const stream of streams) {
-      try {
-        await redis.xgroup('CREATE', stream, consumerGroup, '0', 'MKSTREAM');
-      } catch (err: any) {
-        if (!err.message?.includes('BUSYGROUP')) {
-          logger.error('Failed to create consumer group', { stream, error: err.message });
-        }
-      }
-    }
 
     // Duplicate client for blocking read to avoid blocking general commands on shared connection
     this.streamRedis = redis.duplicate();
@@ -416,15 +405,21 @@ export class WsServer {
       logger.error('Stream Redis connection error', { error: err.message });
     });
 
+    // Track the last seen message ID per stream in memory.
+    // Initialize to '$' to read only new messages published since server startup.
+    const lastIds: Record<string, string> = {};
+    for (const stream of streams) {
+      lastIds[stream] = '$';
+    }
+
     // Read loop
     const readLoop = async () => {
       while (this.streamReaderRunning && this.streamRedis) {
         try {
-          const results = await this.streamRedis.xreadgroup(
-            'GROUP', consumerGroup, consumerName,
+          const results = await this.streamRedis.xread(
             'COUNT', '50',
             'BLOCK', '5000',
-            'STREAMS', ...streams, ...streams.map(() => '>')
+            'STREAMS', ...streams, ...streams.map((s) => lastIds[s])
           ) as any;
 
           if (results) {
@@ -433,6 +428,9 @@ export class WsServer {
                 try {
                   const event = fields[1]; // 'event' field value
                   const data = JSON.parse(fields[3]); // 'data' field value
+
+                  // Update the last read ID for this stream
+                  lastIds[stream as string] = id;
 
                   // Broadcast based on event type
                   if (data.orgId) {
@@ -446,9 +444,6 @@ export class WsServer {
                   if (data.chatId) {
                     await this.broadcastToChannel(`chat:${data.chatId}`, { type: event, ...data });
                   }
-
-                  // Acknowledge using general client (non-blocking)
-                  await redis.xack(stream as string, consumerGroup, id);
                 } catch (err) {
                   logger.error('Failed to process stream message', { error: (err as Error).message });
                 }
