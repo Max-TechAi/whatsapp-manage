@@ -594,9 +594,9 @@ function handleInboxSessionChange() {
   
   if (activeSessionId) {
     checkInitialSyncStatus(activeSessionId);
-    loadLidMappingsForSession().then(() => {
-      loadChats();
-      loadContactsForSession();
+    loadLidMappingsForSession().then(async () => {
+      await loadContactsForSession();
+      await loadChats();
     });
   } else {
     hideSyncOverlay();
