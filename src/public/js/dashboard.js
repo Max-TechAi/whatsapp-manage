@@ -14,6 +14,13 @@ let lidMappings = {};
 let currentLoadToken = null;
 let processedMessageIds = new Set();
 
+let activeChatMessages = [];
+let activeChatNextCursor = null;
+let activeChatHasMore = false;
+let activeChatOldestTimestamp = null;
+let activeChatHistoryExhausted = false;
+let isSyncingFromPhone = false;
+
 let userRole = 'agent';
 let userHasAllSessionsAccess = false;
 let userDisplayName = '';
@@ -777,23 +784,127 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   await loadMessages(chatDbId);
 }
 
-async function loadMessages(chatDbId, silent = false) {
+async function loadMessages(chatDbId, silent = false, cursorParam = null) {
   const container = document.getElementById('messagesContainer');
-  if (!silent) {
-    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Loading chat history...</div>';
+  
+  if (!cursorParam) {
+    activeChatMessages = [];
+    activeChatNextCursor = null;
+    activeChatHasMore = false;
+    activeChatOldestTimestamp = null;
+    activeChatHistoryExhausted = false;
+    if (!silent) {
+      container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Loading chat history...</div>';
+    }
   }
 
   try {
-    const response = await fetch(`/api/messages/chats/${chatDbId}/messages?limit=100`, {
+    let url = `/api/messages/chats/${chatDbId}/messages?limit=50`;
+    if (cursorParam) {
+      url += `&cursor=${encodeURIComponent(cursorParam)}`;
+    }
+
+    const response = await fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     const resData = await response.json();
     if (!response.ok) throw new Error(resData.error || 'Failed to load messages');
 
-    const messages = resData.messages || [];
-    renderMessages(messages);
+    const newMessages = resData.messages || [];
+    
+    // Store scroll height before prepending messages
+    const oldScrollHeight = container.scrollHeight;
+    const oldScrollTop = container.scrollTop;
+
+    if (!cursorParam) {
+      activeChatMessages = newMessages;
+    } else {
+      activeChatMessages = [...activeChatMessages, ...newMessages];
+    }
+
+    // Save pagination state
+    activeChatNextCursor = resData.cursor;
+    activeChatHasMore = resData.hasMore;
+
+    if (activeChatMessages.length > 0) {
+      // Since activeChatMessages is sorted newest first, the oldest is the last element
+      const oldestMsg = activeChatMessages[activeChatMessages.length - 1];
+      activeChatOldestTimestamp = oldestMsg ? new Date(oldestMsg.createdAt).getTime() : null;
+    }
+
+    renderMessages(activeChatMessages);
+
+    // If paginating older messages, adjust scroll position to prevent jumping
+    if (cursorParam) {
+      container.scrollTop = container.scrollHeight - oldScrollHeight + oldScrollTop;
+    } else {
+      // Auto-scroll to bottom on initial load
+      container.scrollTop = container.scrollHeight;
+    }
   } catch (err) {
-    container.innerHTML = `<div style="text-align: center; color: var(--danger); padding: 1.5rem;">Error: ${err.message}</div>`;
+    if (!cursorParam) {
+      container.innerHTML = `<div style="text-align: center; color: var(--danger); padding: 1.5rem;">Error: ${err.message}</div>`;
+    } else {
+      console.error('Failed to load older messages:', err);
+    }
+  }
+}
+
+function loadMoreMessages() {
+  if (activeChatNextCursor) {
+    loadMessages(activeChatDbId, true, activeChatNextCursor);
+  }
+}
+
+async function syncOlderMessages() {
+  if (isSyncingFromPhone) return;
+  isSyncingFromPhone = true;
+  
+  const btn = document.getElementById('syncOlderMsgBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerText = 'Requesting from phone...';
+  }
+
+  try {
+    const response = await fetch(`/api/messages/chats/${activeChatDbId}/fetch-history`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    if (response.status === 429) {
+      alert('Please wait 30 seconds before requesting more history for this chat.');
+      isSyncingFromPhone = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = 'Sync older messages from phone';
+      }
+      return;
+    }
+
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to request history sync');
+
+    // Set a safety timeout to re-enable button after 30 seconds if WS event is missed
+    setTimeout(() => {
+      if (isSyncingFromPhone) {
+        isSyncingFromPhone = false;
+        const currentBtn = document.getElementById('syncOlderMsgBtn');
+        if (currentBtn) {
+          currentBtn.disabled = false;
+          currentBtn.innerText = 'Sync older messages from phone';
+        }
+      }
+    }, 30000);
+
+  } catch (err) {
+    console.error('History sync error:', err);
+    alert('Failed to request history sync: ' + err.message);
+    isSyncingFromPhone = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerText = 'Sync older messages from phone';
+    }
   }
 }
 
@@ -808,7 +919,30 @@ function renderMessages(msgList) {
     // Messages in DB are sorted newest first, reverse to show chronologically
     const sorted = [...msgList].reverse();
 
-    container.innerHTML = sorted.map(m => {
+    let paginationHtml = '';
+    if (activeChatHistoryExhausted) {
+      paginationHtml = `
+        <div class="pagination-container" style="text-align: center; padding: 1rem 0; color: var(--text-muted); font-size: 0.8rem; font-style: italic; opacity: 0.7;">
+          End of conversation history
+        </div>
+      `;
+    } else if (activeChatHasMore) {
+      paginationHtml = `
+        <div class="pagination-container" style="text-align: center; padding: 1rem 0;">
+          <button id="loadOlderMsgBtn" onclick="loadMoreMessages()" class="btn btn-secondary btn-sm" style="font-size: 0.8rem; padding: 0.3rem 1rem; border-radius: 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.15); color: var(--text-normal); cursor: pointer;">Load older messages</button>
+        </div>
+      `;
+    } else {
+      paginationHtml = `
+        <div class="pagination-container" style="text-align: center; padding: 1rem 0;">
+          <button id="syncOlderMsgBtn" onclick="syncOlderMessages()" class="btn btn-secondary btn-sm" style="font-size: 0.8rem; padding: 0.3rem 1rem; border-radius: 4px; color: #ffab40; background: rgba(255,171,64,0.1); border: 1px solid rgba(255,171,64,0.25); cursor: pointer; outline: none; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,171,64,0.2)'" onmouseout="this.style.background='rgba(255,171,64,0.1)'" ${isSyncingFromPhone ? 'disabled' : ''}>
+            ${isSyncingFromPhone ? 'Requesting from phone...' : 'Sync older messages from phone'}
+          </button>
+        </div>
+      `;
+    }
+
+    container.innerHTML = paginationHtml + sorted.map(m => {
       try {
         const isSelf = m.fromMe;
         const bubbleClass = isSelf ? 'message-bubble self' : 'message-bubble other';
@@ -1188,6 +1322,21 @@ function handleWsEvent(data) {
       hideSyncOverlay();
       isHistorySyncCompleted = true;
       loadChats();
+      
+      // Reload messages if the active chat matches the sync session
+      if (activeChatDbId) {
+        const beforeSyncTimestamp = activeChatOldestTimestamp;
+        loadMessages(activeChatDbId, true).then(() => {
+          const oldestMsg = activeChatMessages[activeChatMessages.length - 1];
+          const afterSyncTimestamp = oldestMsg ? new Date(oldestMsg.createdAt).getTime() : null;
+          
+          if (beforeSyncTimestamp && afterSyncTimestamp && afterSyncTimestamp >= beforeSyncTimestamp) {
+            activeChatHistoryExhausted = true;
+            renderMessages(activeChatMessages);
+          }
+          isSyncingFromPhone = false;
+        });
+      }
       return;
     }
     if (type === 'sync:failed') {

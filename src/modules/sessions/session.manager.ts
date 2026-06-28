@@ -794,7 +794,8 @@ class SessionManager {
           .where(eq(sessions.id, sessionId))
           .limit(1);
         const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
-        if (metadata.historySyncCompleted && !isInitial) {
+        const isOnDemand = data.syncType === 5; // ON_DEMAND
+        if (metadata.historySyncCompleted && !isInitial && !isOnDemand) {
           logger.info('History sync event skipped because history sync is already marked complete and this is not the initial sync connection', { sessionId });
           return;
         }
@@ -1593,6 +1594,13 @@ class SessionManager {
             const jidsToDelete = Array.from(new Set([contactJid, resolvedJid]));
             await active.socket.signalRepository.deleteSession(jidsToDelete);
             logger.info('Reset encryption session for contact via control worker', { sessionId, contactJid, jidsToDelete });
+          }
+        } else if (action === 'fetch-history') {
+          const active = this.activeSessions.get(sessionId);
+          if (active && active.socket) {
+            const { waChatId, count, oldestMsgKey, oldestMsgTimestamp } = payload;
+            logger.info('Requesting on-demand history sync from phone via control worker', { sessionId, waChatId, count });
+            await active.socket.fetchMessageHistory(count, oldestMsgKey, oldestMsgTimestamp);
           }
         }
       },

@@ -12,8 +12,8 @@ import { eventBus } from '../../events/event-bus.js';
 import { chatService } from '../chats/chat.service.js';
 import { sessionManager } from '../sessions/session.manager.js';
 import { db } from '../../config/database.js';
-import { sessions, chats } from '../../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { sessions, chats, messages } from '../../db/schema.js';
+import { eq, and, asc } from 'drizzle-orm';
 import { redis } from '../../config/redis.js';
 
 export const messageRouter = Router();
@@ -207,6 +207,91 @@ messageRouter.get('/chats/:chatId/messages', async (req, res) => {
   } catch (err) {
     logger.error('Failed to get messages', { error: (err as Error).message });
     return res.status(500).json({ error: 'Failed to retrieve messages' });
+  }
+});
+
+/**
+ * POST /api/messages/chats/:chatId/fetch-history
+ * Request more historical messages from the phone for a specific chat.
+ */
+messageRouter.post('/chats/:chatId/fetch-history', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const orgId = req.user!.orgId;
+
+    const hasAccess = await chatService.hasChatAccess(orgId, chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
+    }
+
+    const chat = await chatService.getChatById(orgId, chatId);
+    if (!chat) {
+      return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    // 1. Enforce Redis-backed rate limiting per chat (30-second cooldown)
+    const rateLimitKey = `limit:fetch-history:${chat.sessionId}:${chat.waChatId}`;
+    const isLocked = await redis.get(rateLimitKey);
+    if (isLocked) {
+      return res.status(429).json({ error: 'Please wait 30 seconds before requesting more history for this chat' });
+    }
+    // Lock it for 30 seconds
+    await redis.set(rateLimitKey, '1', 'EX', 30);
+
+    // 2. Query the local DB for the oldest message in this chat
+    const [oldestMessage] = await db
+      .select({
+        waMessageId: messages.waMessageId,
+        fromMe: messages.fromMe,
+        senderJid: messages.senderJid,
+        createdAt: messages.createdAt,
+      })
+      .from(messages)
+      .where(eq(messages.chatId, chatId))
+      .orderBy(asc(messages.createdAt))
+      .limit(1);
+
+    let oldestMsgKey;
+    let oldestMsgTimestamp;
+
+    if (oldestMessage) {
+      oldestMsgKey = {
+        remoteJid: chat.waChatId,
+        fromMe: oldestMessage.fromMe,
+        id: oldestMessage.waMessageId,
+        ...(chat.chatType === 'group' ? { participant: oldestMessage.senderJid } : {}),
+      };
+      oldestMsgTimestamp = Math.floor(oldestMessage.createdAt.getTime() / 1000);
+    } else {
+      // Fallback if no messages exist locally yet
+      oldestMsgKey = {
+        remoteJid: chat.waChatId,
+        fromMe: false,
+        id: 'ON_DEMAND_SYNC_' + Math.random().toString(36).substring(2, 15).toUpperCase(),
+      };
+      oldestMsgTimestamp = chat.lastMessageAt 
+        ? Math.floor(chat.lastMessageAt.getTime() / 1000) 
+        : Math.floor(Date.now() / 1000);
+    }
+
+    // 3. Publish to dynamic control queue
+    await eventBus.publishSessionControl(chat.sessionId, 'fetch-history', {
+      waChatId: chat.waChatId,
+      count: 50,
+      oldestMsgKey,
+      oldestMsgTimestamp,
+    });
+
+    logger.info('Enqueued on-demand history fetch request from API', {
+      chatId,
+      waChatId: chat.waChatId,
+      oldestMsgTimestamp,
+    });
+
+    return res.json({ status: 'requested' });
+  } catch (err) {
+    logger.error('Failed to request on-demand history fetch', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to request history sync from phone' });
   }
 });
 
