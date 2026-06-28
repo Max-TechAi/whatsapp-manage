@@ -183,8 +183,14 @@ export class EventBus {
       type: string;
       content?: string;
       mediaUrl?: string;
-      caption?: string;
+      mediaMimeType?: string;
+      mediaSize?: number;
+      filename?: string;
       quotedWaMessageId?: string;
+      quotedMsgProto?: any;
+      quotedMsgFromMe?: boolean;
+      quotedContent?: string;
+      forwardRawMessage?: any;
       sentByUserId?: string | null;
     }
   ): Promise<string> {

@@ -21,6 +21,9 @@ let activeChatOldestTimestamp = null;
 let activeChatHistoryExhausted = false;
 let isSyncingFromPhone = false;
 
+let replyingToMessageId = null;
+let forwardingMessageId = null;
+
 let userRole = 'agent';
 let userHasAllSessionsAccess = false;
 let userDisplayName = '';
@@ -1068,16 +1071,49 @@ function renderMessages(msgList) {
 
         const editedLabel = m.isEdited ? '<span style="font-size: 0.65rem; color: rgba(255,255,255,0.4); margin-right: 0.25rem;">Edited</span>' : '';
 
-        return `
-          <div class="${bubbleClass}">
-            ${senderHeader}
-            ${bodyHtml}
-            ${attributionHtml}
-            <div class="message-meta">
-              ${editedLabel}
-              <span>${time}</span>
-              ${statusTick}
+        const isForwarded = m.isForwarded;
+        let forwardedHtml = '';
+        if (isForwarded) {
+          forwardedHtml = `
+            <div class="message-forwarded-label" style="font-size: 0.65rem; color: rgba(255,255,255,0.4); display: flex; align-items: center; gap: 0.2rem; margin-bottom: 0.2rem; font-style: italic;">
+              ↪ forwarded
             </div>
+          `;
+        }
+
+        let quotedBoxHtml = '';
+        const quotedWaId = m.metadata?.quotedWaMessageId;
+        if (m.quotedContent || quotedWaId) {
+          quotedBoxHtml = `
+            <div class="quoted-message-box" style="background: rgba(0,0,0,0.15); border-left: 3px solid #4fc3f7; padding: 0.25rem 0.5rem; margin-bottom: 0.4rem; border-radius: 2px; font-size: 0.75rem; color: rgba(255,255,255,0.7); cursor: pointer;" onclick="scrollToMessage('${quotedWaId || ''}')">
+              <div style="font-weight: 600; color: #4fc3f7; font-size: 0.7rem; margin-bottom: 0.1rem;">Quoted Message</div>
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(m.quotedContent || '[Media]')}</div>
+            </div>
+          `;
+        }
+
+        const actionsMenuHtml = `
+          <div class="message-actions-menu">
+            <button type="button" data-message-id="${m.id}" onclick="initiateReply(this)">Reply</button>
+            <button type="button" data-message-id="${m.id}" onclick="initiateForward(this)">Forward</button>
+          </div>
+        `;
+
+        return `
+          <div id="msg-${m.waMessageId}" class="message-bubble-wrapper ${isSelf ? 'self' : 'other'}" style="margin: 0.25rem 0; display: flex; flex-direction: column; align-items: ${isSelf ? 'flex-end' : 'flex-start'};">
+            <div class="${bubbleClass}">
+              ${forwardedHtml}
+              ${quotedBoxHtml}
+              ${senderHeader}
+              ${bodyHtml}
+              ${attributionHtml}
+              <div class="message-meta">
+                ${editedLabel}
+                <span>${time}</span>
+                ${statusTick}
+              </div>
+            </div>
+            ${actionsMenuHtml}
           </div>
         `;
       } catch (err) {
@@ -1116,11 +1152,17 @@ async function handleSendMessageSubmit(e) {
       body: JSON.stringify({
         sessionId: activeSessionId,
         recipientJid: activeChatId,
-        body
+        body,
+        quotedMessageId: replyingToMessageId || undefined
       })
     });
     const resData = await response.json();
     if (!response.ok) throw new Error(resData.error || 'Failed to send');
+
+    // Clean up reply state if we were replying
+    if (replyingToMessageId) {
+      cancelReplyMode();
+    }
 
     // Mark chat as read since we replied
     if (activeChatDbId) {
@@ -2263,3 +2305,248 @@ async function handleResetContactSession(event) {
   await resetContactSession(event, activeChatId);
 }
 window.handleResetContactSession = handleResetContactSession;
+
+// ─── REPLY & FORWARD INTEGRATION ────────────────────────────────────
+
+function initiateReply(btn) {
+  const messageId = btn.getAttribute('data-message-id');
+  const msg = activeChatMessages.find(m => m.id === messageId);
+  if (!msg) return;
+
+  replyingToMessageId = messageId;
+
+  const senderName = msg.senderJid === 'me' ? 'You' : getSenderDisplayName(msg.senderJid, msg.metadata?.pushName);
+  const content = msg.content || (msg.messageType !== 'text' ? `[${msg.messageType}]` : '');
+
+  const container = document.getElementById('replyPreviewContainer');
+  const senderSpan = document.getElementById('replyPreviewSender');
+  const contentSpan = document.getElementById('replyPreviewContent');
+
+  senderSpan.innerText = `Reply to ${senderName}`;
+  contentSpan.innerText = content;
+  container.style.display = 'flex';
+
+  document.getElementById('dashboardMessageInput').focus();
+}
+window.initiateReply = initiateReply;
+
+function cancelReplyMode() {
+  replyingToMessageId = null;
+  const container = document.getElementById('replyPreviewContainer');
+  if (container) {
+    container.style.display = 'none';
+  }
+}
+window.cancelReplyMode = cancelReplyMode;
+
+function triggerAttachmentUpload() {
+  const fileInput = document.getElementById('mediaAttachmentInput');
+  if (fileInput) {
+    fileInput.click();
+  }
+}
+window.triggerAttachmentUpload = triggerAttachmentUpload;
+
+async function handleAttachmentUpload(event) {
+  const file = event.target.files[0];
+  if (!file || !activeSessionId || !activeChatId) return;
+
+  // Clear file input immediately so they can re-select the same file later if needed
+  event.target.value = '';
+
+  const input = document.getElementById('dashboardMessageInput');
+  input.placeholder = 'Uploading attachment...';
+  input.disabled = true;
+
+  try {
+    // 1. Upload media binary via existing upload API
+    const response = await fetch('/api/media/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'x-filename': file.name,
+        'content-type': file.type || 'application/octet-stream',
+        'x-session-id': activeSessionId
+      },
+      body: file
+    });
+
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Upload failed');
+
+    const mediaUrl = resData.mediaUrl;
+    const mediaMimeType = resData.mimeType || file.type;
+    const mediaSize = resData.sizeBytes || file.size;
+    const filename = resData.originalFilename || file.name;
+
+    // Detect message type based on MIME
+    let messageType = 'document';
+    if (mediaMimeType.startsWith('image/')) messageType = 'image';
+    else if (mediaMimeType.startsWith('video/')) messageType = 'video';
+    else if (mediaMimeType.startsWith('audio/')) messageType = 'audio';
+
+    // 2. Queue outbound message payload
+    const sendResponse = await fetch('/api/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        sessionId: activeSessionId,
+        recipientJid: activeChatId,
+        messageType,
+        mediaUrl,
+        mediaMimeType,
+        mediaSize,
+        filename,
+        quotedMessageId: replyingToMessageId || undefined,
+        body: '' // No caption on attachment trigger
+      })
+    });
+
+    const sendData = await sendResponse.json();
+    if (!sendResponse.ok) throw new Error(sendData.error || 'Failed to send attachment');
+
+    // Clean up reply state if we were replying
+    if (replyingToMessageId) {
+      cancelReplyMode();
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Attachment upload failed: ' + err.message);
+  } finally {
+    input.placeholder = 'Type a message...';
+    input.disabled = false;
+    input.focus();
+  }
+}
+window.handleAttachmentUpload = handleAttachmentUpload;
+
+function initiateForward(btn) {
+  const messageId = btn.getAttribute('data-message-id');
+  forwardingMessageId = messageId;
+  openForwardModal();
+}
+window.initiateForward = initiateForward;
+
+let allChatsListCache = [];
+
+async function openForwardModal() {
+  const modal = document.getElementById('forwardModal');
+  const listContainer = document.getElementById('forwardChatsList');
+  const searchInput = document.getElementById('forwardSearchInput');
+
+  modal.style.display = 'flex';
+  listContainer.innerHTML = '<div style="color: var(--text-muted); padding: 0.5rem; font-size: 0.85rem;">Loading chats...</div>';
+  searchInput.value = '';
+
+  try {
+    const response = await fetch('/api/chats?sessionId=' + activeSessionId + '&limit=1000', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to load chats');
+
+    allChatsListCache = resData.chats || [];
+    renderForwardChats(allChatsListCache);
+  } catch (err) {
+    listContainer.innerHTML = `<div style="color: var(--danger); padding: 0.5rem; font-size: 0.85rem;">Error: ${err.message}</div>`;
+  }
+}
+window.openForwardModal = openForwardModal;
+
+function renderForwardChats(chatList) {
+  const listContainer = document.getElementById('forwardChatsList');
+  if (chatList.length === 0) {
+    listContainer.innerHTML = '<div style="color: var(--text-muted); padding: 0.5rem; font-size: 0.85rem;">No chats found.</div>';
+    return;
+  }
+
+  listContainer.innerHTML = chatList.map(c => {
+    const displayName = getChatDisplayName(c);
+    return `
+      <div class="chat-picker-item" onclick="submitForward('${c.waChatId}')" style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; border-radius: 4px; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='none'">
+        <div style="display: flex; flex-direction: column;">
+          <span style="font-weight: 500; font-size: 0.85rem; color: var(--text-main);">${escapeHtml(displayName)}</span>
+          <span style="font-size: 0.7rem; color: var(--text-muted);">${escapeHtml(c.waChatId)}</span>
+        </div>
+        <span style="font-size: 0.8rem; color: var(--accent-green);">Forward ➔</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function filterForwardChats() {
+  const query = document.getElementById('forwardSearchInput').value.toLowerCase().trim();
+  if (!query) {
+    renderForwardChats(allChatsListCache);
+    return;
+  }
+  const filtered = allChatsListCache.filter(c => {
+    const displayName = getChatDisplayName(c).toLowerCase();
+    const jid = c.waChatId.toLowerCase();
+    return displayName.includes(query) || jid.includes(query);
+  });
+  renderForwardChats(filtered);
+}
+window.filterForwardChats = filterForwardChats;
+
+function closeForwardModal() {
+  forwardingMessageId = null;
+  const modal = document.getElementById('forwardModal');
+  if (modal) {
+    modal.style.display = 'none';
+  }
+}
+window.closeForwardModal = closeForwardModal;
+
+async function submitForward(targetJid) {
+  if (!forwardingMessageId || !activeSessionId) return;
+
+  const modal = document.getElementById('forwardModal');
+  const listContainer = document.getElementById('forwardChatsList');
+  listContainer.innerHTML = '<div style="color: var(--accent-green); padding: 1rem; text-align: center;">Forwarding message...</div>';
+
+  try {
+    const response = await fetch('/api/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        sessionId: activeSessionId,
+        recipientJid: targetJid,
+        forwardMessageId: forwardingMessageId
+      })
+    });
+
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to forward message');
+
+    closeForwardModal();
+    logTerminal('INFO', `Message successfully forwarded to ${targetJid}`);
+  } catch (err) {
+    alert('Failed to forward message: ' + err.message);
+    renderForwardChats(allChatsListCache);
+  }
+}
+window.submitForward = submitForward;
+
+function scrollToMessage(waMessageId) {
+  if (!waMessageId) return;
+  const element = document.getElementById(`msg-${waMessageId}`);
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const bubble = element.querySelector('.message-bubble');
+    if (bubble) {
+      const origBg = bubble.style.backgroundColor;
+      bubble.style.backgroundColor = 'rgba(79, 195, 247, 0.4)';
+      setTimeout(() => {
+        bubble.style.backgroundColor = origBg;
+      }, 1000);
+    }
+  }
+}
+window.scrollToMessage = scrollToMessage;

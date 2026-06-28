@@ -185,6 +185,27 @@ export function createMessageWorker(): Worker {
         ?? contextInfo?.quotedMessage?.extendedTextMessage?.text
         ?? null;
 
+      let quotedMessageId = null;
+      if (quotedWaMessageId) {
+        try {
+          const [quotedMsg] = await db
+            .select({ id: messages.id })
+            .from(messages)
+            .where(
+              and(
+                eq(messages.sessionId, sessionId),
+                eq(messages.waMessageId, quotedWaMessageId)
+              )
+            )
+            .limit(1);
+          if (quotedMsg) {
+            quotedMessageId = quotedMsg.id;
+          }
+        } catch (err) {
+          logger.warn('Failed to resolve quoted message UUID in message worker', { quotedWaMessageId, error: (err as Error).message });
+        }
+      }
+
       // Parse timestamp
       const timestamp = waMessage.messageTimestamp
         ? new Date(Number(waMessage.messageTimestamp) * 1000)
@@ -252,6 +273,7 @@ export function createMessageWorker(): Worker {
         content: isDecryptionFailure ? 'Waiting for this message. This may take a while.' : content,
         mediaMimeType: mediaInfo?.mimeType ?? null,
         mediaSize: mediaInfo?.size ?? null,
+        quotedMessageId,
         quotedContent,
         status: isDecryptionFailure ? 'failed' : (waMessage.key.fromMe ? 'sent' : 'delivered'),
         isForwarded,

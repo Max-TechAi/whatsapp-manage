@@ -1454,8 +1454,24 @@ class SessionManager {
     const outboundWorker = new Worker(
       outboundQueue,
       async (job: any) => {
-        const { type, content, waChatJid, quotedWaMessageId, sentByUserId, chatId } = job.data;
-        logger.info('Dynamic outbound worker processing job', { jobId: job.id, sessionId, waChatJid });
+        const {
+          type,
+          content,
+          waChatJid,
+          mediaUrl,
+          mediaMimeType,
+          mediaSize,
+          filename,
+          quotedWaMessageId,
+          quotedMsgProto,
+          quotedMsgFromMe,
+          quotedContent,
+          forwardRawMessage,
+          sentByUserId,
+          chatId,
+        } = job.data;
+        
+        logger.info('Dynamic outbound worker processing job', { jobId: job.id, sessionId, waChatJid, type });
         
         // Fencing check before send
         const owner = await redis.get(`session:${sessionId}:owner`);
@@ -1470,24 +1486,59 @@ class SessionManager {
           throw new Error(`Socket not active locally for session ${sessionId}`);
         }
         
+        // Build Quoted context if present
+        const sendOptions: any = {};
+        if (quotedWaMessageId) {
+          sendOptions.quoted = {
+            key: { 
+              remoteJid: waChatJid, 
+              fromMe: quotedMsgFromMe ?? false, 
+              id: quotedWaMessageId 
+            },
+            message: quotedMsgProto || { conversation: quotedContent || '' }
+          };
+        }
+
         // Send message
         let result;
-        if (type === 'text') {
+        if (type === 'forward') {
+          if (!forwardRawMessage) throw new Error('forwardRawMessage is required for forwards');
+          result = await active.socket.sendMessage(waChatJid, { forward: forwardRawMessage }, sendOptions);
+        } else if (type === 'text') {
           if (!content) throw new Error('Content is required');
-          const sendOptions: any = {};
-          if (quotedWaMessageId) {
-            sendOptions.quoted = {
-              key: { remoteJid: waChatJid, fromMe: false, id: quotedWaMessageId },
-              message: { conversation: '' }
-            };
-          }
           result = await active.socket.sendMessage(waChatJid, { text: content }, sendOptions);
+        } else if (type === 'image') {
+          if (!mediaUrl) throw new Error('mediaUrl is required for image sends');
+          result = await active.socket.sendMessage(waChatJid, { image: { url: mediaUrl }, caption: content || undefined }, sendOptions);
+        } else if (type === 'video') {
+          if (!mediaUrl) throw new Error('mediaUrl is required for video sends');
+          result = await active.socket.sendMessage(waChatJid, { video: { url: mediaUrl }, caption: content || undefined }, sendOptions);
+        } else if (type === 'audio') {
+          if (!mediaUrl) throw new Error('mediaUrl is required for audio sends');
+          result = await active.socket.sendMessage(waChatJid, { audio: { url: mediaUrl } }, sendOptions);
+        } else if (type === 'document') {
+          if (!mediaUrl) throw new Error('mediaUrl is required for document sends');
+          result = await active.socket.sendMessage(waChatJid, { document: { url: mediaUrl }, mimetype: mediaMimeType, fileName: filename }, sendOptions);
         } else {
           throw new Error(`Unsupported outbound type: ${type}`);
         }
         
         if (!result?.key?.id) throw new Error('No message ID returned from Baileys');
         
+        // Resolve saved type (especially for forwards)
+        let savedType = type;
+        if (type === 'forward' && result.message) {
+          const keys = Object.keys(result.message);
+          if (keys.includes('conversation') || keys.includes('extendedTextMessage')) savedType = 'text';
+          else if (keys.includes('imageMessage')) savedType = 'image';
+          else if (keys.includes('videoMessage')) savedType = 'video';
+          else if (keys.includes('audioMessage')) savedType = 'audio';
+          else if (keys.includes('documentMessage')) savedType = 'document';
+        }
+
+        const isForwarded = type === 'forward' || !!result.message?.extendedTextMessage?.contextInfo?.isForwarded;
+        const forwardScore = isForwarded ? 1 : 0;
+
         // Save to database
         const { messageService } = await import('../messages/message.service.js');
         const timestamp = result.messageTimestamp ? new Date(Number(result.messageTimestamp) * 1000) : new Date();
@@ -1498,10 +1549,19 @@ class SessionManager {
           waMessageId: result.key.id,
           senderJid: 'me',
           fromMe: true,
-          messageType: type,
+          messageType: savedType,
           content: content || null,
+          mediaUrl: mediaUrl || null,
+          mediaMimeType: mediaMimeType || null,
+          mediaSize: mediaSize || null,
+          quotedContent: quotedContent || null,
           status: 'sent',
-          metadata: { ...(quotedWaMessageId ? { quotedWaMessageId } : {}) },
+          isForwarded,
+          forwardScore,
+          metadata: { 
+            ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
+            waMessage: result,
+          },
           sentByUserId: sentByUserId ?? null,
           createdAt: timestamp,
         });

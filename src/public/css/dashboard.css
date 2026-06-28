@@ -937,3 +937,45 @@ tr:hover td {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* Reply & Forward Hover Actions */
+.message-bubble-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.message-actions-menu {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  gap: 0.25rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 0.15rem;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.message-bubble-wrapper:hover .message-actions-menu {
+  display: flex;
+}
+.message-bubble-wrapper.self .message-actions-menu {
+  left: -85px;
+}
+.message-bubble-wrapper.other .message-actions-menu {
+  right: -85px;
+}
+.message-actions-menu button {
+  background: none;
+  border: none;
+  color: var(--text-main);
+  font-size: 0.7rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 2px;
+}
+.message-actions-menu button:hover {
+  background: rgba(255,255,255,0.08);
+}

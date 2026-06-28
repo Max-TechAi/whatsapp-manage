@@ -31,7 +31,14 @@ messageRouter.post('/', async (req, res) => {
     const schema = z.object({
       sessionId: z.string().uuid(),
       recipientJid: z.string().min(1),
-      body: z.string().min(1),
+      body: z.string().optional(),
+      messageType: z.enum(['text', 'image', 'video', 'audio', 'document']).default('text'),
+      mediaUrl: z.string().url().optional(),
+      mediaMimeType: z.string().optional(),
+      mediaSize: z.number().optional(),
+      filename: z.string().optional(),
+      quotedMessageId: z.string().uuid().optional(),
+      forwardMessageId: z.string().uuid().optional(),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -39,7 +46,18 @@ messageRouter.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Invalid message request parameters', details: parsed.error.flatten() });
     }
 
-    const { sessionId, recipientJid, body } = parsed.data;
+    const {
+      sessionId,
+      recipientJid,
+      body,
+      messageType,
+      mediaUrl,
+      mediaMimeType,
+      mediaSize,
+      filename,
+      quotedMessageId,
+      forwardMessageId,
+    } = parsed.data;
 
     // Verify that the session belongs to the user's organization
     const [sessionRecord] = await db
@@ -77,8 +95,6 @@ messageRouter.post('/', async (req, res) => {
       }
     }
 
-
-
     // Standardize recipient JID (e.g. 966500000000 -> 966500000000@s.whatsapp.net)
     let waChatJid = recipientJid.trim();
     if (!waChatJid.includes('@')) {
@@ -97,12 +113,66 @@ messageRouter.post('/', async (req, res) => {
       return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
     }
 
+    // Resolve Quoted Message Details if provided
+    let quotedWaMessageId = null;
+    let quotedMsgProto = null;
+    let quotedMsgFromMe = false;
+    let quotedContent = null;
+
+    if (quotedMessageId) {
+      const [quotedMsg] = await db
+        .select({
+          waMessageId: messages.waMessageId,
+          fromMe: messages.fromMe,
+          senderJid: messages.senderJid,
+          content: messages.content,
+          metadata: messages.metadata,
+        })
+        .from(messages)
+        .where(and(eq(messages.id, quotedMessageId), eq(messages.orgId, orgId)))
+        .limit(1);
+
+      if (quotedMsg) {
+        quotedWaMessageId = quotedMsg.waMessageId;
+        quotedMsgFromMe = quotedMsg.fromMe;
+        quotedContent = quotedMsg.content;
+        
+        const rawWaMsg = (quotedMsg.metadata as any)?.waMessage;
+        if (rawWaMsg?.message) {
+          quotedMsgProto = rawWaMsg.message;
+        }
+      }
+    }
+
+    // Resolve Forward Message Details if provided
+    let forwardRawMessage = null;
+    if (forwardMessageId) {
+      const [forwardMsg] = await db
+        .select({ metadata: messages.metadata })
+        .from(messages)
+        .where(and(eq(messages.id, forwardMessageId), eq(messages.orgId, orgId)))
+        .limit(1);
+
+      if (forwardMsg) {
+        forwardRawMessage = (forwardMsg.metadata as any)?.waMessage;
+      }
+    }
+
     // Publish outbound job to the event bus
     const jobId = await eventBus.publishMessageOutbound(sessionId, orgId, {
       chatId,
       waChatJid,
-      type: 'text',
-      content: body,
+      type: forwardMessageId ? 'forward' : messageType,
+      content: body || undefined,
+      mediaUrl: mediaUrl || undefined,
+      mediaMimeType: mediaMimeType || undefined,
+      mediaSize: mediaSize || undefined,
+      filename: filename || undefined,
+      quotedWaMessageId: quotedWaMessageId || undefined,
+      quotedMsgProto: quotedMsgProto || undefined,
+      quotedMsgFromMe: quotedMsgFromMe || undefined,
+      quotedContent: quotedContent || undefined,
+      forwardRawMessage: forwardRawMessage || undefined,
       sentByUserId: req.user!.userId,
     });
 
