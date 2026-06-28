@@ -2444,7 +2444,7 @@ async function openForwardModal() {
   searchInput.value = '';
 
   try {
-    const response = await fetch('/api/chats?sessionId=' + activeSessionId + '&limit=1000', {
+    const response = await fetch('/api/chats?sessionId=' + activeSessionId + '&limit=100', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     const resData = await response.json();
@@ -2453,7 +2453,8 @@ async function openForwardModal() {
     allChatsListCache = resData.chats || [];
     renderForwardChats(allChatsListCache);
   } catch (err) {
-    listContainer.innerHTML = `<div style="color: var(--danger); padding: 0.5rem; font-size: 0.85rem;">Error: ${err.message}</div>`;
+    console.error('Failed to load chats for forward picker:', err);
+    listContainer.innerHTML = `<div style="color: var(--danger); padding: 0.5rem; font-size: 0.85rem;">Failed to load chats, please try again.</div>`;
   }
 }
 window.openForwardModal = openForwardModal;
