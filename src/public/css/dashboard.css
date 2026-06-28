@@ -945,6 +945,10 @@ tr:hover td {
   flex-direction: column;
   width: 100%;
 }
+.message-bubble-container {
+  position: relative;
+  max-width: 65%;
+}
 .message-actions-menu {
   position: absolute;
   top: 50%;
@@ -957,8 +961,9 @@ tr:hover td {
   padding: 0.15rem;
   z-index: 10;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  white-space: nowrap;
 }
-.message-bubble-wrapper:hover .message-actions-menu {
+.message-bubble-container:hover .message-actions-menu {
   display: flex;
 }
 .message-bubble-wrapper.self .message-actions-menu {

@@ -1101,19 +1101,21 @@ function renderMessages(msgList) {
 
         return `
           <div id="msg-${m.waMessageId}" class="message-bubble-wrapper ${isSelf ? 'self' : 'other'}" style="margin: 0.25rem 0; display: flex; flex-direction: column; align-items: ${isSelf ? 'flex-end' : 'flex-start'};">
-            <div class="${bubbleClass}">
-              ${forwardedHtml}
-              ${quotedBoxHtml}
-              ${senderHeader}
-              ${bodyHtml}
-              ${attributionHtml}
-              <div class="message-meta">
-                ${editedLabel}
-                <span>${time}</span>
-                ${statusTick}
+            <div class="message-bubble-container" style="position: relative; max-width: 65%;">
+              <div class="${bubbleClass}" style="max-width: 100%;">
+                ${forwardedHtml}
+                ${quotedBoxHtml}
+                ${senderHeader}
+                ${bodyHtml}
+                ${attributionHtml}
+                <div class="message-meta">
+                  ${editedLabel}
+                  <span>${time}</span>
+                  ${statusTick}
+                </div>
               </div>
+              ${actionsMenuHtml}
             </div>
-            ${actionsMenuHtml}
           </div>
         `;
       } catch (err) {
