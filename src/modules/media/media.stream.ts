@@ -246,7 +246,15 @@ mediaRouter.post('/upload', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Empty file' });
     }
 
-    const filename = (req.headers['x-filename'] as string) || 'upload';
+    let filename = 'upload';
+    const rawFilename = req.headers['x-filename'] as string;
+    if (rawFilename) {
+      try {
+        filename = decodeURIComponent(rawFilename);
+      } catch (e) {
+        filename = rawFilename;
+      }
+    }
     const mimeType = (req.headers['content-type'] as string) || 'application/octet-stream';
     const sessionId = req.headers['x-session-id'] as string;
 

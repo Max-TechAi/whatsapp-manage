@@ -2366,7 +2366,7 @@ async function handleAttachmentUpload(event) {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
-        'x-filename': file.name,
+        'x-filename': encodeURIComponent(file.name),
         'content-type': file.type || 'application/octet-stream',
         'x-session-id': activeSessionId
       },
