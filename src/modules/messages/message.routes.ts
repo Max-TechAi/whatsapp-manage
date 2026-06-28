@@ -286,6 +286,7 @@ messageRouter.post('/chats/:chatId/fetch-history', async (req, res) => {
       chatId,
       waChatId: chat.waChatId,
       oldestMsgTimestamp,
+      oldestMsgKey,
     });
 
     return res.json({ status: 'requested' });

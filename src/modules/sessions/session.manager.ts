@@ -783,6 +783,15 @@ class SessionManager {
     socket.ev.on('messaging-history.set', async (data) => {
       const { chats, contacts, messages, isLatest } = data;
 
+      logger.info('[RAW HISTORY SYNC EVENT]', {
+        sessionId,
+        syncType: data.syncType,
+        chatsCount: chats?.length ?? 0,
+        contactsCount: contacts?.length ?? 0,
+        messagesCount: messages?.length ?? 0,
+        isLatest
+      });
+
       const active = this.getSession(sessionId);
       const isInitial = active?.isInitialSyncConnection ?? false;
 
