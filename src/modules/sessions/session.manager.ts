@@ -1473,107 +1473,120 @@ class SessionManager {
         
         logger.info('Dynamic outbound worker processing job', { jobId: job.id, sessionId, waChatJid, type });
         
-        // Fencing check before send
-        const owner = await redis.get(`session:${sessionId}:owner`);
-        if (owner !== this.replicaId) {
-          logger.error('Outbound aborted: Lock ownership lost.', { sessionId });
-          await this.forceTerminateSocket(sessionId);
-          throw new Error('Lock ownership lost');
-        }
-        
-        const active = this.activeSessions.get(sessionId);
-        if (!active || !active.socket) {
-          throw new Error(`Socket not active locally for session ${sessionId}`);
-        }
-        
-        // Build Quoted context if present
-        const sendOptions: any = {};
-        if (quotedWaMessageId) {
-          sendOptions.quoted = {
-            key: { 
-              remoteJid: waChatJid, 
-              fromMe: quotedMsgFromMe ?? false, 
-              id: quotedWaMessageId 
+        try {
+          // Fencing check before send
+          const owner = await redis.get(`session:${sessionId}:owner`);
+          if (owner !== this.replicaId) {
+            logger.error('Outbound aborted: Lock ownership lost.', { sessionId });
+            await this.forceTerminateSocket(sessionId);
+            throw new Error('Lock ownership lost');
+          }
+          
+          const active = this.activeSessions.get(sessionId);
+          if (!active || !active.socket) {
+            throw new Error(`Socket not active locally for session ${sessionId}`);
+          }
+          
+          // Build Quoted context if present
+          const sendOptions: any = {};
+          if (quotedWaMessageId) {
+            sendOptions.quoted = {
+              key: { 
+                remoteJid: waChatJid, 
+                fromMe: quotedMsgFromMe ?? false, 
+                id: quotedWaMessageId 
+              },
+              message: quotedMsgProto || { conversation: quotedContent || '' }
+            };
+          }
+
+          // Send message
+          let result;
+          if (type === 'forward') {
+            if (!forwardRawMessage) throw new Error('forwardRawMessage is required for forwards');
+            result = await active.socket.sendMessage(waChatJid, { forward: forwardRawMessage }, sendOptions);
+          } else if (type === 'text') {
+            if (!content) throw new Error('Content is required');
+            result = await active.socket.sendMessage(waChatJid, { text: content }, sendOptions);
+          } else if (type === 'image') {
+            if (!mediaUrl) throw new Error('mediaUrl is required for image sends');
+            result = await active.socket.sendMessage(waChatJid, { image: { url: mediaUrl }, caption: content || undefined }, sendOptions);
+          } else if (type === 'video') {
+            if (!mediaUrl) throw new Error('mediaUrl is required for video sends');
+            result = await active.socket.sendMessage(waChatJid, { video: { url: mediaUrl }, caption: content || undefined }, sendOptions);
+          } else if (type === 'audio') {
+            if (!mediaUrl) throw new Error('mediaUrl is required for audio sends');
+            result = await active.socket.sendMessage(waChatJid, { audio: { url: mediaUrl } }, sendOptions);
+          } else if (type === 'document') {
+            if (!mediaUrl) throw new Error('mediaUrl is required for document sends');
+            result = await active.socket.sendMessage(waChatJid, { document: { url: mediaUrl }, mimetype: mediaMimeType, fileName: filename }, sendOptions);
+          } else {
+            throw new Error(`Unsupported outbound type: ${type}`);
+          }
+          
+          if (!result?.key?.id) throw new Error('No message ID returned from Baileys');
+          
+          // Resolve saved type (especially for forwards)
+          let savedType = type;
+          if (type === 'forward' && result.message) {
+            const keys = Object.keys(result.message);
+            if (keys.includes('conversation') || keys.includes('extendedTextMessage')) savedType = 'text';
+            else if (keys.includes('imageMessage')) savedType = 'image';
+            else if (keys.includes('videoMessage')) savedType = 'video';
+            else if (keys.includes('audioMessage')) savedType = 'audio';
+            else if (keys.includes('documentMessage')) savedType = 'document';
+          }
+
+          const isForwarded = type === 'forward' || !!result.message?.extendedTextMessage?.contextInfo?.isForwarded;
+          const forwardScore = isForwarded ? 1 : 0;
+
+          // Save to database
+          const { messageService } = await import('../messages/message.service.js');
+          const timestamp = result.messageTimestamp ? new Date(Number(result.messageTimestamp) * 1000) : new Date();
+          const dbMessage = await messageService.upsertMessage({
+            orgId,
+            sessionId,
+            chatId,
+            waMessageId: result.key.id,
+            senderJid: 'me',
+            fromMe: true,
+            messageType: savedType,
+            content: content || null,
+            mediaUrl: mediaUrl || null,
+            mediaMimeType: mediaMimeType || null,
+            mediaSize: mediaSize || null,
+            quotedContent: quotedContent || null,
+            status: 'sent',
+            isForwarded,
+            forwardScore,
+            metadata: { 
+              ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
+              waMessage: result,
             },
-            message: quotedMsgProto || { conversation: quotedContent || '' }
-          };
+            sentByUserId: sentByUserId ?? null,
+            createdAt: timestamp,
+          });
+          
+          // Broadcast new message
+          const { eventBus, STREAMS } = await import('../../events/event-bus.js');
+          await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
+            sessionId,
+            orgId,
+            chatId,
+            message: dbMessage,
+          });
+        } catch (err) {
+          logger.error('Outbound worker job execution failed', {
+            jobId: job.id,
+            sessionId,
+            waChatJid,
+            type,
+            mediaUrl,
+            error: (err as Error).message,
+            stack: (err as Error).stack,
+          });
+          throw err;
         }
-
-        // Send message
-        let result;
-        if (type === 'forward') {
-          if (!forwardRawMessage) throw new Error('forwardRawMessage is required for forwards');
-          result = await active.socket.sendMessage(waChatJid, { forward: forwardRawMessage }, sendOptions);
-        } else if (type === 'text') {
-          if (!content) throw new Error('Content is required');
-          result = await active.socket.sendMessage(waChatJid, { text: content }, sendOptions);
-        } else if (type === 'image') {
-          if (!mediaUrl) throw new Error('mediaUrl is required for image sends');
-          result = await active.socket.sendMessage(waChatJid, { image: { url: mediaUrl }, caption: content || undefined }, sendOptions);
-        } else if (type === 'video') {
-          if (!mediaUrl) throw new Error('mediaUrl is required for video sends');
-          result = await active.socket.sendMessage(waChatJid, { video: { url: mediaUrl }, caption: content || undefined }, sendOptions);
-        } else if (type === 'audio') {
-          if (!mediaUrl) throw new Error('mediaUrl is required for audio sends');
-          result = await active.socket.sendMessage(waChatJid, { audio: { url: mediaUrl } }, sendOptions);
-        } else if (type === 'document') {
-          if (!mediaUrl) throw new Error('mediaUrl is required for document sends');
-          result = await active.socket.sendMessage(waChatJid, { document: { url: mediaUrl }, mimetype: mediaMimeType, fileName: filename }, sendOptions);
-        } else {
-          throw new Error(`Unsupported outbound type: ${type}`);
-        }
-        
-        if (!result?.key?.id) throw new Error('No message ID returned from Baileys');
-        
-        // Resolve saved type (especially for forwards)
-        let savedType = type;
-        if (type === 'forward' && result.message) {
-          const keys = Object.keys(result.message);
-          if (keys.includes('conversation') || keys.includes('extendedTextMessage')) savedType = 'text';
-          else if (keys.includes('imageMessage')) savedType = 'image';
-          else if (keys.includes('videoMessage')) savedType = 'video';
-          else if (keys.includes('audioMessage')) savedType = 'audio';
-          else if (keys.includes('documentMessage')) savedType = 'document';
-        }
-
-        const isForwarded = type === 'forward' || !!result.message?.extendedTextMessage?.contextInfo?.isForwarded;
-        const forwardScore = isForwarded ? 1 : 0;
-
-        // Save to database
-        const { messageService } = await import('../messages/message.service.js');
-        const timestamp = result.messageTimestamp ? new Date(Number(result.messageTimestamp) * 1000) : new Date();
-        const dbMessage = await messageService.upsertMessage({
-          orgId,
-          sessionId,
-          chatId,
-          waMessageId: result.key.id,
-          senderJid: 'me',
-          fromMe: true,
-          messageType: savedType,
-          content: content || null,
-          mediaUrl: mediaUrl || null,
-          mediaMimeType: mediaMimeType || null,
-          mediaSize: mediaSize || null,
-          quotedContent: quotedContent || null,
-          status: 'sent',
-          isForwarded,
-          forwardScore,
-          metadata: { 
-            ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
-            waMessage: result,
-          },
-          sentByUserId: sentByUserId ?? null,
-          createdAt: timestamp,
-        });
-        
-        // Broadcast new message
-        const { eventBus, STREAMS } = await import('../../events/event-bus.js');
-        await eventBus.publishToStream(STREAMS.MESSAGES, 'message:new', {
-          sessionId,
-          orgId,
-          chatId,
-          message: dbMessage,
-        });
       },
       { connection: workerRedis.duplicate() as any }
     );

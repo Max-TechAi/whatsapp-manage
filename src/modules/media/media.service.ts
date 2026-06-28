@@ -84,7 +84,7 @@ export class MediaService {
     // Upload to MinIO
     await minio.putObject(this.bucket, objectKey, request.buffer, request.buffer.length, {
       'Content-Type': request.mimeType,
-      'x-amz-meta-original-filename': request.filename,
+      'x-amz-meta-original-filename': encodeURIComponent(request.filename),
       'x-amz-meta-org-id': request.orgId,
     });
 
