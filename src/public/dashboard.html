@@ -184,7 +184,7 @@
 
                 <form id="dashboardSendMessageForm" class="message-form" onsubmit="handleSendMessageSubmit(event)">
                   <button type="button" id="attachmentBtn" onclick="triggerAttachmentUpload()" class="btn btn-secondary" style="padding: 0.3rem 0.5rem; font-size: 1rem; border-radius: 4px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); color: var(--text-main); cursor: pointer; outline: none; margin-right: 0.25rem;">📎</button>
-                  <input type="text" id="dashboardMessageInput" class="message-input" placeholder="Type a message..." autocomplete="off" required>
+                  <textarea id="dashboardMessageInput" class="message-input" rows="1" placeholder="Type a message..." autocomplete="off" required></textarea>
                   <button type="submit" class="btn">Send</button>
                 </form>
                 <input type="file" id="mediaAttachmentInput" style="display: none;" onchange="handleAttachmentUpload(event)">

@@ -1271,6 +1271,7 @@ async function handleSendMessageSubmit(e) {
     input.placeholder = 'Type a message...';
     input.disabled = false;
     if (sendBtn) sendBtn.disabled = false;
+    resetMessageInputHeight();
     input.focus();
   }
 }
@@ -2530,6 +2531,7 @@ function cancelAttachmentPreview() {
   if (messageInput) {
     messageInput.setAttribute('required', 'required');
   }
+  resetMessageInputHeight();
 }
 window.cancelAttachmentPreview = cancelAttachmentPreview;
 
@@ -2550,10 +2552,45 @@ function handleMessageInputPaste(e) {
   }
 }
 
-// Bind paste event handler on load
+// Bind event handlers on load
 const messageInputEl = document.getElementById('dashboardMessageInput');
 if (messageInputEl) {
   messageInputEl.addEventListener('paste', handleMessageInputPaste);
+  messageInputEl.addEventListener('keydown', handleMessageInputKeydown);
+  messageInputEl.addEventListener('input', autoResizeMessageInput);
+}
+
+function handleMessageInputKeydown(e) {
+  if (e.key === 'Enter') {
+    if (!e.shiftKey) {
+      e.preventDefault();
+      const form = document.getElementById('dashboardSendMessageForm');
+      if (form) {
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit();
+        } else {
+          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        }
+      }
+    }
+  }
+}
+
+function autoResizeMessageInput() {
+  const input = document.getElementById('dashboardMessageInput');
+  if (!input) return;
+  input.style.height = 'auto';
+  // Cap at 150px maximum height
+  const maxHeight = 150;
+  const scrollHeight = input.scrollHeight;
+  input.style.height = (scrollHeight > maxHeight ? maxHeight : scrollHeight) + 'px';
+}
+
+function resetMessageInputHeight() {
+  const input = document.getElementById('dashboardMessageInput');
+  if (input) {
+    input.style.height = 'auto';
+  }
 }
 
 function handleAttachmentUpload(event) {
