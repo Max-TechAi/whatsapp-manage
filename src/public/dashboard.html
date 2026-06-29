@@ -39,6 +39,9 @@
         <button id="navBtnInbox" class="nav-link active" onclick="switchTab('inbox')">
           <span>💬</span> Chat Inbox
         </button>
+        <button id="navBtnUnifiedInbox" class="nav-link" onclick="switchTab('unified-inbox')">
+          <span>📥</span> Unified Inbox
+        </button>
         <button id="navBtnSessions" class="nav-link" onclick="switchTab('sessions')">
           <span>📱</span> WhatsApp Sessions
         </button>
@@ -398,6 +401,58 @@
                 <tr>
                   <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
                     ⏳ Loading statistics...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── UNIFIED INBOX TAB ───────────────────────────────── -->
+      <div id="tab-unified-inbox" class="tab-content">
+        <!-- Summary Cards Row -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+          <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem;">
+            <div style="font-size: 2.2rem; background: rgba(79, 195, 247, 0.15); color: #4fc3f7; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">💬</div>
+            <div>
+              <div id="unifiedUnreadChatsCount" style="font-size: 1.8rem; font-weight: 700; color: var(--text-normal); line-height: 1.1;">0</div>
+              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">Chats with unread messages</div>
+            </div>
+          </div>
+          <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem;">
+            <div style="font-size: 2.2rem; background: rgba(16, 185, 129, 0.15); color: #10b981; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">📥</div>
+            <div>
+              <div id="unifiedTotalUnreadMessages" style="font-size: 1.8rem; font-weight: 700; color: var(--accent-green); line-height: 1.1;">0</div>
+              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">Total unread messages</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <span>📥 Unified Inbox Overview</span>
+            <div>
+              <!-- Session Filter -->
+              <select id="unifiedSessionFilter" onchange="loadUnifiedInbox()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+                <option value="">All Sessions</option>
+              </select>
+            </div>
+          </div>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Contact Name</th>
+                  <th>WhatsApp Account</th>
+                  <th>Last Message</th>
+                  <th style="width: 100px; text-align: center;">Unread</th>
+                </tr>
+              </thead>
+              <tbody id="unifiedInboxListBody">
+                <tr>
+                  <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                    ⏳ Loading chats...
                   </td>
                 </tr>
               </tbody>

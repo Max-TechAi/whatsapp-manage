@@ -368,6 +368,7 @@ function switchTab(tabId) {
   document.getElementById(`tab-${tabId}`).classList.add('active');
   
   if (tabId === 'inbox') document.getElementById('navBtnInbox').classList.add('active');
+  if (tabId === 'unified-inbox') document.getElementById('navBtnUnifiedInbox').classList.add('active');
   if (tabId === 'sessions') document.getElementById('navBtnSessions').classList.add('active');
   if (tabId === 'webhooks') document.getElementById('navBtnWebhooks').classList.add('active');
   if (tabId === 'team') document.getElementById('navBtnTeam').classList.add('active');
@@ -378,6 +379,7 @@ function switchTab(tabId) {
   if (tabId === 'webhooks') loadWebhooks();
   if (tabId === 'team') loadTeamMembers();
   if (tabId === 'stats') loadStats();
+  if (tabId === 'unified-inbox') loadUnifiedInbox();
 }
 
 // ─── SESSION MANAGEMENT ───────────────────────────────────────
@@ -401,6 +403,7 @@ async function loadSessions() {
 function populateSessionDropdowns(sessions) {
   const dropdown = document.getElementById('inboxSessionSelect');
   const statsDropdown = document.getElementById('statsSessionFilter');
+  const unifiedDropdown = document.getElementById('unifiedSessionFilter');
   const connected = sessions.filter(s => s.status === 'connected');
 
   if (statsDropdown) {
@@ -409,6 +412,15 @@ function populateSessionDropdowns(sessions) {
       sessions.map(s => `<option value="${s.id}">${s.sessionName} (${s.phoneNumber || 'Unlinked'})</option>`).join('');
     if (previousSelection && sessions.some(s => s.id === previousSelection)) {
       statsDropdown.value = previousSelection;
+    }
+  }
+
+  if (unifiedDropdown) {
+    const previousSelection = unifiedDropdown.value;
+    unifiedDropdown.innerHTML = '<option value="">All Sessions</option>' + 
+      sessions.map(s => `<option value="${s.id}">${s.sessionName} (${s.phoneNumber || 'Unlinked'})</option>`).join('');
+    if (previousSelection && sessions.some(s => s.id === previousSelection)) {
+      unifiedDropdown.value = previousSelection;
     }
   }
 
@@ -2987,3 +2999,119 @@ async function loadStats() {
   }
 }
 window.loadStats = loadStats;
+
+// ─── UNIFIED INBOX ──────────────────────────────────────────────────
+async function loadUnifiedInbox() {
+  const sessionFilter = document.getElementById('unifiedSessionFilter');
+  const listBody = document.getElementById('unifiedInboxListBody');
+  const unreadChatsBadge = document.getElementById('unifiedUnreadChatsCount');
+  const totalUnreadBadge = document.getElementById('unifiedTotalUnreadMessages');
+
+  if (!listBody) return;
+
+  const sessionId = sessionFilter ? sessionFilter.value : '';
+  let url = '/api/chats/unified';
+  if (sessionId) {
+    url += `?sessionId=${sessionId}`;
+  }
+
+  try {
+    listBody.innerHTML = `
+      <tr>
+        <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+          ⏳ Loading chats...
+        </td>
+      </tr>
+    `;
+
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to load unified inbox');
+
+    const summary = resData.summary || { unreadChatsCount: 0, totalUnreadMessages: 0 };
+    if (unreadChatsBadge) unreadChatsBadge.textContent = summary.unreadChatsCount;
+    if (totalUnreadBadge) totalUnreadBadge.textContent = summary.totalUnreadMessages;
+
+    const chatsList = resData.chats || [];
+    if (chatsList.length === 0) {
+      listBody.innerHTML = `
+        <tr>
+          <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+            No chats found.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    listBody.innerHTML = chatsList.map(c => {
+      const displayName = c.name || c.waChatId.split('@')[0];
+      const accountName = `${c.sessionName} (${c.phoneNumber || 'Unlinked'})`;
+      const preview = c.lastMessagePreview || '<span style="font-style: italic; color: var(--text-muted);">No messages</span>';
+      
+      const unreadBadge = c.unreadCount > 0 
+        ? `<span class="chat-badge" style="background: var(--accent-green); color: #0b0f19; font-weight: bold; border-radius: 50%; padding: 0.15rem 0.4rem; font-size: 0.75rem;">${c.unreadCount}</span>`
+        : '<span style="color: var(--text-muted); font-size: 0.8rem;">-</span>';
+
+      const rowClick = `openChatInInbox('${c.sessionId}', '${c.id}', '${c.waChatId}', '${escapeHtml(displayName)}')`;
+
+      return `
+        <tr onclick="${rowClick}" style="cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background='transparent'">
+          <td style="font-weight: 500; color: var(--text-normal);">${escapeHtml(displayName)}</td>
+          <td><code>${escapeHtml(accountName)}</code></td>
+          <td style="color: var(--text-muted); font-size: 0.85rem; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(c.lastMessagePreview || '')}">${preview}</td>
+          <td style="text-align: center;">${unreadBadge}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error(err);
+    listBody.innerHTML = `
+      <tr>
+        <td colspan="4" style="text-align: center; color: var(--danger); padding: 2rem;">
+          ⚠️ Error loading unified inbox: ${escapeHtml(err.message)}
+        </td>
+      </tr>
+    `;
+  }
+}
+window.loadUnifiedInbox = loadUnifiedInbox;
+
+async function openChatInInbox(sessionId, chatDbId, waChatId, chatName) {
+  // 1. Select the session in the dropdown and set activeSessionId
+  const dropdown = document.getElementById('inboxSessionSelect');
+  if (dropdown) {
+    dropdown.value = sessionId;
+    activeSessionId = sessionId;
+  }
+
+  // 2. Clear out existing chat view states
+  activeChatId = '';
+  activeChatDbId = '';
+  const chatsContainer = document.getElementById('chatsListContainer');
+  if (chatsContainer) chatsContainer.innerHTML = '';
+  document.getElementById('chatPlaceholder').style.display = 'flex';
+  document.getElementById('activeChatWrapper').style.display = 'none';
+  contactsMap = {};
+  lidMappings = {};
+
+  // 3. Switch tab visual focus to Inbox
+  switchTab('inbox');
+
+  // 4. Trigger reload pipeline of the inbox session
+  if (activeSessionId) {
+    checkInitialSyncStatus(activeSessionId);
+    try {
+      await loadLidMappingsForSession();
+      await loadContactsForSession();
+      await loadChats();
+      // 5. Auto-select and open the specified chat
+      await selectChat(chatDbId, waChatId, chatName);
+    } catch (err) {
+      console.error('Failed to auto-open chat from unified inbox transition:', err);
+    }
+  }
+}
+window.openChatInInbox = openChatInInbox;

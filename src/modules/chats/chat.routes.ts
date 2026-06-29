@@ -8,8 +8,8 @@ import { chatService } from './chat.service.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
-import { messages, users, userSessionAccess, sessions } from '../../db/schema.js';
-import { desc, eq, and, or, sql } from 'drizzle-orm';
+import { messages, users, userSessionAccess, sessions, chats } from '../../db/schema.js';
+import { desc, eq, and, or, sql, inArray } from 'drizzle-orm';
 import { wsServer } from '../../websocket/ws-server.js';
 import { eventBus } from '../../events/event-bus.js';
 
@@ -18,9 +18,130 @@ export const chatRouter = Router();
 chatRouter.use(authenticate);
 
 /**
- * GET /api/chats?sessionId=...&archived=false&limit=50&cursor=...
- * List chats for a session, sorted by last message time.
+ * GET /api/chats/unified?sessionId=...&limit=50
+ * List all chats across allowed sessions, sorted by unreadCount > 0 then recency.
  */
+chatRouter.get('/unified', async (req, res) => {
+  try {
+    const schema = z.object({
+      sessionId: z.string().uuid().optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+    });
+
+    const parsed = schema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
+    }
+
+    const { sessionId, limit } = parsed.data;
+
+    // 1. Fetch allowed WhatsApp sessions for this user/organization
+    let allowedSessionRecords: { id: string; sessionName: string; phoneNumber: string | null }[] = [];
+
+    if (req.user!.role === 'admin' || req.user!.hasAllSessionsAccess) {
+      allowedSessionRecords = await db
+        .select({
+          id: sessions.id,
+          sessionName: sessions.sessionName,
+          phoneNumber: sessions.phoneNumber,
+        })
+        .from(sessions)
+        .where(eq(sessions.orgId, req.user!.orgId));
+    } else {
+      allowedSessionRecords = await db
+        .select({
+          id: sessions.id,
+          sessionName: sessions.sessionName,
+          phoneNumber: sessions.phoneNumber,
+        })
+        .from(sessions)
+        .innerJoin(userSessionAccess, eq(sessions.id, userSessionAccess.sessionId))
+        .where(
+          and(
+            eq(sessions.orgId, req.user!.orgId),
+            eq(userSessionAccess.userId, req.user!.userId)
+          )
+        );
+    }
+
+    if (allowedSessionRecords.length === 0) {
+      return res.status(200).json({
+        chats: [],
+        summary: { unreadChatsCount: 0, totalUnreadMessages: 0 }
+      });
+    }
+
+    const allowedSessionIds = allowedSessionRecords.map(s => s.id);
+
+    // If a specific sessionId is requested, verify the user has access to it
+    if (sessionId) {
+      if (!allowedSessionIds.includes(sessionId)) {
+        return res.status(403).json({ error: 'Access denied: you do not have permission for this WhatsApp session' });
+      }
+    }
+
+    const targetSessionIds = sessionId ? [sessionId] : allowedSessionIds;
+
+    // 2. Fetch the unread summary counts (total unread chats & total unread messages sum)
+    const [summaryResult] = await db
+      .select({
+        unreadChatsCount: sql<number>`count(case when ${chats.unreadCount} > 0 then 1 end)`,
+        totalUnreadMessages: sql<number>`coalesce(sum(${chats.unreadCount}), 0)`
+      })
+      .from(chats)
+      .where(
+        and(
+          eq(chats.orgId, req.user!.orgId),
+          inArray(chats.sessionId, targetSessionIds),
+          eq(chats.isArchived, false)
+        )
+      );
+
+    // 3. Fetch the sorted chats joined with session metadata
+    const chatsList = await db
+      .select({
+        id: chats.id,
+        sessionId: chats.sessionId,
+        waChatId: chats.waChatId,
+        name: chats.name,
+        avatarUrl: chats.avatarUrl,
+        unreadCount: chats.unreadCount,
+        lastMessagePreview: chats.lastMessagePreview,
+        lastMessageAt: chats.lastMessageAt,
+        chatType: chats.chatType,
+        sessionName: sessions.sessionName,
+        phoneNumber: sessions.phoneNumber,
+      })
+      .from(chats)
+      .innerJoin(sessions, eq(chats.sessionId, sessions.id))
+      .where(
+        and(
+          eq(chats.orgId, req.user!.orgId),
+          inArray(chats.sessionId, targetSessionIds),
+          eq(chats.isArchived, false)
+        )
+      )
+      .orderBy(
+        sql`CASE WHEN ${chats.unreadCount} > 0 THEN 1 ELSE 0 END DESC`,
+        desc(chats.unreadCount),
+        desc(chats.lastMessageAt),
+        desc(chats.id)
+      )
+      .limit(limit);
+
+    return res.status(200).json({
+      chats: chatsList,
+      summary: {
+        unreadChatsCount: Number(summaryResult?.unreadChatsCount || 0),
+        totalUnreadMessages: Number(summaryResult?.totalUnreadMessages || 0),
+      }
+    });
+  } catch (err) {
+    logger.error('Failed to retrieve unified inbox chats', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to retrieve unified inbox chats' });
+  }
+});
+
 chatRouter.get('/', async (req, res) => {
   try {
     const schema = z.object({
