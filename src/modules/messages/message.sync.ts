@@ -331,12 +331,14 @@ export class MessageSyncService {
 
     // Update last message preview and last message at for the chats in this sync chunk
     if (messagesToInsert.length > 0) {
-      const latestMessagesMap = new Map<string, { content: string | null; createdAt: Date }>();
+      const latestMessagesMap = new Map<string, { content: string | null; messageType: string; metadata?: any; createdAt: Date }>();
       for (const msg of messagesToInsert) {
         const existing = latestMessagesMap.get(msg.chatId);
         if (!existing || msg.createdAt > existing.createdAt) {
           latestMessagesMap.set(msg.chatId, {
             content: msg.content,
+            messageType: msg.messageType,
+            metadata: msg.metadata,
             createdAt: msg.createdAt,
           });
         }
@@ -351,7 +353,27 @@ export class MessageSyncService {
             .limit(1);
           
           if (chatRecord && (!chatRecord.lastMessageAt || lastMsg.createdAt > chatRecord.lastMessageAt)) {
-            const preview = lastMsg.content ? lastMsg.content.substring(0, 200) : null;
+            // Generate type-aware preview (matches DB trigger and frontend logic)
+            let preview: string | null = null;
+            const ct = lastMsg.content;
+            switch (lastMsg.messageType) {
+              case 'image':    preview = ct ? `📷 ${ct.substring(0, 190)}` : '📷 Photo'; break;
+              case 'video':    preview = ct ? `🎬 ${ct.substring(0, 190)}` : '🎬 Video'; break;
+              case 'audio':    preview = '🎤 Voice message'; break;
+              case 'document': {
+                const fn = (lastMsg.metadata as any)?.waMessage?.message?.documentMessage?.fileName || ct || 'Document';
+                preview = `📄 ${fn.substring(0, 190)}`;
+                break;
+              }
+              case 'sticker':  preview = '🎭 Sticker'; break;
+              case 'location': preview = '📍 Location'; break;
+              case 'contact':  preview = '👤 Contact'; break;
+              case 'call':     preview = ct ? `📞 ${ct.substring(0, 190)}` : '📞 Call'; break;
+              case 'poll':     preview = ct ? `📊 ${ct.substring(0, 190)}` : '📊 Poll'; break;
+              case 'reaction': preview = ct ? `${ct.substring(0, 10)} Reaction` : '👍 Reaction'; break;
+              case 'system':   preview = null; break;
+              default:         preview = ct ? ct.substring(0, 200) : null; break;
+            }
             await db
               .update(chats)
               .set({

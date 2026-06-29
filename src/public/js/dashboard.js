@@ -127,10 +127,14 @@ function getMessagePreviewText(message) {
         (message.mediaMimeType && message.mediaMimeType.includes('ogg'));
       return isPtt ? '🎤 Voice message' : '🎵 Audio';
     }
-    case 'document': return `📄 ${message.content || 'Document'}`;
+    case 'document': {
+      const docName = message.metadata?.fileName || message.content || 'Document';
+      return `📄 ${docName}`;
+    }
     case 'sticker':  return '🎭 Sticker';
     case 'location': return '📍 Location';
     case 'contact':  return '👤 Contact';
+    case 'call':     return `📞 ${message.content || 'Call'}`;
     case 'reaction': return `${message.content || '👍'} Reaction`;
     case 'poll':     return `📊 ${message.content || 'Poll'}`;
     default: {
@@ -748,7 +752,9 @@ function renderChatsList(chatList) {
     container.innerHTML = sortedList.map(c => {
       const isActive = c.waChatId === activeChatId ? 'active' : '';
       const avatarIcon = c.chatType === 'group' ? '👥' : '👤';
-      const lastMsg = c.lastMessagePreview || '<i>No messages</i>';
+      // Use short text preview for sidebar — never render raw HTML/rich cards here
+      const rawPreview = c.lastMessagePreview || '';
+      const lastMsg = rawPreview ? escapeHtml(rawPreview) : '<i>No messages</i>';
       const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
       
       // Show numeric unread badge count
@@ -1638,10 +1644,15 @@ function handleWsEvent(data) {
       const chatObj = chats.find(c => c.id === msgChatId || c.waChatId === msgChatId);
       if (chatObj) {
         chatObj.lastMessageAt = data.createdAt || data.message?.createdAt || new Date().toISOString();
-        if (data.message?.content) {
-          chatObj.lastMessagePreview = data.message.content;
-        } else if (data.content) {
-          chatObj.lastMessagePreview = data.content;
+        // Build a short, type-aware preview for the sidebar (e.g. "📷 Photo", "📄 report.pdf")
+        const incomingMsg = data.message || data;
+        if (incomingMsg) {
+          const preview = getMessagePreviewText(incomingMsg);
+          if (preview) {
+            chatObj.lastMessagePreview = preview;
+          } else if (incomingMsg.content) {
+            chatObj.lastMessagePreview = incomingMsg.content;
+          }
         }
         
         const isFromMe = data.fromMe || data.message?.fromMe || false;
@@ -3049,7 +3060,8 @@ async function loadUnifiedInbox() {
     listBody.innerHTML = chatsList.map(c => {
       const displayName = c.name || c.waChatId.split('@')[0];
       const accountName = `${c.sessionName} (${c.phoneNumber || 'Unlinked'})`;
-      const preview = c.lastMessagePreview || '<span style="font-style: italic; color: var(--text-muted);">No messages</span>';
+      const rawPreview = c.lastMessagePreview || '';
+      const preview = rawPreview ? escapeHtml(rawPreview) : '<span style="font-style: italic; color: var(--text-muted);">No messages</span>';
       
       const unreadBadge = c.unreadCount > 0 
         ? `<span class="chat-badge" style="background: var(--accent-green); color: #0b0f19; font-weight: bold; border-radius: 50%; padding: 0.15rem 0.4rem; font-size: 0.75rem;">${c.unreadCount}</span>`

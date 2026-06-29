@@ -144,7 +144,20 @@ BEGIN
 
   -- Update chat denormalized fields
   UPDATE chats SET
-    last_message_preview = LEFT(NEW.content, 200),
+    last_message_preview = CASE
+      WHEN NEW.message_type = 'image' THEN COALESCE('📷 ' || LEFT(NEW.content, 190), '📷 Photo')
+      WHEN NEW.message_type = 'video' THEN COALESCE('🎬 ' || LEFT(NEW.content, 190), '🎬 Video')
+      WHEN NEW.message_type = 'audio' THEN '🎤 Voice message'
+      WHEN NEW.message_type = 'document' THEN COALESCE('📄 ' || LEFT(COALESCE(NEW.metadata->>'fileName', NEW.content, 'Document'), 190))
+      WHEN NEW.message_type = 'sticker' THEN '🎭 Sticker'
+      WHEN NEW.message_type = 'location' THEN '📍 Location'
+      WHEN NEW.message_type = 'contact' THEN '👤 Contact'
+      WHEN NEW.message_type = 'call' THEN COALESCE('📞 ' || LEFT(NEW.content, 190), '📞 Call')
+      WHEN NEW.message_type = 'poll' THEN COALESCE('📊 ' || LEFT(NEW.content, 190), '📊 Poll')
+      WHEN NEW.message_type = 'reaction' THEN COALESCE(LEFT(NEW.content, 10) || ' Reaction', '👍 Reaction')
+      WHEN NEW.message_type = 'system' THEN NULL
+      ELSE LEFT(NEW.content, 200)
+    END,
     last_message_at = NEW.created_at,
     unread_count = CASE
       WHEN NEW.from_me = true THEN 0
