@@ -1069,7 +1069,45 @@ function renderMessages(msgList) {
                 || m.metadata?.waMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.documentMessage?.fileName
                 || m.content 
                 || 'Document';
-              bodyHtml = `<div class="media-container"><a href="${mediaUrl}&download=true" target="_blank" class="chat-document" style="display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; color: #4fc3f7; font-weight: 500; margin-top: 5px;">📄 Download ${escapeHtml(docName)}</a></div>`;
+
+              // Determine file extension and theme details
+              const ext = docName.includes('.') ? docName.split('.').pop().toLowerCase() : '';
+              let themeClass = 'theme-generic';
+              let icon = '📄';
+              let typeLabel = ext ? ext.toUpperCase() : 'FILE';
+
+              if (ext === 'pdf') {
+                themeClass = 'theme-pdf';
+                icon = '📕';
+              } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
+                themeClass = 'theme-excel';
+                icon = '📊';
+              } else if (['docx', 'doc', 'txt', 'rtf'].includes(ext)) {
+                themeClass = 'theme-word';
+                icon = '📝';
+              }
+
+              // Human readable file size
+              const sizeStr = m.mediaSize ? formatBytes(m.mediaSize) : '';
+              const metaText = sizeStr ? `${typeLabel} • ${sizeStr}` : typeLabel;
+
+              const downloadUrl = `${mediaUrl}&download=true&filename=${encodeURIComponent(docName)}`;
+
+              bodyHtml = `
+                <div class="document-card ${themeClass}">
+                  <div class="document-info">
+                    <div class="document-icon">${icon}</div>
+                    <div class="document-details">
+                      <div class="document-name" title="${escapeHtml(docName)}">${escapeHtml(docName)}</div>
+                      <div class="document-meta">${escapeHtml(metaText)}</div>
+                    </div>
+                  </div>
+                  <div class="document-actions">
+                    <a href="${mediaUrl}" target="_blank" class="doc-btn btn-open">Open</a>
+                    <a href="${downloadUrl}" download="${escapeHtml(docName)}" class="doc-btn btn-save">Save as...</a>
+                  </div>
+                </div>
+              `;
             }
           } else {
             const isOld = (Date.now() - new Date(m.createdAt).getTime()) > 60000; // 1 minute
@@ -1084,6 +1122,49 @@ function renderMessages(msgList) {
               bodyHtml = `<div style="font-style: italic; color: var(--text-muted); padding: 0.25rem 0;">⏳ Media is downloading...</div>`;
             }
           }
+        } else if (m.messageType === 'call') {
+          const content = m.content || 'Call';
+          const isVideo = m.metadata?.isVideo
+            || content.toLowerCase().includes('video')
+            || m.metadata?.waMessage?.message?.call?.isVideo
+            || false;
+
+          const isMissed = content.toLowerCase().includes('missed')
+            || content.toLowerCase().includes('declined')
+            || content.toLowerCase().includes('cancelled')
+            || (m.metadata?.waMessage?.message?.call?.callLogResult === 4 
+                || m.metadata?.waMessage?.message?.call?.callLogResult === 1 
+                || m.metadata?.waMessage?.message?.call?.callLogResult === 2);
+
+          const icon = isVideo ? '📹' : '📞';
+          const iconClass = isMissed ? 'call-missed' : 'call-success';
+
+          let subtitle = isSelf ? 'Outgoing' : 'Incoming';
+          if (content.toLowerCase().includes('accepted on another device')) {
+            subtitle = 'Accepted on another device';
+          } else {
+            const rawDuration = m.metadata?.duration || m.metadata?.waMessage?.message?.call?.duration;
+            if (rawDuration && !isNaN(Number(rawDuration))) {
+              const durationSecs = Number(rawDuration);
+              if (durationSecs > 0) {
+                const mins = Math.floor(durationSecs / 60);
+                const secs = durationSecs % 60;
+                subtitle = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+              }
+            }
+          }
+
+          bodyHtml = `
+            <div class="call-bubble">
+              <div class="call-icon-circle ${iconClass}">
+                ${icon}
+              </div>
+              <div style="display: flex; flex-direction: column;">
+                <span style="font-weight: 600; font-size: 0.85rem; color: var(--text-main);">${escapeHtml(content)}</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(subtitle)}</span>
+              </div>
+            </div>
+          `;
         } else {
           const content = (m.content || '').trim();
           if (content.length > 450) {
@@ -2592,6 +2673,13 @@ function resetMessageInputHeight() {
   if (input) {
     input.style.height = 'auto';
   }
+}
+
+function formatBytes(bytes) {
+  if (!bytes || isNaN(bytes)) return '';
+  const sizes = ['Bytes', 'kB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return parseFloat((bytes / Math.pow(1024, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 function handleAttachmentUpload(event) {

@@ -525,7 +525,7 @@ export class MessageSyncService {
       const chatId = await chatService.ensureChatExists(orgId, sessionId, normalizedRemoteJid);
       if (!chatId) continue;
 
-      const { type, content } = extractSyncMessageContent(msg.message);
+      const { type, content } = extractSyncMessageContent(msg);
       const timestamp = msg.messageTimestamp
         ? new Date(Number(msg.messageTimestamp) * 1000)
         : new Date();
@@ -572,7 +572,27 @@ export class MessageSyncService {
 /**
  * Extract message type and text content from a Baileys WAMessage.
  */
-function extractSyncMessageContent(message: any): { type: string; content: string | null } {
+function extractSyncMessageContent(msg: any): { type: string; content: string | null } {
+  if (!msg) return { type: 'system', content: null };
+
+  // Check for call stub types (missed calls)
+  const stubType = msg.messageStubType;
+  if (stubType) {
+    if (stubType === 40 || stubType === 'CALL_MISSED_VOICE') {
+      return { type: 'call', content: 'Missed voice call' };
+    }
+    if (stubType === 41 || stubType === 'CALL_MISSED_VIDEO') {
+      return { type: 'call', content: 'Missed video call' };
+    }
+    if (stubType === 45 || stubType === 'CALL_MISSED_GROUP_VOICE') {
+      return { type: 'call', content: 'Missed group voice call' };
+    }
+    if (stubType === 46 || stubType === 'CALL_MISSED_GROUP_VIDEO') {
+      return { type: 'call', content: 'Missed group video call' };
+    }
+  }
+
+  const message = msg.message;
   if (!message) return { type: 'system', content: null };
 
   if (message.conversation) {
@@ -611,6 +631,26 @@ function extractSyncMessageContent(message: any): { type: string; content: strin
   if (message.pollCreationMessage || message.pollCreationMessageV3) {
     const poll = message.pollCreationMessage || message.pollCreationMessageV3;
     return { type: 'poll', content: poll.name ?? null };
+  }
+
+  // Call Log message (completed call outcomes)
+  if (message.callLogMesssage) {
+    const isVideo = message.callLogMesssage.isVideo ?? false;
+    const typeStr = isVideo ? 'video' : 'voice';
+    let content = `${isVideo ? 'Video' : 'Voice'} call`;
+
+    const outcome = message.callLogMesssage.callOutcome;
+    if (outcome === 1 || outcome === 'MISSED') {
+      content = `Missed ${typeStr} call`;
+    } else if (outcome === 2 || outcome === 'FAILED') {
+      content = `Failed ${typeStr} call`;
+    } else if (outcome === 3 || outcome === 'REJECTED') {
+      content = `Declined ${typeStr} call`;
+    } else if (outcome === 4 || outcome === 'ACCEPTED_ELSEWHERE') {
+      content = `${isVideo ? 'Video' : 'Voice'} call — Accepted on another device`;
+    }
+
+    return { type: 'call', content };
   }
 
   return { type: 'system', content: null };

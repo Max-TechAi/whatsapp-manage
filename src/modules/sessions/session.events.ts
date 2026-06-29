@@ -126,10 +126,47 @@ export function transformWAMessage(
  * @returns Normalized content extraction result
  */
 export function extractMessageContent(waMessage: WAMessage): ExtractedContent {
+  // Check for call stub types (missed calls)
+  const stubType = waMessage.messageStubType as any;
+  if (stubType) {
+    if (stubType === 40 || stubType === 'CALL_MISSED_VOICE') {
+      return { type: 'call', content: 'Missed voice call', mediaInfo: null };
+    }
+    if (stubType === 41 || stubType === 'CALL_MISSED_VIDEO') {
+      return { type: 'call', content: 'Missed video call', mediaInfo: null };
+    }
+    if (stubType === 45 || stubType === 'CALL_MISSED_GROUP_VOICE') {
+      return { type: 'call', content: 'Missed group voice call', mediaInfo: null };
+    }
+    if (stubType === 46 || stubType === 'CALL_MISSED_GROUP_VIDEO') {
+      return { type: 'call', content: 'Missed group video call', mediaInfo: null };
+    }
+  }
+
   const msg = waMessage.message;
 
   if (!msg) {
     return { type: 'system', content: null, mediaInfo: null };
+  }
+
+  // Call Log message (completed call outcomes)
+  if (msg.callLogMesssage) {
+    const isVideo = msg.callLogMesssage.isVideo ?? false;
+    const typeStr = isVideo ? 'video' : 'voice';
+    let content = `${isVideo ? 'Video' : 'Voice'} call`;
+
+    const outcome = msg.callLogMesssage.callOutcome as any;
+    if (outcome === 1 || outcome === 'MISSED') {
+      content = `Missed ${typeStr} call`;
+    } else if (outcome === 2 || outcome === 'FAILED') {
+      content = `Failed ${typeStr} call`;
+    } else if (outcome === 3 || outcome === 'REJECTED') {
+      content = `Declined ${typeStr} call`;
+    } else if (outcome === 4 || outcome === 'ACCEPTED_ELSEWHERE') {
+      content = `${isVideo ? 'Video' : 'Voice'} call — Accepted on another device`;
+    }
+
+    return { type: 'call', content, mediaInfo: null };
   }
 
   // Text message (simple conversation)

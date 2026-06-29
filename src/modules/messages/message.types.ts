@@ -14,7 +14,8 @@ export type MessageType =
   | 'contact'
   | 'reaction'
   | 'poll'
-  | 'system';
+  | 'system'
+  | 'call';
 
 export type MessageStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
 
