@@ -626,11 +626,9 @@ async function loadChats() {
   currentLoadToken = loadToken;
 
   try {
-    const response = await fetch(`/api/chats?sessionId=${activeSessionId}&limit=50`, {
+    const resData = await safeFetchJson(`/api/chats?sessionId=${activeSessionId}&limit=50`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    const resData = await response.json();
-    if (!response.ok) throw new Error(resData.error || 'Failed to load chats');
 
     // Guard: if load token or session changed during fetch, abort
     if (currentLoadToken !== loadToken || activeSessionId !== (resData.chats[0]?.sessionId || activeSessionId)) return;
@@ -663,11 +661,9 @@ async function loadMoreChatsBackground(sessionId, cursor, loadToken, iteration =
 
     if (loadToken !== currentLoadToken || sessionId !== activeSessionId) return;
 
-    const response = await fetch(`/api/chats?sessionId=${sessionId}&limit=50&cursor=${encodeURIComponent(cursor)}`, {
+    const resData = await safeFetchJson(`/api/chats?sessionId=${sessionId}&limit=50&cursor=${encodeURIComponent(cursor)}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    const resData = await response.json();
-    if (!response.ok) throw new Error(resData.error || 'Failed to load background chats');
 
     if (loadToken !== currentLoadToken || sessionId !== activeSessionId) return;
 
@@ -810,11 +806,9 @@ async function loadMessages(chatDbId, silent = false, cursorParam = null) {
       url += `&cursor=${encodeURIComponent(cursorParam)}`;
     }
 
-    const response = await fetch(url, {
+    const resData = await safeFetchJson(url, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    const resData = await response.json();
-    if (!response.ok) throw new Error(resData.error || 'Failed to load messages');
 
     const newMessages = resData.messages || [];
     
@@ -849,7 +843,11 @@ async function loadMessages(chatDbId, silent = false, cursorParam = null) {
     }
   } catch (err) {
     if (!cursorParam) {
-      container.innerHTML = `<div style="text-align: center; color: var(--danger); padding: 1.5rem;">Error: ${err.message}</div>`;
+      if (silent) {
+        console.error('Failed to silently reload messages:', err);
+      } else {
+        container.innerHTML = `<div style="text-align: center; color: var(--danger); padding: 1.5rem;">Error: ${err.message}</div>`;
+      }
     } else {
       console.error('Failed to load older messages:', err);
     }
@@ -1597,6 +1595,31 @@ function handleWsEvent(data) {
 }
 
 // ─── HELPER UTILS ──────────────────────────────────────────────
+async function safeFetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok) {
+    let errorMsg = `HTTP error! Status: ${response.status}`;
+    if (contentType.includes('application/json')) {
+      try {
+        const errData = await response.json();
+        errorMsg = errData.error || errorMsg;
+      } catch (_) {}
+    } else {
+      try {
+        const text = await response.text();
+        if (text && text.length < 200) errorMsg = text;
+      } catch (_) {}
+    }
+    throw new Error(errorMsg);
+  }
+  
+  if (!contentType.includes('application/json')) {
+    throw new Error('Response is not JSON format');
+  }
+  return response.json();
+}
+
 async function loadLidMappingsForSession() {
   if (!activeSessionId) return;
   try {
