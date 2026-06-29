@@ -48,6 +48,9 @@
         <button id="navBtnTeam" class="nav-link" onclick="switchTab('team')" style="display: none;">
           <span>👥</span> Team Settings
         </button>
+        <button id="navBtnStats" class="nav-link" onclick="switchTab('stats')" style="display: none;">
+          <span>📊</span> Employee Stats
+        </button>
         <button id="navBtnDevConsole" class="nav-link" onclick="window.location.href='/dev-console.html'" style="display: none;">
           <span>🛠️</span> Dev Console
         </button>
@@ -356,6 +359,49 @@
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── STATISTICS TAB ──────────────────────────────────── -->
+      <div id="tab-stats" class="tab-content">
+        <div class="card">
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <span>📈 Employee Performance Statistics</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <!-- Session Filter -->
+              <select id="statsSessionFilter" onchange="loadStats()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+                <option value="">All Sessions</option>
+              </select>
+              <!-- Date Filter -->
+              <select id="statsDateFilter" onchange="loadStats()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+                <option value="today">Today</option>
+                <option value="this_week">This Week</option>
+                <option value="this_month">This Month</option>
+                <option value="all_time" selected>All Time</option>
+              </select>
+            </div>
+          </div>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Assigned Chats</th>
+                  <th>Interacted Chats</th>
+                  <th>Messages Sent</th>
+                </tr>
+              </thead>
+              <tbody id="statsListBody">
+                <tr>
+                  <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                    ⏳ Loading statistics...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

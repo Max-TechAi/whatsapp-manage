@@ -1,7 +1,7 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql, isNotNull, gte, lte } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../config/database.js';
-import { users, organizations } from '../../db/schema.js';
+import { users, organizations, messages, chats } from '../../db/schema.js';
 import { hashPassword, generateRandomKey } from '../../security/encryption.js';
 import { logger } from '../../observability/logger.js';
 import type { Organization, UpdateOrgRequest, OrgMember } from './org.types.js';
@@ -373,4 +373,132 @@ export async function getMemberPermissions(orgId: string, userId: string) {
     hasAllSessionsAccess: user.role === 'admin' ? true : user.hasAllSessionsAccess,
     sessionIds: allowedSessions.map((row) => row.sessionId),
   };
+}
+
+/**
+ * Retrieve performance statistics for all employees in an organization.
+ */
+export async function getEmployeeStatistics(
+  orgId: string,
+  options: { sessionId?: string; startDate?: Date; endDate?: Date }
+): Promise<any[]> {
+  const { sessionId, startDate, endDate } = options;
+
+  // 1. Fetch all users in the organization
+  const orgUsers = await db
+    .select({
+      id: users.id,
+      displayName: users.displayName,
+      email: users.email,
+      role: users.role,
+      isActive: users.isActive,
+    })
+    .from(users)
+    .where(eq(users.orgId, orgId));
+
+  if (orgUsers.length === 0) {
+    return [];
+  }
+
+  // 2. Query sent messages count grouped by user
+  const sentQueryConditions = [
+    eq(messages.orgId, orgId),
+    eq(messages.fromMe, true),
+    isNotNull(messages.sentByUserId),
+  ];
+  if (sessionId) {
+    sentQueryConditions.push(eq(messages.sessionId, sessionId));
+  }
+  if (startDate) {
+    sentQueryConditions.push(gte(messages.createdAt, startDate));
+  }
+  if (endDate) {
+    sentQueryConditions.push(lte(messages.createdAt, endDate));
+  }
+
+  const sentMessages = await db
+    .select({
+      userId: messages.sentByUserId,
+      count: sql<number>`count(${messages.id})`,
+    })
+    .from(messages)
+    .where(and(...sentQueryConditions))
+    .groupBy(messages.sentByUserId);
+
+  // 3. Query interacted chats count grouped by user
+  const interactedQueryConditions = [
+    eq(messages.orgId, orgId),
+    eq(messages.fromMe, true),
+    isNotNull(messages.sentByUserId),
+  ];
+  if (sessionId) {
+    interactedQueryConditions.push(eq(messages.sessionId, sessionId));
+  }
+  if (startDate) {
+    interactedQueryConditions.push(gte(messages.createdAt, startDate));
+  }
+  if (endDate) {
+    interactedQueryConditions.push(lte(messages.createdAt, endDate));
+  }
+
+  const interactedChats = await db
+    .select({
+      userId: messages.sentByUserId,
+      count: sql<number>`count(distinct ${messages.chatId})`,
+    })
+    .from(messages)
+    .where(and(...interactedQueryConditions))
+    .groupBy(messages.sentByUserId);
+
+  // 4. Query assigned chats count grouped by user (current active state, not filtered by date)
+  const assignedQueryConditions = [
+    eq(chats.orgId, orgId),
+    isNotNull(chats.assignedToUserId),
+  ];
+  if (sessionId) {
+    assignedQueryConditions.push(eq(chats.sessionId, sessionId));
+  }
+
+  const assignedChats = await db
+    .select({
+      userId: chats.assignedToUserId,
+      count: sql<number>`count(${chats.id})`,
+    })
+    .from(chats)
+    .where(and(...assignedQueryConditions))
+    .groupBy(chats.assignedToUserId);
+
+  // 5. Build lookup maps
+  const sentMap: Record<string, number> = {};
+  for (const row of sentMessages) {
+    if (row.userId) {
+      sentMap[row.userId] = Number(row.count);
+    }
+  }
+
+  const interactedMap: Record<string, number> = {};
+  for (const row of interactedChats) {
+    if (row.userId) {
+      interactedMap[row.userId] = Number(row.count);
+    }
+  }
+
+  const assignedMap: Record<string, number> = {};
+  for (const row of assignedChats) {
+    if (row.userId) {
+      assignedMap[row.userId] = Number(row.count);
+    }
+  }
+
+  // 6. Merge and format the statistics
+  return orgUsers.map((user) => ({
+    userId: user.id,
+    displayName: user.displayName || user.email,
+    email: user.email,
+    role: user.role,
+    isActive: user.isActive,
+    sentMessagesCount: sentMap[user.id] || 0,
+    interactedChatsCount: interactedMap[user.id] || 0,
+    assignedChatsCount: assignedMap[user.id] || 0,
+  }));
 }

@@ -322,10 +322,12 @@ if (!token) {
       if (banner) banner.style.display = 'flex';
     }
 
-    // Show team settings and dev console link for admin
+    // Show team settings, employee stats, and dev console link for admin
     if (userRole === 'admin') {
       const navBtnTeam = document.getElementById('navBtnTeam');
       if (navBtnTeam) navBtnTeam.style.display = 'flex';
+      const navBtnStats = document.getElementById('navBtnStats');
+      if (navBtnStats) navBtnStats.style.display = 'flex';
       const navBtnDevConsole = document.getElementById('navBtnDevConsole');
       if (navBtnDevConsole) navBtnDevConsole.style.display = 'flex';
     }
@@ -365,16 +367,17 @@ function switchTab(tabId) {
 
   document.getElementById(`tab-${tabId}`).classList.add('active');
   
-  // Activate correct nav button
   if (tabId === 'inbox') document.getElementById('navBtnInbox').classList.add('active');
   if (tabId === 'sessions') document.getElementById('navBtnSessions').classList.add('active');
   if (tabId === 'webhooks') document.getElementById('navBtnWebhooks').classList.add('active');
   if (tabId === 'team') document.getElementById('navBtnTeam').classList.add('active');
+  if (tabId === 'stats') document.getElementById('navBtnStats').classList.add('active');
 
   // Reload data context
   if (tabId === 'sessions') loadSessions();
   if (tabId === 'webhooks') loadWebhooks();
   if (tabId === 'team') loadTeamMembers();
+  if (tabId === 'stats') loadStats();
 }
 
 // ─── SESSION MANAGEMENT ───────────────────────────────────────
@@ -397,7 +400,17 @@ async function loadSessions() {
 
 function populateSessionDropdowns(sessions) {
   const dropdown = document.getElementById('inboxSessionSelect');
+  const statsDropdown = document.getElementById('statsSessionFilter');
   const connected = sessions.filter(s => s.status === 'connected');
+
+  if (statsDropdown) {
+    const previousSelection = statsDropdown.value;
+    statsDropdown.innerHTML = '<option value="">All Sessions</option>' + 
+      sessions.map(s => `<option value="${s.id}">${s.sessionName} (${s.phoneNumber || 'Unlinked'})</option>`).join('');
+    if (previousSelection && sessions.some(s => s.id === previousSelection)) {
+      statsDropdown.value = previousSelection;
+    }
+  }
 
   if (connected.length === 0) {
     dropdown.innerHTML = '<option value="">-- No connected devices --</option>';
@@ -2898,3 +2911,79 @@ function toggleLongMessage(id) {
   }
 }
 window.toggleLongMessage = toggleLongMessage;
+
+// ─── PERFORMANCE STATISTICS ─────────────────────────────────────────
+async function loadStats() {
+  const sessionFilter = document.getElementById('statsSessionFilter');
+  const dateFilter = document.getElementById('statsDateFilter');
+  const listBody = document.getElementById('statsListBody');
+
+  if (!listBody) return;
+
+  const sessionId = sessionFilter ? sessionFilter.value : '';
+  const dateRange = dateFilter ? dateFilter.value : 'all_time';
+
+  let url = '/api/orgs/statistics';
+  const params = [];
+  if (sessionId) params.push(`sessionId=${sessionId}`);
+  if (dateRange && dateRange !== 'all_time') {
+    params.push(`dateRange=${dateRange}`);
+  }
+  if (params.length > 0) {
+    url += '?' + params.join('&');
+  }
+
+  try {
+    listBody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+          ⏳ Loading statistics...
+        </td>
+      </tr>
+    `;
+
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to load statistics');
+
+    const stats = resData.statistics || [];
+    if (stats.length === 0) {
+      listBody.innerHTML = `
+        <tr>
+          <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+            No employee statistics found.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    listBody.innerHTML = stats.map(s => {
+      const roleText = s.role === 'admin' 
+        ? '<span class="badge-status connected">ADMIN</span>' 
+        : '<span class="badge-status connecting">AGENT</span>';
+      return `
+        <tr>
+          <td style="font-weight: 500;">${escapeHtml(s.displayName || s.email)}</td>
+          <td><code>${escapeHtml(s.email)}</code></td>
+          <td>${roleText}</td>
+          <td style="font-weight: 600;">${s.assignedChatsCount}</td>
+          <td style="font-weight: 600;">${s.interactedChatsCount}</td>
+          <td style="font-weight: 600; color: var(--accent-green);">${s.sentMessagesCount}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error(err);
+    listBody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align: center; color: var(--danger); padding: 1.5rem;">
+          ⚠️ Error loading statistics: ${escapeHtml(err.message)}
+        </td>
+      </tr>
+    `;
+  }
+}
+window.loadStats = loadStats;

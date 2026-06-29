@@ -300,3 +300,48 @@ orgRouter.put('/members/:userId/permissions', async (req: Request, res: Response
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+/**
+ * GET /statistics
+ * Fetch performance statistics for all employees in the organization.
+ */
+orgRouter.get('/statistics', async (req: Request, res: Response) => {
+  try {
+    const sessionId = req.query.sessionId as string | undefined;
+    const dateRange = req.query.dateRange as string | undefined;
+
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (dateRange && dateRange !== 'all_time') {
+      const now = new Date();
+      endDate = now;
+      startDate = new Date();
+
+      if (dateRange === 'today') {
+        startDate.setHours(0, 0, 0, 0);
+      } else if (dateRange === 'this_week') {
+        const day = startDate.getDay();
+        const diff = startDate.getDate() - day;
+        startDate = new Date(startDate.setDate(diff));
+        startDate.setHours(0, 0, 0, 0);
+      } else if (dateRange === 'this_month') {
+        startDate.setDate(1);
+        startDate.setHours(0, 0, 0, 0);
+      }
+    }
+
+    const statistics = await orgService.getEmployeeStatistics(req.user!.orgId, {
+      sessionId,
+      startDate,
+      endDate,
+    });
+
+    res.status(200).json({ statistics });
+  } catch (error) {
+    logger.error('Failed to retrieve employee statistics', {
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
