@@ -283,6 +283,7 @@ export function createMessageWorker(): Worker {
           broadcast: waMessage.broadcast ?? false,
           ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
           decryptionFailed: isDecryptionFailure ? true : undefined,
+          fileName: mediaInfo?.fileName || undefined,
           waMessage, // Store raw message for retry
         },
         createdAt: timestamp,

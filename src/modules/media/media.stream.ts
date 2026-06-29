@@ -59,9 +59,13 @@ mediaRouter.get('/:id', async (req: Request, res: Response) => {
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'private, max-age=86400',
         'ETag': `"${file.checksumSha256}"`,
-        'Content-Disposition': file.originalFilename
-          ? `inline; filename="${file.originalFilename}"`
-          : 'inline',
+        'Content-Disposition': (() => {
+          const dispositionType = req.query.download === 'true' ? 'attachment' : 'inline';
+          if (!file.originalFilename) return dispositionType;
+          const asciiFilename = file.originalFilename.replace(/[^\x20-\x7E]/g, '_');
+          const encodedFilename = encodeURIComponent(file.originalFilename);
+          return `${dispositionType}; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
+        })(),
       });
 
       const stream = await mediaService.download(file.objectKey);

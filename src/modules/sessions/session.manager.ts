@@ -1561,6 +1561,7 @@ class SessionManager {
             forwardScore,
             metadata: { 
               ...(quotedWaMessageId ? { quotedWaMessageId } : {}),
+              fileName: filename || undefined,
               waMessage: result,
             },
             sentByUserId: sentByUserId ?? null,

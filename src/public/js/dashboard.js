@@ -1002,7 +1002,18 @@ function renderMessages(msgList) {
           } else if (m.metadata?.mediaFileId) {
             const mediaUrl = `/api/media/${m.metadata.mediaFileId}?token=${token}`;
             if (m.messageType === 'image' || m.messageType === 'sticker') {
-              bodyHtml = `<div class="media-container"><img src="${mediaUrl}" class="chat-image" alt="Image" style="max-width: 250px; border-radius: 8px; margin-top: 5px; cursor: pointer;" onclick="window.open('${mediaUrl}', '_blank')"/></div>`;
+              const imgName = m.metadata?.fileName || 'image.jpg';
+              bodyHtml = `
+                <div class="media-container" style="position: relative; display: inline-block;">
+                  <img src="${mediaUrl}" class="chat-image" alt="Image" style="max-width: 250px; border-radius: 8px; margin-top: 5px; cursor: pointer; display: block;" onclick="window.open('${mediaUrl}', '_blank')"/>
+                  ${m.messageType === 'image' ? `
+                    <div class="image-media-actions" style="display: flex; gap: 0.5rem; margin-top: 0.35rem; justify-content: flex-end;">
+                      <a href="${mediaUrl}" target="_blank" title="Preview" style="color: #4fc3f7; text-decoration: none; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);"><span style="font-size: 0.8rem;">🔍</span> Preview</a>
+                      <a href="${mediaUrl}&download=true" download="${escapeHtml(imgName)}" title="Download" style="color: #4fc3f7; text-decoration: none; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);"><span style="font-size: 0.8rem;">📥</span> Download</a>
+                    </div>
+                  ` : ''}
+                </div>
+              `;
             } else if (m.messageType === 'video') {
               bodyHtml = `<div class="media-container"><video src="${mediaUrl}" controls class="chat-video" style="max-width: 300px; border-radius: 8px; margin-top: 5px;"></video></div>`;
             } else if (m.messageType === 'audio') {
@@ -1050,7 +1061,12 @@ function renderMessages(msgList) {
                 `;
               }
             } else if (m.messageType === 'document') {
-              bodyHtml = `<div class="media-container"><a href="${mediaUrl}" target="_blank" class="chat-document" style="display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; color: #4fc3f7; font-weight: 500; margin-top: 5px;">📄 Download ${escapeHtml(m.content || 'Document')}</a></div>`;
+              const docName = m.metadata?.fileName 
+                || m.metadata?.waMessage?.message?.documentMessage?.fileName 
+                || m.metadata?.waMessage?.message?.extendedTextMessage?.contextInfo?.quotedMessage?.documentMessage?.fileName
+                || m.content 
+                || 'Document';
+              bodyHtml = `<div class="media-container"><a href="${mediaUrl}&download=true" target="_blank" class="chat-document" style="display: inline-flex; align-items: center; gap: 0.5rem; text-decoration: none; color: #4fc3f7; font-weight: 500; margin-top: 5px;">📄 Download ${escapeHtml(docName)}</a></div>`;
             }
           } else {
             const isOld = (Date.now() - new Date(m.createdAt).getTime()) > 60000; // 1 minute
