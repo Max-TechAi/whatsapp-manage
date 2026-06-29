@@ -759,6 +759,9 @@ function renderChatsList(chatList) {
 }
 
 async function selectChat(chatDbId, waChatJid, chatName) {
+  cancelAttachmentPreview();
+  cancelReplyMode();
+
   activeChatId = waChatJid;
   activeChatDbId = chatDbId;
   
@@ -1154,16 +1157,63 @@ async function handleSendMessageSubmit(e) {
   e.preventDefault();
   const input = document.getElementById('dashboardMessageInput');
   const body = input.value.trim();
-  if (!body || !activeSessionId || !activeChatId) return;
+  
+  if (!activeSessionId || !activeChatId) return;
 
-  // Clear input
-  input.value = '';
+  // Check if we have neither text content nor an attachment
+  if (!pendingAttachmentFile && !body) return;
 
-  // Append local message bubble immediately for UX
-  appendLocalBubble(body);
+  // Append local message bubble immediately for UX if it's text-only
+  if (!pendingAttachmentFile && body) {
+    appendLocalBubble(body);
+  }
+
+  // Disable UI inputs during send
+  input.disabled = true;
+  const sendBtn = document.querySelector('#dashboardSendMessageForm button[type="submit"]');
+  if (sendBtn) sendBtn.disabled = true;
 
   try {
-    const response = await fetch('/api/messages', {
+    let mediaUrl = undefined;
+    let mediaMimeType = undefined;
+    let mediaSize = undefined;
+    let filename = undefined;
+    let messageType = 'text';
+
+    if (pendingAttachmentFile) {
+      input.placeholder = 'Uploading attachment...';
+      
+      // 1. Upload media binary via the existing upload API
+      const response = await fetch('/api/media/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'x-filename': encodeURIComponent(pendingAttachmentFile.name),
+          'content-type': pendingAttachmentFile.type || 'application/octet-stream',
+          'x-session-id': activeSessionId
+        },
+        body: pendingAttachmentFile
+      });
+
+      const resData = await response.json();
+      if (!response.ok) throw new Error(resData.error || 'Upload failed');
+
+      mediaUrl = resData.url;
+      mediaMimeType = pendingAttachmentFile.type || 'application/octet-stream';
+      mediaSize = resData.sizeBytes || pendingAttachmentFile.size;
+      filename = pendingAttachmentFile.name;
+
+      // Detect message type based on MIME
+      messageType = 'document';
+      if (mediaMimeType.startsWith('image/')) messageType = 'image';
+      else if (mediaMimeType.startsWith('video/')) messageType = 'video';
+      else if (mediaMimeType.startsWith('audio/')) messageType = 'audio';
+    }
+
+    input.placeholder = 'Sending...';
+
+    // 2. Send the message payload
+    const sendResponse = await fetch('/api/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1172,25 +1222,43 @@ async function handleSendMessageSubmit(e) {
       body: JSON.stringify({
         sessionId: activeSessionId,
         recipientJid: activeChatId,
-        body,
-        quotedMessageId: replyingToMessageId || undefined
+        messageType,
+        mediaUrl,
+        mediaMimeType,
+        mediaSize,
+        filename,
+        quotedMessageId: replyingToMessageId || undefined,
+        body: body || '' // Send the input value as the media caption or normal message text
       })
     });
-    const resData = await response.json();
-    if (!response.ok) throw new Error(resData.error || 'Failed to send');
+
+    const sendData = await sendResponse.json();
+    if (!sendResponse.ok) throw new Error(sendData.error || 'Failed to send message');
+
+    // Reset input text
+    input.value = '';
+
+    // Clear preview state
+    cancelAttachmentPreview();
 
     // Clean up reply state if we were replying
     if (replyingToMessageId) {
       cancelReplyMode();
     }
 
-    // Mark chat as read since we replied
+    // Mark chat as read since we sent a message
     if (activeChatDbId) {
       markChatAsRead(activeChatDbId);
     }
   } catch (err) {
     console.error(err);
     logTerminal('ERROR', `Send failed: ${err.message}`);
+    alert('Failed to send message: ' + err.message);
+  } finally {
+    input.placeholder = 'Type a message...';
+    input.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+    input.focus();
   }
 }
 
@@ -2367,79 +2435,97 @@ function triggerAttachmentUpload() {
 }
 window.triggerAttachmentUpload = triggerAttachmentUpload;
 
-async function handleAttachmentUpload(event) {
-  const file = event.target.files[0];
-  if (!file || !activeSessionId || !activeChatId) return;
+let pendingAttachmentFile = null;
+let pendingAttachmentObjectURL = null;
 
-  // Clear file input immediately so they can re-select the same file later if needed
+function setPendingAttachment(file) {
+  cancelAttachmentPreview();
+
+  if (!file) return;
+  pendingAttachmentFile = file;
+
+  const container = document.getElementById('attachmentPreviewContainer');
+  const mediaContainer = document.getElementById('attachmentPreviewMedia');
+  const filenameSpan = document.getElementById('attachmentPreviewFilename');
+  const mimeSpan = document.getElementById('attachmentPreviewMime');
+  const messageInput = document.getElementById('dashboardMessageInput');
+
+  if (!container || !mediaContainer || !filenameSpan || !mimeSpan) return;
+
+  const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+  filenameSpan.innerText = file.name || 'Pasted File';
+  mimeSpan.innerText = `(${sizeMB} MB) - ${file.type || 'unknown'}`;
+
+  if (file.type && file.type.startsWith('image/')) {
+    pendingAttachmentObjectURL = URL.createObjectURL(file);
+    mediaContainer.innerHTML = `<img src="${pendingAttachmentObjectURL}" style="max-width: 40px; max-height: 40px; border-radius: 4px; object-fit: cover; border: 1px solid rgba(255,255,255,0.1);">`;
+  } else {
+    mediaContainer.innerHTML = `<span style="font-size: 1.5rem; line-height: 1;">📄</span>`;
+  }
+
+  if (messageInput) {
+    messageInput.removeAttribute('required');
+  }
+
+  container.style.display = 'flex';
+}
+window.setPendingAttachment = setPendingAttachment;
+
+function cancelAttachmentPreview() {
+  pendingAttachmentFile = null;
+  if (pendingAttachmentObjectURL) {
+    URL.revokeObjectURL(pendingAttachmentObjectURL);
+    pendingAttachmentObjectURL = null;
+  }
+
+  const container = document.getElementById('attachmentPreviewContainer');
+  const mediaContainer = document.getElementById('attachmentPreviewMedia');
+  const filenameSpan = document.getElementById('attachmentPreviewFilename');
+  const mimeSpan = document.getElementById('attachmentPreviewMime');
+  const messageInput = document.getElementById('dashboardMessageInput');
+
+  if (container) container.style.display = 'none';
+  if (mediaContainer) mediaContainer.innerHTML = '';
+  if (filenameSpan) filenameSpan.innerText = '';
+  if (mimeSpan) mimeSpan.innerText = '';
+
+  if (messageInput) {
+    messageInput.setAttribute('required', 'required');
+  }
+}
+window.cancelAttachmentPreview = cancelAttachmentPreview;
+
+function handleMessageInputPaste(e) {
+  const clipboardItems = e.clipboardData?.items;
+  if (!clipboardItems) return;
+
+  for (let i = 0; i < clipboardItems.length; i++) {
+    const item = clipboardItems[i];
+    if (item.kind === 'file' || item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        e.preventDefault();
+        setPendingAttachment(file);
+        break;
+      }
+    }
+  }
+}
+
+// Bind paste event handler on load
+const messageInputEl = document.getElementById('dashboardMessageInput');
+if (messageInputEl) {
+  messageInputEl.addEventListener('paste', handleMessageInputPaste);
+}
+
+function handleAttachmentUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  // Clear value so the input registers re-selection of the same file
   event.target.value = '';
 
-  const input = document.getElementById('dashboardMessageInput');
-  input.placeholder = 'Uploading attachment...';
-  input.disabled = true;
-
-  try {
-    // 1. Upload media binary via existing upload API
-    const response = await fetch('/api/media/upload', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'x-filename': encodeURIComponent(file.name),
-        'content-type': file.type || 'application/octet-stream',
-        'x-session-id': activeSessionId
-      },
-      body: file
-    });
-
-    const resData = await response.json();
-    if (!response.ok) throw new Error(resData.error || 'Upload failed');
-
-    const mediaUrl = resData.url;
-    const mediaMimeType = file.type || 'application/octet-stream';
-    const mediaSize = resData.sizeBytes || file.size;
-    const filename = file.name;
-
-    // Detect message type based on MIME
-    let messageType = 'document';
-    if (mediaMimeType.startsWith('image/')) messageType = 'image';
-    else if (mediaMimeType.startsWith('video/')) messageType = 'video';
-    else if (mediaMimeType.startsWith('audio/')) messageType = 'audio';
-
-    // 2. Queue outbound message payload
-    const sendResponse = await fetch('/api/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        sessionId: activeSessionId,
-        recipientJid: activeChatId,
-        messageType,
-        mediaUrl,
-        mediaMimeType,
-        mediaSize,
-        filename,
-        quotedMessageId: replyingToMessageId || undefined,
-        body: '' // No caption on attachment trigger
-      })
-    });
-
-    const sendData = await sendResponse.json();
-    if (!sendResponse.ok) throw new Error(sendData.error || 'Failed to send attachment');
-
-    // Clean up reply state if we were replying
-    if (replyingToMessageId) {
-      cancelReplyMode();
-    }
-  } catch (err) {
-    console.error(err);
-    alert('Attachment upload failed: ' + err.message);
-  } finally {
-    input.placeholder = 'Type a message...';
-    input.disabled = false;
-    input.focus();
-  }
+  setPendingAttachment(file);
 }
 window.handleAttachmentUpload = handleAttachmentUpload;
 
