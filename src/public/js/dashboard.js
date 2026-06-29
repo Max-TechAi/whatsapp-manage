@@ -2376,10 +2376,10 @@ async function handleAttachmentUpload(event) {
     const resData = await response.json();
     if (!response.ok) throw new Error(resData.error || 'Upload failed');
 
-    const mediaUrl = resData.mediaUrl;
-    const mediaMimeType = resData.mimeType || file.type;
+    const mediaUrl = resData.url;
+    const mediaMimeType = file.type || 'application/octet-stream';
     const mediaSize = resData.sizeBytes || file.size;
-    const filename = resData.originalFilename || file.name;
+    const filename = file.name;
 
     // Detect message type based on MIME
     let messageType = 'document';
