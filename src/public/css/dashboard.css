@@ -418,13 +418,16 @@ body {
 
 /* Chat Bubbles */
 .message-bubble {
-  max-width: 65%;
+  max-width: 100%;
   padding: 0.75rem 1rem;
   border-radius: 12px;
   font-size: 0.95rem;
   line-height: 1.4;
   position: relative;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
   word-break: break-word;
+  box-sizing: border-box;
   animation: slideIn 0.2s ease-out;
 }
 
@@ -948,6 +951,7 @@ tr:hover td {
 .message-bubble-container {
   position: relative;
   max-width: 65%;
+  min-width: 0; /* Allows the bubble to shrink/wrap rather than overflow */
 }
 .message-actions-menu {
   position: absolute;

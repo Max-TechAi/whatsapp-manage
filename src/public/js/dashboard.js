@@ -1085,7 +1085,22 @@ function renderMessages(msgList) {
             }
           }
         } else {
-          bodyHtml = formatMessageContent(m.content || '');
+          const content = m.content || '';
+          if (content.length > 450) {
+            const shortContent = content.substring(0, 400);
+            const formattedFull = formatMessageContent(content);
+            const formattedShort = formatMessageContent(shortContent);
+            const uniqueId = `long-msg-${m.id}`;
+            bodyHtml = `
+              <div class="collapsible-message" id="${uniqueId}">
+                <div class="message-short-text">${formattedShort}...</div>
+                <div class="message-full-text" style="display: none;">${formattedFull}</div>
+                <button onclick="toggleLongMessage('${uniqueId}')" class="message-toggle-btn" style="background: none; border: none; color: #4fc3f7; padding: 0; font-size: 0.8rem; font-weight: 500; cursor: pointer; outline: none; margin-top: 0.25rem; display: block;">Show more</button>
+              </div>
+            `;
+          } else {
+            bodyHtml = formatMessageContent(content);
+          }
         }
 
         const editedLabel = m.isEdited ? '<span style="font-size: 0.65rem; color: rgba(255,255,255,0.4); margin-right: 0.25rem;">Edited</span>' : '';
@@ -2721,3 +2736,25 @@ function handlePreviewEscapeKey(e) {
     closeImagePreviewModal();
   }
 }
+
+// ─── COLLAPSIBLE MESSAGES TOGGLE ────────────────────────────────────
+
+function toggleLongMessage(id) {
+  const container = document.getElementById(id);
+  if (!container) return;
+  const shortText = container.querySelector('.message-short-text');
+  const fullText = container.querySelector('.message-full-text');
+  const btn = container.querySelector('.message-toggle-btn');
+  if (!shortText || !fullText || !btn) return;
+
+  if (fullText.style.display === 'none') {
+    fullText.style.display = 'block';
+    shortText.style.display = 'none';
+    btn.textContent = 'Show less';
+  } else {
+    fullText.style.display = 'none';
+    shortText.style.display = 'block';
+    btn.textContent = 'Show more';
+  }
+}
+window.toggleLongMessage = toggleLongMessage;
