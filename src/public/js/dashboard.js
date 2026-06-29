@@ -1093,6 +1093,21 @@ function renderMessages(msgList) {
 
               const downloadUrl = `${mediaUrl}&download=true&filename=${encodeURIComponent(docName)}`;
 
+              const previewableExtensions = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'txt', 'log', 'mp3', 'wav', 'ogg', 'mp4', 'webm', 'json', 'html', 'xml'];
+              const isPreviewable = previewableExtensions.includes(ext);
+
+              let actionsHtml = '';
+              if (isPreviewable) {
+                actionsHtml = `
+                  <a href="${mediaUrl}" target="_blank" class="doc-btn btn-open">Open</a>
+                  <a href="${downloadUrl}" download="${escapeHtml(docName)}" class="doc-btn btn-save">Save as...</a>
+                `;
+              } else {
+                actionsHtml = `
+                  <a href="${downloadUrl}" download="${escapeHtml(docName)}" class="doc-btn btn-save" style="flex: 1; text-align: center;">Download</a>
+                `;
+              }
+
               bodyHtml = `
                 <div class="document-card ${themeClass}">
                   <div class="document-info">
@@ -1103,8 +1118,7 @@ function renderMessages(msgList) {
                     </div>
                   </div>
                   <div class="document-actions">
-                    <a href="${mediaUrl}" target="_blank" class="doc-btn btn-open">Open</a>
-                    <a href="${downloadUrl}" download="${escapeHtml(docName)}" class="doc-btn btn-save">Save as...</a>
+                    ${actionsHtml}
                   </div>
                 </div>
               `;
