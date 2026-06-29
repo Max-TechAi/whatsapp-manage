@@ -61,9 +61,10 @@ mediaRouter.get('/:id', async (req: Request, res: Response) => {
         'ETag': `"${file.checksumSha256}"`,
         'Content-Disposition': (() => {
           const dispositionType = req.query.download === 'true' ? 'attachment' : 'inline';
-          if (!file.originalFilename) return dispositionType;
-          const asciiFilename = file.originalFilename.replace(/[^\x20-\x7E]/g, '_');
-          const encodedFilename = encodeURIComponent(file.originalFilename);
+          const rawFilename = (req.query.filename as string) || file.originalFilename;
+          if (!rawFilename) return dispositionType;
+          const asciiFilename = rawFilename.replace(/[^\x20-\x7E]/g, '_');
+          const encodedFilename = encodeURIComponent(rawFilename);
           return `${dispositionType}; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
         })(),
       });

@@ -1002,14 +1002,16 @@ function renderMessages(msgList) {
           } else if (m.metadata?.mediaFileId) {
             const mediaUrl = `/api/media/${m.metadata.mediaFileId}?token=${token}`;
             if (m.messageType === 'image' || m.messageType === 'sticker') {
-              const imgName = m.metadata?.fileName || 'image.jpg';
+              const ext = m.mediaMimeType === 'image/png' ? 'png' : 'jpg';
+              const imgName = m.metadata?.fileName || `image_${m.id.substring(0, 8)}.${ext}`;
+              const downloadUrl = `${mediaUrl}&download=true&filename=${encodeURIComponent(imgName)}`;
               bodyHtml = `
                 <div class="media-container" style="position: relative; display: inline-block;">
-                  <img src="${mediaUrl}" class="chat-image" alt="Image" style="max-width: 250px; border-radius: 8px; margin-top: 5px; cursor: pointer; display: block;" onclick="window.open('${mediaUrl}', '_blank')"/>
+                  <img src="${mediaUrl}" class="chat-image" alt="Image" style="max-width: 250px; border-radius: 8px; margin-top: 5px; cursor: pointer; display: block;" onclick="openImagePreview('${mediaUrl}', '${escapeHtml(imgName)}')"/>
                   ${m.messageType === 'image' ? `
                     <div class="image-media-actions" style="display: flex; gap: 0.5rem; margin-top: 0.35rem; justify-content: flex-end;">
-                      <a href="${mediaUrl}" target="_blank" title="Preview" style="color: #4fc3f7; text-decoration: none; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);"><span style="font-size: 0.8rem;">🔍</span> Preview</a>
-                      <a href="${mediaUrl}&download=true" download="${escapeHtml(imgName)}" title="Download" style="color: #4fc3f7; text-decoration: none; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);"><span style="font-size: 0.8rem;">📥</span> Download</a>
+                      <a href="javascript:void(0)" onclick="openImagePreview('${mediaUrl}', '${escapeHtml(imgName)}')" title="Preview" style="color: #4fc3f7; text-decoration: none; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);"><span style="font-size: 0.8rem;">🔍</span> Preview</a>
+                      <a href="${downloadUrl}" download="${escapeHtml(imgName)}" title="Download" style="color: #4fc3f7; text-decoration: none; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);"><span style="font-size: 0.8rem;">📥</span> Download</a>
                     </div>
                   ` : ''}
                 </div>
@@ -2569,3 +2571,44 @@ function scrollToMessage(waMessageId) {
   }
 }
 window.scrollToMessage = scrollToMessage;
+
+// ─── IMAGE PREVIEW LIGHTBOX MODAL ───────────────────────────────────
+
+function openImagePreview(imageUrl, filename) {
+  const modal = document.getElementById('imagePreviewModal');
+  const img = document.getElementById('previewImageEl');
+  const title = document.getElementById('previewImageTitle');
+  const downloadBtn = document.getElementById('previewImageDownloadBtn');
+
+  if (!modal || !img || !title || !downloadBtn) return;
+
+  img.src = imageUrl;
+  title.innerText = filename;
+  
+  const downloadUrl = `${imageUrl}&download=true&filename=${encodeURIComponent(filename)}`;
+  downloadBtn.href = downloadUrl;
+  downloadBtn.setAttribute('download', filename);
+
+  modal.style.display = 'flex';
+  
+  document.addEventListener('keydown', handlePreviewEscapeKey);
+}
+window.openImagePreview = openImagePreview;
+
+function closeImagePreviewModal(event) {
+  if (event && event.target !== document.getElementById('imagePreviewModal')) {
+    return;
+  }
+  const modal = document.getElementById('imagePreviewModal');
+  if (modal) {
+    modal.style.display = 'none';
+  }
+  document.removeEventListener('keydown', handlePreviewEscapeKey);
+}
+window.closeImagePreviewModal = closeImagePreviewModal;
+
+function handlePreviewEscapeKey(e) {
+  if (e.key === 'Escape') {
+    closeImagePreviewModal();
+  }
+}

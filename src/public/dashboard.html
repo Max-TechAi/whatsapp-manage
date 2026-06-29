@@ -472,6 +472,23 @@
     </div>
   </div>
 
+  <!-- Image Preview Lightbox Modal -->
+  <div id="imagePreviewModal" class="modal" onclick="closeImagePreviewModal(event)" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
+    <div class="modal-content" onclick="event.stopPropagation()" style="position: relative; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; gap: 0.75rem; background: transparent; border: none; box-shadow: none; padding: 0;">
+      <!-- Close button -->
+      <button type="button" onclick="closeImagePreviewModal()" style="position: absolute; top: -40px; right: 0; background: none; border: none; color: #ffffff; font-size: 2rem; cursor: pointer; outline: none; transition: color 0.2s;" onmouseover="this.style.color='#ff5252'" onmouseout="this.style.color='#ffffff'">×</button>
+      
+      <!-- Large image -->
+      <img id="previewImageEl" src="" style="max-width: 90vw; max-height: 80vh; object-fit: contain; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+      
+      <!-- Actions bar -->
+      <div style="display: flex; gap: 1rem; align-items: center; margin-top: 0.25rem;">
+        <span id="previewImageTitle" style="color: #ffffff; font-size: 0.9rem; text-shadow: 1px 1px 3px rgba(0,0,0,0.8);"></span>
+        <a id="previewImageDownloadBtn" href="" class="btn" style="padding: 0.4rem 1rem; font-size: 0.8rem; border-radius: 20px; background: var(--accent-green); color: #0b0f19; text-decoration: none; display: flex; align-items: center; gap: 0.25rem;">📥 Download</a>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/dashboard.js"></script>
 </body>
 </html>
