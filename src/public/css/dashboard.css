@@ -374,6 +374,7 @@ body {
   background-color: var(--bg-chat-pane);
   display: flex;
   flex-direction: column;
+  min-width: 0; /* Cap horizontal flex expansion */
 }
 
 .active-chat-header {
@@ -411,9 +412,11 @@ body {
   flex: 1;
   padding: 1.5rem;
   overflow-y: auto;
+  overflow-x: hidden; /* Prevent horizontal scrollbar/expansion */
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  min-width: 0; /* Allow inner bubbles to shrink and wrap */
 }
 
 /* Chat Bubbles */
@@ -947,6 +950,7 @@ tr:hover td {
   display: flex;
   flex-direction: column;
   width: 100%;
+  min-width: 0; /* Ensure nested flex wraps content */
 }
 .message-bubble-container {
   position: relative;
