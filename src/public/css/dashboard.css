@@ -430,9 +430,15 @@ body {
   word-wrap: break-word;
   overflow-wrap: break-word;
   word-break: break-word;
-  white-space: pre-wrap; /* Render newlines typed via Shift+Enter */
   box-sizing: border-box;
   animation: slideIn 0.2s ease-out;
+}
+
+.message-text {
+  white-space: pre-wrap; /* Render newlines typed via Shift+Enter */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 @keyframes slideIn {

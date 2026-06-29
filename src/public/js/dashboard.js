@@ -1085,7 +1085,7 @@ function renderMessages(msgList) {
             }
           }
         } else {
-          const content = m.content || '';
+          const content = (m.content || '').trim();
           if (content.length > 450) {
             const shortContent = content.substring(0, 400);
             const formattedFull = formatMessageContent(content);
@@ -1093,13 +1093,13 @@ function renderMessages(msgList) {
             const uniqueId = `long-msg-${m.id}`;
             bodyHtml = `
               <div class="collapsible-message" id="${uniqueId}">
-                <div class="message-short-text">${formattedShort}...</div>
-                <div class="message-full-text" style="display: none;">${formattedFull}</div>
+                <div class="message-short-text message-text">${formattedShort}...</div>
+                <div class="message-full-text message-text" style="display: none;">${formattedFull}</div>
                 <button onclick="toggleLongMessage('${uniqueId}')" class="message-toggle-btn" style="background: none; border: none; color: #4fc3f7; padding: 0; font-size: 0.8rem; font-weight: 500; cursor: pointer; outline: none; margin-top: 0.25rem; display: block;">Show more</button>
               </div>
             `;
           } else {
-            bodyHtml = formatMessageContent(content);
+            bodyHtml = `<div class="message-text">${formatMessageContent(content)}</div>`;
           }
         }
 
@@ -1118,10 +1118,11 @@ function renderMessages(msgList) {
         let quotedBoxHtml = '';
         const quotedWaId = m.metadata?.quotedWaMessageId;
         if (m.quotedContent || quotedWaId) {
+          const quotedContentTrimmed = (m.quotedContent || '[Media]').trim();
           quotedBoxHtml = `
             <div class="quoted-message-box" style="background: rgba(0,0,0,0.15); border-left: 3px solid #4fc3f7; padding: 0.25rem 0.5rem; margin-bottom: 0.4rem; border-radius: 2px; font-size: 0.75rem; color: rgba(255,255,255,0.7); cursor: pointer;" onclick="scrollToMessage('${quotedWaId || ''}')">
               <div style="font-weight: 600; color: #4fc3f7; font-size: 0.7rem; margin-bottom: 0.1rem;">Quoted Message</div>
-              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(m.quotedContent || '[Media]')}</div>
+              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(quotedContentTrimmed)}</div>
             </div>
           `;
         }
@@ -2443,7 +2444,7 @@ function initiateReply(btn) {
   replyingToMessageId = messageId;
 
   const senderName = msg.senderJid === 'me' ? 'You' : getSenderDisplayName(msg.senderJid, msg.metadata?.pushName);
-  const content = msg.content || (msg.messageType !== 'text' ? `[${msg.messageType}]` : '');
+  const content = (msg.content || (msg.messageType !== 'text' ? `[${msg.messageType}]` : '')).trim();
 
   const container = document.getElementById('replyPreviewContainer');
   const senderSpan = document.getElementById('replyPreviewSender');
