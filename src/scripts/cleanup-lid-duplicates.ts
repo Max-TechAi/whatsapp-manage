@@ -104,10 +104,20 @@ async function main() {
     // ----------------------------------------------------------------
     console.log('🔍 [PASS 2] Scanning chats table for candidates via resolved display name matching...');
     
-    // Fetch all active chats with their resolved names
+    // Fetch all active chats with their resolved names, falling back to contacts and messages metadata
     const allChatsRes = await client.query(`
       SELECT ch.id, ch.wa_chat_id, ch.session_id, ch.org_id, ch.unread_count, ch.last_message_at, ch.last_message_preview,
-             COALESCE(con.display_name, con.push_name, ch.name) AS resolved_name
+             COALESCE(
+               con.display_name, 
+               con.push_name, 
+               ch.name,
+               (
+                 SELECT m.metadata->>'pushName' 
+                 FROM messages m 
+                 WHERE m.chat_id = ch.id AND m.from_me = false 
+                 ORDER BY m.created_at DESC LIMIT 1
+               )
+             ) AS resolved_name
       FROM chats ch
       LEFT JOIN contacts con ON ch.session_id = con.session_id AND ch.wa_chat_id = con.wa_id
     `);
@@ -141,13 +151,7 @@ async function main() {
         const matchingPhoneChats = phoneChats.filter(c => c.resolved_name === resolvedName);
 
         for (const phoneChat of matchingPhoneChats) {
-          // Check safety metrics
-          const isLidInactive = (lidChat.unread_count || 0) === 0;
-          const isNameConfident = resolvedName && resolvedName.trim().length > 0 && !resolvedName.startsWith('Unknown');
-          
-          const isHighConfidence = isLidInactive && isNameConfident;
-
-          // Message counts
+          // Message counts & conflict check
           const totalLidMsgsRes = await client.query('SELECT COUNT(*)::int as count FROM messages WHERE chat_id = $1', [lidChat.id]);
           const totalLidMsgs = totalLidMsgsRes.rows[0].count;
 
@@ -160,11 +164,20 @@ async function main() {
           const conflictMsgs = conflictMsgsRes.rows[0].count;
           const uniqueLidMsgs = totalLidMsgs - conflictMsgs;
 
+          // Safety metrics
+          const sharesMessageIds = conflictMsgs > 0;
+          const isLidInactive = (lidChat.unread_count || 0) === 0;
+          const isNameConfident = resolvedName && resolvedName.trim().length > 0 && !resolvedName.startsWith('Unknown');
+          
+          // High-confidence if they share message IDs OR (LID chat is inactive and display name is confident)
+          const isHighConfidence = sharesMessageIds || (isLidInactive && isNameConfident);
+
           if (isHighConfidence) {
             pass2Merges++;
-            console.log(`  [PASS 2 HIGH-CONFIDENCE MERGE] Contact: "${resolvedName}" (Detected via chats table scan)`);
+            console.log(`  [PASS 2 HIGH-CONFIDENCE MERGE] Contact: "${resolvedName}" (Detected via name scan)`);
             console.log(`    - LID Chat ID:   ${lidChat.id} (${lidChat.wa_chat_id})`);
             console.log(`    - Phone Chat ID: ${phoneChat.id} (${phoneChat.wa_chat_id})`);
+            console.log(`    - Confidence:    ${sharesMessageIds ? '⭐ ABSOLUTE (Shares Message IDs)' : '✅ HIGH (LID chat is inactive)'}`);
             console.log(`    - Message Stats: ${totalLidMsgs} total LID messages (${conflictMsgs} duplicates will be deleted, ${uniqueLidMsgs} unique messages will be moved)`);
             console.log(`    - Unread Badge:  LID unread count (${lidChat.unread_count}) -> Phone unread count (${phoneChat.unread_count})`);
 
@@ -175,7 +188,7 @@ async function main() {
           } else {
             uncertainCount++;
             console.log(`  ⚠️ [PASS 2 UNCERTAIN MATCH - FOR REVIEW ONLY] Contact: "${resolvedName}"`);
-            console.log(`    - Reason:        LID Chat has active unread badges or ambiguous name info`);
+            console.log(`    - Reason:        LID Chat has active unread badges or ambiguous name info (and no shared message IDs)`);
             console.log(`    - LID Chat:      ID ${lidChat.id} (${lidChat.wa_chat_id}) | Unread: ${lidChat.unread_count} | Last message: ${lidChat.last_message_at}`);
             console.log(`    - Phone Chat:    ID ${phoneChat.id} (${phoneChat.wa_chat_id}) | Unread: ${phoneChat.unread_count}`);
             
