@@ -188,78 +188,6 @@ CREATE TRIGGER trg_on_new_message
   EXECUTE FUNCTION on_new_message();
 `;
 
-const SQL_CLEANUP_LID_DUPLICATES = `
-DO $$
-DECLARE
-  r RECORD;
-  lid_chat_id UUID;
-  phone_chat_id UUID;
-  new_unread INT;
-  new_last_msg_at TIMESTAMPTZ;
-  new_last_msg_preview TEXT;
-BEGIN
-  FOR r IN 
-    SELECT c.session_id, c.org_id, c.wa_id AS phone_jid, c.metadata->>'lid' AS lid_jid
-    FROM contacts c
-    WHERE c.wa_id LIKE '%@s.whatsapp.net' AND c.metadata->>'lid' LIKE '%@lid'
-  LOOP
-    -- Get the LID chat ID if it exists
-    SELECT id, last_message_at, last_message_preview, unread_count
-    INTO lid_chat_id, new_last_msg_at, new_last_msg_preview, new_unread
-    FROM chats
-    WHERE org_id = r.org_id AND session_id = r.session_id AND wa_chat_id = r.lid_jid;
-
-    -- Get the Phone chat ID if it exists
-    SELECT id INTO phone_chat_id
-    FROM chats
-    WHERE org_id = r.org_id AND session_id = r.session_id AND wa_chat_id = r.phone_jid;
-
-    IF lid_chat_id IS NOT NULL THEN
-      IF phone_chat_id IS NOT NULL THEN
-        -- Move messages (deleting conflicts first)
-        DELETE FROM messages 
-        WHERE org_id = r.org_id
-          AND chat_id = lid_chat_id
-          AND wa_message_id IN (
-            SELECT wa_message_id FROM messages WHERE org_id = r.org_id AND chat_id = phone_chat_id
-          );
-
-        UPDATE messages 
-        SET chat_id = phone_chat_id, updated_at = NOW() 
-        WHERE org_id = r.org_id AND chat_id = lid_chat_id;
-
-        -- Update phone chat with merged counts/timestamps
-        UPDATE chats
-        SET 
-          unread_count = unread_count + new_unread,
-          last_message_at = CASE 
-            WHEN new_last_msg_at IS NULL THEN last_message_at
-            WHEN last_message_at IS NULL THEN new_last_msg_at
-            WHEN new_last_msg_at > last_message_at THEN new_last_msg_at
-            ELSE last_message_at
-          END,
-          last_message_preview = CASE 
-            WHEN new_last_msg_at IS NULL THEN last_message_preview
-            WHEN last_message_at IS NULL THEN new_last_msg_preview
-            WHEN new_last_msg_at > last_message_at THEN new_last_msg_preview
-            ELSE last_message_preview
-          END,
-          updated_at = NOW()
-        WHERE id = phone_chat_id;
-
-        -- Delete the duplicate LID chat
-        DELETE FROM chats WHERE id = lid_chat_id;
-      ELSE
-        -- If phone chat doesn't exist, simply rename the LID chat to Phone JID
-        UPDATE chats 
-        SET wa_chat_id = r.phone_jid, updated_at = NOW() 
-        WHERE id = lid_chat_id;
-      END IF;
-    END IF;
-  END LOOP;
-END $$;
-`;
-
 // ─── Migration Runner ───────────────────────────────────────────────────────────
 
 async function runMigrations(): Promise<void> {
@@ -302,10 +230,6 @@ async function runMigrations(): Promise<void> {
       // on_new_message trigger
       console.log('  → Creating on_new_message trigger...');
       await client.query(SQL_ON_NEW_MESSAGE);
-
-      // Cleanup existing duplicate LID chats/contacts
-      console.log('  → Merging existing duplicate LID chats and contacts...');
-      await client.query(SQL_CLEANUP_LID_DUPLICATES);
 
       await client.query('COMMIT');
       console.log('✅ Extensions and triggers applied.\n');
