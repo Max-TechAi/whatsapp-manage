@@ -15,6 +15,7 @@
     "db:migrate": "tsx --env-file=.env src/db/migrate.ts",
     "db:migrate:prod": "node dist/db/migrate.js",
     "db:cleanup-lid": "tsx --env-file=.env src/scripts/cleanup-lid-duplicates.ts",
+    "db:cleanup-lid:prod": "node dist/scripts/cleanup-lid-duplicates.js",
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
