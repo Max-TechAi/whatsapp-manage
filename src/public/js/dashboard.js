@@ -1733,6 +1733,41 @@ function handleWsEvent(data) {
     }
   }
 
+  // Handle chat deletion/merge events (e.g. when LID chats are merged into phone chats)
+  if (type === 'chat:delete' || type === 'chat:deleted') {
+    const deletedChatId = data.chatId;
+    if (activeSessionId === sessionId && deletedChatId) {
+      console.log('[DEBUG] WS chat:delete event received', { deletedChatId });
+      const index = chats.findIndex(c => c.id === deletedChatId);
+      if (index !== -1) {
+        chats.splice(index, 1);
+        renderChatsList(chats);
+      }
+      
+      // If the user currently had this merged/deleted chat open, switch them to the target merged chat or clear view
+      if (activeChatDbId === deletedChatId) {
+        if (data.mergedIntoChatId) {
+          const mergedChat = chats.find(c => c.id === data.mergedIntoChatId);
+          if (mergedChat) {
+            activeChatDbId = mergedChat.id;
+            activeChatId = mergedChat.waChatId;
+            loadMessages(activeChatDbId, false);
+          } else {
+            activeChatId = '';
+            activeChatDbId = '';
+            document.getElementById('chatPlaceholder').style.display = 'flex';
+            document.getElementById('activeChatWrapper').style.display = 'none';
+          }
+        } else {
+          activeChatId = '';
+          activeChatDbId = '';
+          document.getElementById('chatPlaceholder').style.display = 'flex';
+          document.getElementById('activeChatWrapper').style.display = 'none';
+        }
+      }
+    }
+  }
+
   // Session Connection status updates
   if (type === 'session:status') {
     loadSessions();

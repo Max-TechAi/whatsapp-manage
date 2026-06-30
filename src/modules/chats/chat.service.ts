@@ -10,6 +10,7 @@ import { logger } from '../../observability/logger.js';
 import { resolveLidJid } from '../sessions/lid-mapping.js';
 import { normalizeJid } from '../sessions/session.events.js';
 import type { Chat, ChatListQuery, ChatListResponse, ChatUpdatePayload } from './chat.types.js';
+import { eventBus, STREAMS } from '../../events/event-bus.js';
 
 export class ChatService {
   /**
@@ -464,6 +465,9 @@ export class ChatService {
       }
       const orgId = sessionRecord.orgId;
 
+      let publishDeleteChatId: string | null = null;
+      let publishUpdateChatId: string | null = null;
+
       await db.transaction(async (tx) => {
         // 1. Merge Contacts
         const [lidContact] = await tx
@@ -586,6 +590,9 @@ export class ChatService {
             // Delete lidChat
             await tx.delete(chats).where(and(eq(chats.orgId, orgId), eq(chats.id, lidChat.id)));
             logger.info('Merged LID chat messages and metadata, deleted LID chat', { lidChatId: lidChat.id, phoneChatId: phoneChat.id });
+
+            publishDeleteChatId = lidChat.id;
+            publishUpdateChatId = phoneChat.id;
           } else {
             // Simply update lidChat to phoneChat
             await tx
@@ -593,9 +600,34 @@ export class ChatService {
               .set({ waChatId: normalizedPhone, updatedAt: new Date() })
               .where(and(eq(chats.orgId, orgId), eq(chats.id, lidChat.id)));
             logger.info('Renamed chat JID from LID to Phone JID', { chatId: lidChat.id, oldJid: normalizedLid, newJid: normalizedPhone });
+
+            publishUpdateChatId = lidChat.id;
           }
         }
       });
+
+      // Broadcast changes after transaction successfully committed
+      if (publishDeleteChatId) {
+        await eventBus.publishToStream(STREAMS.CHATS, 'chat:delete', {
+          sessionId,
+          orgId,
+          chatId: publishDeleteChatId,
+          waChatId: normalizedLid,
+          mergedIntoChatId: publishUpdateChatId,
+        }).catch((err) => logger.error('Failed to publish chat delete after merge', { error: err.message }));
+      }
+
+      if (publishUpdateChatId) {
+        const resolvedChat = await this.getChatById(orgId, publishUpdateChatId);
+        if (resolvedChat) {
+          await eventBus.publishToStream(STREAMS.CHATS, 'chat:update', {
+            sessionId,
+            orgId,
+            chat: resolvedChat,
+          }).catch((err) => logger.error('Failed to publish chat update after merge', { error: err.message }));
+        }
+      }
+
       logger.info('Successfully merged LID chat/contact and synchronized history', { sessionId, lidJid, phoneJid });
     } catch (err) {
       logger.error('Failed to merge LID chat/contact', { sessionId, lidJid, phoneJid, error: (err as Error).message });
