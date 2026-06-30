@@ -15,6 +15,56 @@ import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
 import { messages } from '../../db/schema.js';
 import { eq, and, desc } from 'drizzle-orm';
+import { aesDecryptGCM, hmacSign, proto } from '@whiskeysockets/baileys';
+
+// Helper to convert multiple secret formats into a unified Buffer
+function getBufferFromSecret(secret: any): Buffer | null {
+  if (!secret) return null;
+  if (Buffer.isBuffer(secret)) return secret;
+  if (secret instanceof Uint8Array) return Buffer.from(secret);
+  if (typeof secret === 'string') {
+    const isBase64 = /^[A-Za-z0-9+/]*={0,2}$/.test(secret);
+    return Buffer.from(secret, isBase64 ? 'base64' : 'utf8');
+  }
+  if (typeof secret === 'object' && secret.type === 'Buffer' && Array.isArray(secret.data)) {
+    return Buffer.from(secret.data);
+  }
+  if (Array.isArray(secret)) {
+    return Buffer.from(secret);
+  }
+  return null;
+}
+
+// Decrypts the secretEncryptedMessage using the original message's secret key
+function decryptEditedMessage(
+  secEncMsg: any,
+  messageSecret: Buffer,
+  senderJid: string
+): any {
+  const encPayload = getBufferFromSecret(secEncMsg.encPayload);
+  const encIv = getBufferFromSecret(secEncMsg.encIv);
+  if (!encPayload || !encIv) {
+    throw new Error('Payload or IV is missing or invalid');
+  }
+
+  const toBinary = (txt: string) => Buffer.from(txt);
+  const senderBuf = toBinary(senderJid);
+  
+  // Construct the signature required for decryption
+  const sign = Buffer.concat([
+    toBinary(secEncMsg.targetMessageKey.id),
+    senderBuf,
+    senderBuf,
+    toBinary('Message Edit'),
+    new Uint8Array([1])
+  ]);
+
+  const key = hmacSign(messageSecret, new Uint8Array(32));
+  const decKey = hmacSign(sign, key);
+
+  const decrypted = aesDecryptGCM(encPayload, decKey, encIv, new Uint8Array(0));
+  return proto.Message.decode(decrypted);
+}
 
 interface InboundMessageJob {
   sessionId: string;
@@ -62,23 +112,26 @@ export function createMessageWorker(): Worker {
 
       // Intercept message edits and deletes (revoke)
       const protocolMessage = waMessage.message?.protocolMessage;
-      if (protocolMessage) {
-        const targetId = protocolMessage.key?.id;
-        const isEdit = protocolMessage.type === 14 || protocolMessage.type === 'MESSAGE_EDIT';
-        const isRevoke = protocolMessage.type === 0 || protocolMessage.type === 'REVOKE';
+      const secretEncryptedMessage = waMessage.message?.secretEncryptedMessage;
 
-        if (targetId && (isEdit || isRevoke)) {
-          logger.info('[DEBUG EDIT_DELETE] Intercepted protocolMessage edit/revoke event', {
+      const isProtocolEdit = protocolMessage && (protocolMessage.type === 14 || protocolMessage.type === 'MESSAGE_EDIT');
+      const isProtocolRevoke = protocolMessage && (protocolMessage.type === 0 || protocolMessage.type === 'REVOKE');
+      const isSecretEdit = secretEncryptedMessage && (secretEncryptedMessage.secretEncType === 'MESSAGE_EDIT' || secretEncryptedMessage.secretEncType === 1);
+
+      if (isProtocolEdit || isProtocolRevoke || isSecretEdit) {
+        const targetId = isProtocolEdit || isProtocolRevoke 
+          ? protocolMessage.key?.id 
+          : secretEncryptedMessage.targetMessageKey?.id;
+
+        if (targetId) {
+          logger.info('[DEBUG EDIT_DELETE] Intercepted message edit/revoke event', {
             sessionId,
             orgId,
             editMessageId: waMessage.key.id,
-            targetId, // original message ID being edited
-            targetRemoteJid: protocolMessage.key?.remoteJid,
-            targetFromMe: protocolMessage.key?.fromMe,
-            incomingRemoteJid: waMessage.key.remoteJid,
-            incomingParticipant: waMessage.key.participant,
-            isEdit,
-            isRevoke,
+            targetId,
+            isProtocolEdit,
+            isProtocolRevoke,
+            isSecretEdit,
           });
 
           // Fetch the original message from the database
@@ -87,6 +140,7 @@ export function createMessageWorker(): Worker {
               id: messages.id,
               chatId: messages.chatId,
               content: messages.content,
+              metadata: messages.metadata,
             })
             .from(messages)
             .where(
@@ -104,15 +158,61 @@ export function createMessageWorker(): Worker {
               dbChatId: originalMsg.chatId,
             });
 
-            if (isEdit) {
-              // Extract the new content from the editedMessage using extractMessageContent
+            let newContent: string | null = null;
+            let success = false;
+
+            if (isProtocolEdit) {
               const dummyWaMsg = {
                 key: protocolMessage.key,
                 message: protocolMessage.editedMessage,
                 messageTimestamp: waMessage.messageTimestamp,
               };
-              const { content: newContent } = extractMessageContent(dummyWaMsg as any);
+              const { content } = extractMessageContent(dummyWaMsg as any);
+              newContent = content;
+              success = true;
+            } else if (isSecretEdit) {
+              try {
+                // Fetch the original message's secret key from metadata
+                const originalMsgRaw = (originalMsg.metadata as any)?.waMessage;
+                const msgSecRaw = originalMsgRaw?.message?.messageContextInfo?.messageSecret
+                  || originalMsgRaw?.message?.deviceSentMessage?.message?.messageContextInfo?.messageSecret;
 
+                if (!msgSecRaw) {
+                  throw new Error('Original message secret key is missing in stored metadata');
+                }
+
+                const msgSec = getBufferFromSecret(msgSecRaw);
+                if (!msgSec) {
+                  throw new Error('Failed to parse message secret into binary buffer');
+                }
+
+                const senderJid = waMessage.key.participant || waMessage.key.remoteJid;
+                if (!senderJid) {
+                  throw new Error('Missing sender participant JID to build edit signature');
+                }
+
+                const decryptedMsg = decryptEditedMessage(secretEncryptedMessage, msgSec!, senderJid);
+                logger.info('[DEBUG EDIT_DELETE] Successfully decrypted secretEncryptedMessage edit payload', {
+                  decryptedKeys: Object.keys(decryptedMsg || {})
+                });
+
+                const dummyWaMsg = {
+                  key: secretEncryptedMessage.targetMessageKey,
+                  message: decryptedMsg,
+                  messageTimestamp: waMessage.messageTimestamp,
+                };
+                const { content } = extractMessageContent(dummyWaMsg as any);
+                newContent = content;
+                success = true;
+              } catch (err) {
+                logger.error('[DEBUG EDIT_DELETE] Failed to decrypt secretEncryptedMessage edit', {
+                  targetId,
+                  error: (err as Error).message,
+                });
+              }
+            }
+
+            if (success && (isProtocolEdit || isSecretEdit)) {
               // Update database record
               await db
                 .update(messages)
@@ -124,7 +224,7 @@ export function createMessageWorker(): Worker {
                 })
                 .where(eq(messages.id, originalMsg.id));
 
-              logger.info('[DEBUG EDIT_DELETE] Updated message content for edit successfully', {
+              logger.info('[DEBUG EDIT_DELETE] Updated message content successfully', {
                 messageId: originalMsg.id,
                 waMessageId: targetId,
                 newContent,
@@ -139,8 +239,7 @@ export function createMessageWorker(): Worker {
                 isEdited: true,
                 content: newContent,
               });
-
-            } else if (isRevoke) {
+            } else if (isProtocolRevoke) {
               // Update database record (keep content in DB but set isDeleted flag)
               await db
                 .update(messages)
@@ -168,8 +267,9 @@ export function createMessageWorker(): Worker {
             logger.warn('[DEBUG EDIT_DELETE] Original message NOT FOUND in database for edit/revoke', {
               sessionId,
               targetId,
-              isEdit,
-              isRevoke,
+              isProtocolEdit,
+              isProtocolRevoke,
+              isSecretEdit,
             });
 
             // Perform diagnostic fallback scan to retrieve format of stored message IDs for comparison
