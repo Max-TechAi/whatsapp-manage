@@ -14,7 +14,7 @@ import { resolveLidJid } from '../../modules/sessions/lid-mapping.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
 import { messages } from '../../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 
 interface InboundMessageJob {
   sessionId: string;
@@ -65,10 +65,15 @@ export function createMessageWorker(): Worker {
         const isRevoke = protocolMessage.type === 0 || protocolMessage.type === 'REVOKE';
 
         if (targetId && (isEdit || isRevoke)) {
-          logger.info('[DEBUG EDIT_DELETE] Intercepted protocolMessage', {
+          logger.info('[DEBUG EDIT_DELETE] Intercepted protocolMessage edit/revoke event', {
             sessionId,
-            waMessageId: waMessage.key.id,
-            targetId,
+            orgId,
+            editMessageId: waMessage.key.id,
+            targetId, // original message ID being edited
+            targetRemoteJid: protocolMessage.key?.remoteJid,
+            targetFromMe: protocolMessage.key?.fromMe,
+            incomingRemoteJid: waMessage.key.remoteJid,
+            incomingParticipant: waMessage.key.participant,
             isEdit,
             isRevoke,
           });
@@ -90,6 +95,12 @@ export function createMessageWorker(): Worker {
             .limit(1);
 
           if (originalMsg) {
+            logger.info('[DEBUG EDIT_DELETE] Original message FOUND in database', {
+              targetId,
+              dbMessageId: originalMsg.id,
+              dbChatId: originalMsg.chatId,
+            });
+
             if (isEdit) {
               // Extract the new content from the editedMessage using extractMessageContent
               const dummyWaMsg = {
@@ -110,7 +121,7 @@ export function createMessageWorker(): Worker {
                 })
                 .where(eq(messages.id, originalMsg.id));
 
-              logger.info('[DEBUG EDIT_DELETE] Updated message content for edit', {
+              logger.info('[DEBUG EDIT_DELETE] Updated message content for edit successfully', {
                 messageId: originalMsg.id,
                 waMessageId: targetId,
                 newContent,
@@ -136,7 +147,7 @@ export function createMessageWorker(): Worker {
                 })
                 .where(eq(messages.id, originalMsg.id));
 
-              logger.info('[DEBUG EDIT_DELETE] Flagged message as deleted', {
+              logger.info('[DEBUG EDIT_DELETE] Flagged message as deleted successfully', {
                 messageId: originalMsg.id,
                 waMessageId: targetId,
               });
@@ -151,12 +162,37 @@ export function createMessageWorker(): Worker {
               });
             }
           } else {
-            logger.warn('[DEBUG EDIT_DELETE] Original message not found for edit/revoke', {
+            logger.warn('[DEBUG EDIT_DELETE] Original message NOT FOUND in database for edit/revoke', {
               sessionId,
               targetId,
               isEdit,
               isRevoke,
             });
+
+            // Perform diagnostic fallback scan to retrieve format of stored message IDs for comparison
+            try {
+              const recentMsgs = await db
+                .select({
+                  id: messages.id,
+                  waMessageId: messages.waMessageId,
+                  chatId: messages.chatId,
+                  createdAt: messages.createdAt,
+                })
+                .from(messages)
+                .where(eq(messages.sessionId, sessionId))
+                .orderBy(desc(messages.createdAt))
+                .limit(5);
+
+              logger.info('[DEBUG EDIT_DELETE DIAGNOSTIC] Stored waMessageId format overview (5 most recent):', {
+                recentMsgs: recentMsgs.map(m => ({
+                  id: m.id,
+                  waMessageId: m.waMessageId,
+                  createdAt: m.createdAt,
+                }))
+              });
+            } catch (diagErr) {
+              logger.error('[DEBUG EDIT_DELETE DIAGNOSTIC] Failed to query recent messages format', { error: (diagErr as Error).message });
+            }
           }
 
           // Return early to prevent inserting the protocol message wrapper as a new bubble
