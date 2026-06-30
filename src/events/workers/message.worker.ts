@@ -35,13 +35,16 @@ export function createMessageWorker(): Worker {
         return;
       }
 
-      logger.info('[DEBUG UNREAD] MessageWorker starting processing', {
+      logger.info('[DEBUG EDIT_DELETE UNCONDITIONAL] Message Worker starting processing', {
         jobId: job.id,
         sessionId,
         waMessageId: waMessage.key.id,
         remoteJid: waMessage.key.remoteJid,
-        fromMe: waMessage.key.fromMe,
-        type
+        messageKeys: Object.keys(waMessage.message || {}),
+        messageStubType: waMessage.messageStubType,
+        messageStubParameters: waMessage.messageStubParameters,
+        rawMessage: JSON.stringify(waMessage).substring(0, 1000),
+        type,
       });
 
       const resolvedRemoteJid = await resolveLidJid(sessionId, waMessage.key.remoteJid);
