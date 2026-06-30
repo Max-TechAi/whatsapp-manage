@@ -1,8 +1,5 @@
 import pg from 'pg';
-import dotenv from 'dotenv';
 
-// Load environment variables
-dotenv.config();
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
