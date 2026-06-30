@@ -190,6 +190,8 @@ export class MessageService {
         isForwarded: messages.isForwarded,
         forwardScore: messages.forwardScore,
         starred: messages.starred,
+        isEdited: messages.isEdited,
+        isDeleted: messages.isDeleted,
         metadata: messages.metadata,
         sentByUserId: messages.sentByUserId,
         sentByDisplayName: usersTable.displayName,

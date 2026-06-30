@@ -1,5 +1,8 @@
 import { redis } from '../../config/redis.js';
 import { logger } from '../../observability/logger.js';
+import { db } from '../../config/database.js';
+import { contacts } from '../../db/schema.js';
+import { and, eq, sql } from 'drizzle-orm';
 
 /**
  * Key format for storing LID-to-Phone-JID mappings in Redis
@@ -57,7 +60,37 @@ export async function saveLidMapping(sessionId: string, lid: string, phone: stri
   if (normalizedLid.endsWith('@lid') && normalizedPhone.endsWith('@s.whatsapp.net')) {
     try {
       await redis.hset(lidMappingKey(sessionId), normalizedLid, normalizedPhone);
-      logger.info('Saved LID to Phone mapping', { sessionId, lid: normalizedLid, phone: normalizedPhone });
+      logger.info('Saved LID to Phone mapping in Redis', { sessionId, lid: normalizedLid, phone: normalizedPhone });
+
+      // Also persist to PostgreSQL contacts table metadata to survive Redis restarts
+      try {
+        const [contactRecord] = await db
+          .select({ id: contacts.id, metadata: contacts.metadata })
+          .from(contacts)
+          .where(
+            and(
+              eq(contacts.sessionId, sessionId),
+              eq(contacts.waId, normalizedPhone)
+            )
+          )
+          .limit(1);
+
+        if (contactRecord) {
+          const currentMeta = (contactRecord.metadata as Record<string, any>) || {};
+          if (currentMeta.lid !== normalizedLid) {
+            await db
+              .update(contacts)
+              .set({
+                metadata: { ...currentMeta, lid: normalizedLid },
+                updatedAt: new Date()
+              })
+              .where(eq(contacts.id, contactRecord.id));
+            logger.info('Persisted LID mapping to contact metadata in DB', { sessionId, waId: normalizedPhone, lid: normalizedLid });
+          }
+        }
+      } catch (dbErr) {
+        logger.error('Failed to persist LID mapping to database contact metadata', { sessionId, lid: normalizedLid, phone: normalizedPhone, error: (dbErr as Error).message });
+      }
 
       /* BUG 1: Dynamically import chatService and trigger database-level merge of LID chat/contact */
       import('../chats/chat.service.js')
@@ -71,7 +104,7 @@ export async function saveLidMapping(sessionId: string, lid: string, phone: stri
           logger.error('Failed to dynamically import chatService for LID merge', { error: err.message });
         });
     } catch (err) {
-      logger.error('Failed to save LID mapping in Redis', { sessionId, error: (err as Error).message });
+      logger.error('Failed to save LID mapping', { sessionId, error: (err as Error).message });
     }
   }
 }
@@ -90,11 +123,30 @@ export async function resolveLidJid(sessionId: string, jid: string): Promise<str
   try {
     const resolved = await redis.hget(lidMappingKey(sessionId), normalizedJid);
     if (resolved) {
-      logger.debug('Resolved LID JID to Phone JID', { sessionId, original: jid, resolved });
+      logger.debug('Resolved LID JID to Phone JID from Redis', { sessionId, original: jid, resolved });
       return resolved;
     }
+
+    // Fallback: check database contacts table metadata
+    const [dbContact] = await db
+      .select({ waId: contacts.waId })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.sessionId, sessionId),
+          sql`${contacts.metadata}->>'lid' = ${normalizedJid}`
+        )
+      )
+      .limit(1);
+
+    if (dbContact) {
+      logger.info('Resolved LID JID from PostgreSQL contact metadata', { sessionId, original: jid, resolved: dbContact.waId });
+      // Cache back to Redis
+      await redis.hset(lidMappingKey(sessionId), normalizedJid, dbContact.waId);
+      return dbContact.waId;
+    }
   } catch (err) {
-    logger.error('Failed to resolve LID JID in Redis', { sessionId, jid, error: (err as Error).message });
+    logger.error('Failed to resolve LID JID', { sessionId, jid, error: (err as Error).message });
   }
 
   return jid;
