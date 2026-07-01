@@ -145,6 +145,10 @@
                   </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <!-- Mark as read (manual) -->
+                  <button id="markReadBtn" class="btn btn-secondary" onclick="openMarkReadModal()" style="display: none; padding: 0.3rem 0.6rem; font-size: 0.8rem; height: auto;">
+                    ✓ Mark as Read
+                  </button>
                   <!-- Reset encryption session -->
                   <button class="btn btn-secondary" onclick="handleResetContactSession()" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; height: auto;">
                     🔄 Reset Encryption
@@ -407,6 +411,38 @@
             </table>
           </div>
         </div>
+
+        <div class="card" style="margin-top: 1rem;">
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <span>📋 Mark-as-Read Audit Log</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <select id="readEventsSessionFilter" onchange="loadReadEvents()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+                <option value="">All Sessions</option>
+              </select>
+            </div>
+          </div>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Agent</th>
+                  <th>Chat</th>
+                  <th>Session</th>
+                  <th>Trigger</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="readEventsListBody">
+                <tr>
+                  <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                    ⏳ Loading audit log...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- ─── UNIFIED INBOX TAB ───────────────────────────────── -->
@@ -563,6 +599,25 @@
           <button type="submit" class="btn">Save Changes</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Mark as Read Modal -->
+  <div id="markReadModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; width: 420px; max-width: 90%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+        <h3 style="margin: 0; color: var(--text-main); font-size: 1.1rem;">Mark as Read</h3>
+        <button type="button" onclick="closeMarkReadModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; line-height: 1; outline: none; padding: 0;">×</button>
+      </div>
+      <p id="markReadChatName" style="margin: 0; font-size: 0.85rem; color: var(--text-muted);"></p>
+      <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+        <label for="markReadReasonInput" style="font-size: 0.8rem; color: var(--text-muted);">Reason (required)</label>
+        <textarea id="markReadReasonInput" rows="3" placeholder="Why are you marking this as read? e.g. Called customer, issue resolved" style="width: 100%; padding: 0.5rem; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-main); font-size: 0.85rem; outline: none; resize: vertical;"></textarea>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 0.25rem;">
+        <button type="button" class="btn btn-secondary" onclick="closeMarkReadModal()">Cancel</button>
+        <button type="button" id="markReadConfirmBtn" class="btn" onclick="submitMarkAsRead()" disabled>Confirm</button>
+      </div>
     </div>
   </div>
 

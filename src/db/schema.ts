@@ -34,6 +34,9 @@ export const planEnum = pgEnum('plan', ['free', 'pro', 'enterprise']);
 /** User role within an organization */
 export const userRoleEnum = pgEnum('user_role', ['admin', 'agent']);
 
+/** How a chat was marked as read */
+export const chatReadTriggerEnum = pgEnum('chat_read_trigger', ['manual', 'reply']);
+
 // ─── 1. Organizations ──────────────────────────────────────────────────────────
 
 /** Top-level tenant. All resources are scoped under an organization. */
@@ -235,6 +238,36 @@ export const chats = pgTable(
     /** Descending index for chat list sorted by most-recent message */
     index('idx_chats_session_last_msg').on(table.sessionId, table.lastMessageAt),
     index('idx_chats_org_id').on(table.orgId),
+  ],
+);
+
+// ─── 6b. Chat Read Events ───────────────────────────────────────────────────────
+
+/**
+ * Append-only audit log of when chats were marked as read (manual or reply-triggered).
+ */
+export const chatReadEvents = pgTable(
+  'chat_read_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    chatId: uuid('chat_id')
+      .notNull()
+      .references(() => chats.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    trigger: chatReadTriggerEnum('trigger').notNull(),
+    reason: text('reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('idx_chat_read_events_org_created').on(table.orgId, table.createdAt),
+    index('idx_chat_read_events_chat_id').on(table.chatId, table.createdAt),
+    index('idx_chat_read_events_user_id').on(table.userId),
   ],
 );
 
@@ -474,6 +507,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   mediaFiles: many(mediaFiles),
   webhooks: many(webhooks),
   auditLogs: many(auditLogs),
+  chatReadEvents: many(chatReadEvents),
 }));
 
 /** User belongs to an org, can own sessions, and appear in audit logs. */
@@ -484,6 +518,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   }),
   sessions: many(sessions),
   auditLogs: many(auditLogs),
+  chatReadEvents: many(chatReadEvents),
   sessionAccess: many(userSessionAccess),
   assignedChats: many(chats),
   sentMessages: many(messages),
@@ -504,6 +539,7 @@ export const sessionsRelations = relations(sessions, ({ one, many }) => ({
   chats: many(chats),
   messages: many(messages),
   auditLogs: many(auditLogs),
+  chatReadEvents: many(chatReadEvents),
   userAccess: many(userSessionAccess),
 }));
 
@@ -538,8 +574,29 @@ export const chatsRelations = relations(chats, ({ one, many }) => ({
     references: [sessions.id],
   }),
   messages: many(messages),
+  readEvents: many(chatReadEvents),
   assignedToUser: one(users, {
     fields: [chats.assignedToUserId],
+    references: [users.id],
+  }),
+}));
+
+/** Chat read event belongs to org, session, chat, and optionally a user. */
+export const chatReadEventsRelations = relations(chatReadEvents, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [chatReadEvents.orgId],
+    references: [organizations.id],
+  }),
+  session: one(sessions, {
+    fields: [chatReadEvents.sessionId],
+    references: [sessions.id],
+  }),
+  chat: one(chats, {
+    fields: [chatReadEvents.chatId],
+    references: [chats.id],
+  }),
+  user: one(users, {
+    fields: [chatReadEvents.userId],
     references: [users.id],
   }),
 }));

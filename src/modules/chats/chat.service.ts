@@ -4,8 +4,8 @@
  */
 
 import { db } from '../../config/database.js';
-import { chats, contacts, messages, sessions } from '../../db/schema.js';
-import { eq, and, desc, lt, sql, ne, notLike, or, isNull } from 'drizzle-orm';
+import { chats, contacts, messages, sessions, chatReadEvents, users } from '../../db/schema.js';
+import { eq, and, desc, lt, sql, ne, notLike, or, isNull, gte, lte } from 'drizzle-orm';
 import { logger } from '../../observability/logger.js';
 import { resolveLidJid } from '../sessions/lid-mapping.js';
 import { normalizeJid } from '../sessions/session.events.js';
@@ -417,14 +417,223 @@ export class ChatService {
   }
 
   /**
-   * Mark all messages in a chat as read (reset unread count).
+   * Mark all messages in a chat as read: DB update, audit log, WebSocket broadcast, and Baileys read receipt.
    */
-  async markAsRead(orgId: string, chatId: string): Promise<void> {
-    logger.info('[DEBUG UNREAD] chat.service.ts markAsRead called', { orgId, chatId });
+  async markChatAsRead(
+    orgId: string,
+    chatId: string,
+    options: {
+      userId?: string | null;
+      trigger: 'manual' | 'reply';
+      reason?: string;
+      skipBaileys?: boolean;
+      skipAudit?: boolean;
+    },
+  ): Promise<Chat | null> {
+    const chat = await this.getChatById(orgId, chatId);
+    if (!chat) return null;
+
+    logger.info('[DEBUG UNREAD] chat.service.ts markChatAsRead called', {
+      orgId,
+      chatId,
+      trigger: options.trigger,
+      userId: options.userId,
+    });
+
     await db
       .update(chats)
       .set({ unreadCount: 0, updatedAt: new Date() })
       .where(and(eq(chats.orgId, orgId), eq(chats.id, chatId)));
+
+    if (!options.skipAudit) {
+      await db.insert(chatReadEvents).values({
+        orgId,
+        sessionId: chat.sessionId,
+        chatId,
+        userId: options.userId ?? null,
+        trigger: options.trigger,
+        reason: options.reason ?? null,
+      });
+    }
+
+    const updatedChat = await this.getChatById(orgId, chatId);
+
+    if (updatedChat) {
+      await eventBus.publishToStream(STREAMS.CHATS, 'chat:update', {
+        sessionId: chat.sessionId,
+        orgId,
+        chat: updatedChat,
+      });
+    }
+
+    if (!options.skipBaileys) {
+      await this.enqueueMarkReadOnWhatsApp(chat.sessionId, chat.waChatId, chatId);
+    }
+
+    return updatedChat;
+  }
+
+  /**
+   * @deprecated Use markChatAsRead instead.
+   */
+  async markAsRead(orgId: string, chatId: string): Promise<void> {
+    await this.markChatAsRead(orgId, chatId, {
+      trigger: 'manual',
+      reason: 'Legacy mark-as-read',
+      skipAudit: true,
+    });
+  }
+
+  /**
+   * Enqueue a Baileys readMessages call on the session control worker.
+   */
+  private async enqueueMarkReadOnWhatsApp(
+    sessionId: string,
+    waChatId: string,
+    chatId: string,
+  ): Promise<void> {
+    try {
+      const [lastInboundMsg] = await db
+        .select({
+          waMessageId: messages.waMessageId,
+          senderJid: messages.senderJid,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .where(and(eq(messages.chatId, chatId), eq(messages.fromMe, false)))
+        .orderBy(desc(messages.createdAt), desc(messages.id))
+        .limit(1);
+
+      if (!lastInboundMsg) {
+        logger.info('No inbound messages to mark read on WhatsApp', { sessionId, chatId, waChatId });
+        return;
+      }
+
+      await eventBus.publishSessionControl(sessionId, 'mark-read', {
+        waChatId,
+        lastInboundMsg: {
+          waMessageId: lastInboundMsg.waMessageId,
+          senderJid: lastInboundMsg.senderJid,
+          createdAt: lastInboundMsg.createdAt.toISOString(),
+        },
+      });
+
+      logger.info('Enqueued mark-read command to session runner', {
+        sessionId,
+        waChatId,
+        waMessageId: lastInboundMsg.waMessageId,
+      });
+    } catch (err) {
+      logger.warn('Failed to enqueue mark-read command', {
+        chatId,
+        sessionId,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  /**
+   * List mark-as-read audit events for admin review.
+   */
+  async listReadEvents(
+    orgId: string,
+    options: {
+      limit?: number;
+      cursor?: string;
+      sessionId?: string;
+      userId?: string;
+      chatId?: string;
+      from?: Date;
+      to?: Date;
+    } = {},
+  ): Promise<{
+    events: Array<{
+      id: string;
+      createdAt: Date;
+      trigger: 'manual' | 'reply';
+      reason: string | null;
+      user: { id: string; displayName: string | null; email: string } | null;
+      chat: { id: string; name: string | null; waChatId: string };
+      session: { id: string; sessionName: string };
+    }>;
+    nextCursor: string | null;
+  }> {
+    const limit = Math.min(options.limit ?? 50, 100);
+    const conditions = [eq(chatReadEvents.orgId, orgId)];
+
+    if (options.sessionId) {
+      conditions.push(eq(chatReadEvents.sessionId, options.sessionId));
+    }
+    if (options.userId) {
+      conditions.push(eq(chatReadEvents.userId, options.userId));
+    }
+    if (options.chatId) {
+      conditions.push(eq(chatReadEvents.chatId, options.chatId));
+    }
+    if (options.from) {
+      conditions.push(gte(chatReadEvents.createdAt, options.from));
+    }
+    if (options.to) {
+      conditions.push(lte(chatReadEvents.createdAt, options.to));
+    }
+    if (options.cursor) {
+      conditions.push(lt(chatReadEvents.createdAt, new Date(options.cursor)));
+    }
+
+    const rows = await db
+      .select({
+        id: chatReadEvents.id,
+        createdAt: chatReadEvents.createdAt,
+        trigger: chatReadEvents.trigger,
+        reason: chatReadEvents.reason,
+        userId: users.id,
+        userDisplayName: users.displayName,
+        userEmail: users.email,
+        chatId: chats.id,
+        chatName: chats.name,
+        chatWaChatId: chats.waChatId,
+        sessionId: sessions.id,
+        sessionName: sessions.sessionName,
+      })
+      .from(chatReadEvents)
+      .innerJoin(chats, eq(chatReadEvents.chatId, chats.id))
+      .innerJoin(sessions, eq(chatReadEvents.sessionId, sessions.id))
+      .leftJoin(users, eq(chatReadEvents.userId, users.id))
+      .where(and(...conditions))
+      .orderBy(desc(chatReadEvents.createdAt))
+      .limit(limit + 1);
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
+    const events = page.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt,
+      trigger: row.trigger as 'manual' | 'reply',
+      reason: row.reason,
+      user: row.userId
+        ? {
+            id: row.userId,
+            displayName: row.userDisplayName,
+            email: row.userEmail!,
+          }
+        : null,
+      chat: {
+        id: row.chatId,
+        name: row.chatName,
+        waChatId: row.chatWaChatId,
+      },
+      session: {
+        id: row.sessionId,
+        sessionName: row.sessionName,
+      },
+    }));
+
+    const nextCursor = hasMore
+      ? page[page.length - 1]!.createdAt.toISOString()
+      : null;
+
+    return { events, nextCursor };
   }
 
   /**

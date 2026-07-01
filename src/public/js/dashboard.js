@@ -382,7 +382,10 @@ function switchTab(tabId) {
   if (tabId === 'sessions') loadSessions();
   if (tabId === 'webhooks') loadWebhooks();
   if (tabId === 'team') loadTeamMembers();
-  if (tabId === 'stats') loadStats();
+  if (tabId === 'stats') {
+    loadStats();
+    loadReadEvents();
+  }
   if (tabId === 'unified-inbox') loadUnifiedInbox();
 }
 
@@ -407,6 +410,7 @@ async function loadSessions() {
 function populateSessionDropdowns(sessions) {
   const dropdown = document.getElementById('inboxSessionSelect');
   const statsDropdown = document.getElementById('statsSessionFilter');
+  const readEventsDropdown = document.getElementById('readEventsSessionFilter');
   const unifiedDropdown = document.getElementById('unifiedSessionFilter');
   const connected = sessions.filter(s => s.status === 'connected');
 
@@ -416,6 +420,15 @@ function populateSessionDropdowns(sessions) {
       sessions.map(s => `<option value="${s.id}">${s.sessionName} (${s.phoneNumber || 'Unlinked'})</option>`).join('');
     if (previousSelection && sessions.some(s => s.id === previousSelection)) {
       statsDropdown.value = previousSelection;
+    }
+  }
+
+  if (readEventsDropdown) {
+    const previousSelection = readEventsDropdown.value;
+    readEventsDropdown.innerHTML = '<option value="">All Sessions</option>' +
+      sessions.map(s => `<option value="${s.id}">${s.sessionName} (${s.phoneNumber || 'Unlinked'})</option>`).join('');
+    if (previousSelection && sessions.some(s => s.id === previousSelection)) {
+      readEventsDropdown.value = previousSelection;
     }
   }
 
@@ -815,6 +828,18 @@ async function selectChat(chatDbId, waChatJid, chatName) {
 
   // Load message history
   await loadMessages(chatDbId);
+  updateMarkReadButtonVisibility();
+}
+
+function updateMarkReadButtonVisibility() {
+  const btn = document.getElementById('markReadBtn');
+  if (!btn || !activeChatDbId) {
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  const chatObj = chats.find(c => c.id === activeChatDbId);
+  const unread = chatObj ? Number(chatObj.unreadCount) || 0 : 0;
+  btn.style.display = unread > 0 ? 'inline-flex' : 'none';
 }
 
 async function loadMessages(chatDbId, silent = false, cursorParam = null) {
@@ -1403,11 +1428,6 @@ async function handleSendMessageSubmit(e) {
     if (replyingToMessageId) {
       cancelReplyMode();
     }
-
-    // Mark chat as read since we sent a message
-    if (activeChatDbId) {
-      markChatAsRead(activeChatDbId);
-    }
   } catch (err) {
     console.error(err);
     logTerminal('ERROR', `Send failed: ${err.message}`);
@@ -1437,18 +1457,74 @@ function appendLocalBubble(text) {
   container.scrollTop = container.scrollHeight;
 }
 
-async function markChatAsRead(chatDbId) {
+async function openMarkReadModal() {
+  if (!activeChatDbId) return;
+  const chatObj = chats.find(c => c.id === activeChatDbId);
+  const chatName = chatObj ? getChatDisplayName(chatObj) : 'Chat';
+
+  const modal = document.getElementById('markReadModal');
+  const nameEl = document.getElementById('markReadChatName');
+  const reasonInput = document.getElementById('markReadReasonInput');
+  const confirmBtn = document.getElementById('markReadConfirmBtn');
+
+  if (!modal || !reasonInput || !confirmBtn) return;
+
+  if (nameEl) nameEl.textContent = chatName;
+  reasonInput.value = '';
+  confirmBtn.disabled = true;
+  modal.style.display = 'flex';
+  reasonInput.focus();
+
+  reasonInput.oninput = () => {
+    confirmBtn.disabled = reasonInput.value.trim().length < 3;
+  };
+}
+
+function closeMarkReadModal() {
+  const modal = document.getElementById('markReadModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function submitMarkAsRead() {
+  if (!activeChatDbId) return;
+  const reasonInput = document.getElementById('markReadReasonInput');
+  const confirmBtn = document.getElementById('markReadConfirmBtn');
+  const reason = reasonInput?.value?.trim() || '';
+  if (reason.length < 3) return;
+
+  if (confirmBtn) confirmBtn.disabled = true;
+
   try {
-    await fetch(`/api/chats/${chatDbId}/read`, {
+    const response = await fetch(`/api/chats/${activeChatDbId}/read`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ reason }),
     });
-    // Quietly reload chats list to update badge
-    loadChats();
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to mark as read');
+
+    const chatObj = chats.find(c => c.id === activeChatDbId);
+    if (chatObj) {
+      chatObj.unreadCount = 0;
+      renderChatsList(chats);
+    }
+    updateMarkReadButtonVisibility();
+    closeMarkReadModal();
   } catch (err) {
     console.error('Failed to mark chat as read', err);
+    alert('Failed to mark as read: ' + err.message);
+  } finally {
+    if (confirmBtn) confirmBtn.disabled = reasonInput?.value?.trim().length < 3;
   }
 }
+
+window.openMarkReadModal = openMarkReadModal;
+window.closeMarkReadModal = closeMarkReadModal;
+window.submitMarkAsRead = submitMarkAsRead;
+window.updateMarkReadButtonVisibility = updateMarkReadButtonVisibility;
 
 function handleChatSearch() {
   const query = document.getElementById('chatSearchInput').value.toLowerCase();
@@ -1691,6 +1767,7 @@ function handleWsEvent(data) {
           console.log('[DEBUG UNREAD] Skipping unread increment because it is a duplicate message', { msgChatId, msgId });
         }
         renderChatsList(chats);
+        updateMarkReadButtonVisibility();
       } else {
         console.log('[DEBUG UNREAD] Chat object not found in chats array, calling loadChats()', { msgChatId });
         // Fallback: reload chats list from server
@@ -1748,6 +1825,7 @@ function handleWsEvent(data) {
         chats.push(updatedChat);
       }
       renderChatsList(chats);
+      updateMarkReadButtonVisibility();
     }
   }
 
@@ -3063,6 +3141,74 @@ async function loadStats() {
   }
 }
 window.loadStats = loadStats;
+
+async function loadReadEvents() {
+  const sessionFilter = document.getElementById('readEventsSessionFilter');
+  const listBody = document.getElementById('readEventsListBody');
+  if (!listBody) return;
+
+  const sessionId = sessionFilter ? sessionFilter.value : '';
+  let url = '/api/chats/read-events?limit=50';
+  if (sessionId) url += `&sessionId=${sessionId}`;
+
+  try {
+    listBody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+          ⏳ Loading audit log...
+        </td>
+      </tr>
+    `;
+
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const resData = await response.json();
+    if (!response.ok) throw new Error(resData.error || 'Failed to load read events');
+
+    const events = resData.events || [];
+    if (events.length === 0) {
+      listBody.innerHTML = `
+        <tr>
+          <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+            No mark-as-read events recorded yet.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    listBody.innerHTML = events.map(ev => {
+      const agentLabel = ev.user
+        ? escapeHtml(ev.user.displayName || ev.user.email)
+        : '<span style="color: var(--text-muted); font-style: italic;">Phone</span>';
+      const chatLabel = escapeHtml(ev.chat.name || ev.chat.waChatId);
+      const triggerBadge = ev.trigger === 'manual'
+        ? '<span class="badge-status connected">MANUAL</span>'
+        : '<span class="badge-status connecting">REPLY</span>';
+      return `
+        <tr>
+          <td style="white-space: nowrap; font-size: 0.85rem;">${formatTime(new Date(ev.createdAt))}</td>
+          <td>${agentLabel}</td>
+          <td>${chatLabel}</td>
+          <td style="font-size: 0.85rem;">${escapeHtml(ev.session.sessionName)}</td>
+          <td>${triggerBadge}</td>
+          <td style="font-size: 0.85rem; max-width: 280px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(ev.reason || '—')}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error(err);
+    listBody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align: center; color: var(--danger); padding: 1.5rem;">
+          ⚠️ Error loading audit log: ${escapeHtml(err.message)}
+        </td>
+      </tr>
+    `;
+  }
+}
+window.loadReadEvents = loadReadEvents;
 
 // ─── UNIFIED INBOX ──────────────────────────────────────────────────
 async function loadUnifiedInbox() {

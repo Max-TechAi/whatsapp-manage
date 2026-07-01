@@ -5,13 +5,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { chatService } from './chat.service.js';
-import { authenticate } from '../auth/auth.middleware.js';
+import { authenticate, requireRole } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
-import { messages, users, userSessionAccess, sessions, chats, contacts } from '../../db/schema.js';
+import { users, userSessionAccess, sessions, chats, contacts } from '../../db/schema.js';
 import { desc, eq, and, or, sql, inArray } from 'drizzle-orm';
 import { wsServer } from '../../websocket/ws-server.js';
-import { eventBus } from '../../events/event-bus.js';
 
 export const chatRouter = Router();
 
@@ -170,6 +169,46 @@ chatRouter.get('/unified', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/chats/read-events
+ * Admin-only audit log of manual and reply-triggered mark-as-read events.
+ */
+chatRouter.get('/read-events', requireRole('admin'), async (req, res) => {
+  try {
+    const schema = z.object({
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      cursor: z.string().datetime().optional(),
+      sessionId: z.string().uuid().optional(),
+      userId: z.string().uuid().optional(),
+      chatId: z.string().uuid().optional(),
+      from: z.string().datetime().optional(),
+      to: z.string().datetime().optional(),
+    });
+
+    const parsed = schema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid query parameters', details: parsed.error.flatten() });
+    }
+
+    const { limit, cursor, sessionId, userId, chatId, from, to } = parsed.data;
+
+    const result = await chatService.listReadEvents(req.user!.orgId, {
+      limit,
+      cursor,
+      sessionId,
+      userId,
+      chatId,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    logger.error('Failed to list read events', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to list read events' });
+  }
+});
+
 chatRouter.get('/', async (req, res) => {
   try {
     const schema = z.object({
@@ -283,61 +322,36 @@ chatRouter.patch('/:id', async (req, res) => {
 
 /**
  * POST /api/chats/:id/read
- * Mark all messages in a chat as read.
+ * Manually mark all messages in a chat as read (requires a reason).
  */
 chatRouter.post('/:id/read', async (req, res) => {
   try {
     const orgId = req.user!.orgId;
     const chatId = req.params.id;
 
+    const bodySchema = z.object({
+      reason: z.string().min(3).max(500),
+    });
+    const parsedBody = bodySchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: 'A reason is required (3–500 characters)', details: parsedBody.error.flatten() });
+    }
+
     const hasAccess = await chatService.hasChatAccess(orgId, chatId, req.user!);
     if (!hasAccess) {
       return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
     }
 
-    // 1. Get the chat details
     const chat = await chatService.getChatById(orgId, chatId);
     if (!chat) {
       return res.status(404).json({ error: 'Chat not found' });
     }
 
-    // 2. Mark as read in local DB
-    await chatService.markAsRead(orgId, chatId);
-
-    // 3. Queue marking as read on WhatsApp via the session control queue
-    try {
-      // Fetch the last inbound message to pass to chatModify/readMessages
-      const [lastInboundMsg] = await db
-        .select({
-          waMessageId: messages.waMessageId,
-          createdAt: messages.createdAt,
-        })
-        .from(messages)
-        .where(
-          and(
-            eq(messages.chatId, chatId),
-            eq(messages.fromMe, false)
-          )
-        )
-        .orderBy(desc(messages.createdAt), desc(messages.id))
-        .limit(1);
-
-      if (lastInboundMsg) {
-        await eventBus.publishSessionControl(chat.sessionId, 'mark-read', {
-          waChatId: chat.waChatId,
-          lastInboundMsg: {
-            waMessageId: lastInboundMsg.waMessageId,
-            createdAt: lastInboundMsg.createdAt.toISOString(),
-          },
-        });
-        logger.info('Enqueued mark-read command to session runner', { sessionId: chat.sessionId, waChatId: chat.waChatId });
-      }
-    } catch (err) {
-      logger.warn('Failed to enqueue mark-read command', {
-        chatId,
-        error: (err as Error).message,
-      });
-    }
+    await chatService.markChatAsRead(orgId, chatId, {
+      userId: req.user!.userId,
+      trigger: 'manual',
+      reason: parsedBody.data.reason,
+    });
 
     return res.json({ success: true });
   } catch (err) {

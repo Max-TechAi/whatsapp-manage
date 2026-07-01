@@ -43,6 +43,13 @@
       "when": 1782459014664,
       "tag": "0005_whole_tenebrous",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782545414664,
+      "tag": "0006_chat_read_events",
+      "breakpoints": true
     }
   ]
 }

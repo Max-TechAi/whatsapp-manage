@@ -1576,6 +1576,14 @@ class SessionManager {
             chatId,
             message: dbMessage,
           });
+
+          // Mark chat as read after reply (DB + audit + blue ticks)
+          const { chatService } = await import('../chats/chat.service.js');
+          await chatService.markChatAsRead(orgId, chatId, {
+            userId: sentByUserId ?? null,
+            trigger: 'reply',
+            reason: 'Auto: reply sent from dashboard',
+          });
         } catch (err) {
           logger.error('Outbound worker job execution failed', {
             jobId: job.id,
@@ -1685,6 +1693,39 @@ class SessionManager {
             logger.info('Requesting on-demand history sync from phone via control worker', { sessionId, waChatId, count });
             await active.socket.fetchMessageHistory(count, oldestMsgKey, oldestMsgTimestamp);
           }
+        } else if (action === 'mark-read') {
+          const active = this.activeSessions.get(sessionId);
+          if (!active?.socket) {
+            throw new Error(`Socket not active locally for session ${sessionId}`);
+          }
+
+          const { waChatId, lastInboundMsg } = payload;
+          if (!lastInboundMsg?.waMessageId) {
+            logger.warn('mark-read skipped: no inbound message key', { sessionId, waChatId });
+            return;
+          }
+
+          const key: {
+            remoteJid: string;
+            id: string;
+            fromMe: boolean;
+            participant?: string;
+          } = {
+            remoteJid: waChatId,
+            id: lastInboundMsg.waMessageId,
+            fromMe: false,
+          };
+
+          if (waChatId.endsWith('@g.us') && lastInboundMsg.senderJid) {
+            key.participant = lastInboundMsg.senderJid;
+          }
+
+          await active.socket.readMessages([key]);
+          logger.info('Baileys readMessages sent', {
+            sessionId,
+            waChatId,
+            msgId: lastInboundMsg.waMessageId,
+          });
         }
       },
       { connection: workerRedis.duplicate() as any }
