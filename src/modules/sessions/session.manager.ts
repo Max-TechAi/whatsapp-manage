@@ -958,6 +958,23 @@ class SessionManager {
     socket.ev.on('presence.update', async (presence) => {
       const { id: jid, presences } = presence;
 
+      logger.info('[DEBUG PRESENCE] presence.update event received from Baileys', {
+        sessionId,
+        jid,
+        participantCount: presences ? Object.keys(presences).length : 0,
+        presences: presences
+          ? Object.fromEntries(
+              Object.entries(presences).map(([p, data]) => [
+                p,
+                {
+                  lastKnownPresence: data.lastKnownPresence,
+                  lastSeen: data.lastSeen ?? null,
+                },
+              ]),
+            )
+          : null,
+      });
+
       if (!presences || jid.endsWith('@g.us')) return;
 
       try {
@@ -1773,8 +1790,43 @@ class SessionManager {
           }
 
           const resolvedJid = await resolveLidJid(sessionId, waChatId);
+
+          // EXPERIMENTAL: Briefly mark available so WhatsApp routes presence updates to us,
+          // then restore unavailable for mobile push notifications (see Baileys community workaround).
+          logger.info('[DEBUG PRESENCE] starting subscribe workaround (available → subscribe → unavailable)', {
+            sessionId,
+            waChatId,
+            resolvedJid,
+          });
+
+          await active.socket.sendPresenceUpdate('available');
           await active.socket.presenceSubscribe(resolvedJid);
-          logger.info('Baileys presenceSubscribe sent', { sessionId, waChatId, resolvedJid });
+
+          logger.info('[DEBUG PRESENCE] presenceSubscribe sent after brief available', {
+            sessionId,
+            waChatId,
+            resolvedJid,
+          });
+
+          setTimeout(() => {
+            active.socket
+              .sendPresenceUpdate('unavailable')
+              .then(() => {
+                logger.info('[DEBUG PRESENCE] restored unavailable after subscribe workaround', {
+                  sessionId,
+                  waChatId,
+                  resolvedJid,
+                });
+              })
+              .catch((err) => {
+                logger.warn('[DEBUG PRESENCE] failed to restore unavailable after subscribe workaround', {
+                  sessionId,
+                  waChatId,
+                  resolvedJid,
+                  error: (err as Error).message,
+                });
+              });
+          }, 2500);
         }
       },
       { connection: workerRedis.duplicate() as any }
