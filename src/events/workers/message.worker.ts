@@ -203,9 +203,10 @@ export function createMessageWorker(): Worker {
                   decryptedKeys: Object.keys(decryptedMsg || {})
                 });
 
+                const actualMessage = decryptedMsg.protocolMessage?.editedMessage ?? decryptedMsg;
                 const dummyWaMsg = {
                   key: secretEncryptedMessage.targetMessageKey,
-                  message: decryptedMsg,
+                  message: actualMessage,
                   messageTimestamp: waMessage.messageTimestamp,
                 };
                 const { content } = extractMessageContent(dummyWaMsg as any);
