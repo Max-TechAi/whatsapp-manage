@@ -175,7 +175,8 @@ export function createMessageWorker(): Worker {
                 // Fetch the original message's secret key from metadata
                 const originalMsgRaw = (originalMsg.metadata as any)?.waMessage;
                 const msgSecRaw = originalMsgRaw?.message?.messageContextInfo?.messageSecret
-                  || originalMsgRaw?.message?.deviceSentMessage?.message?.messageContextInfo?.messageSecret;
+                  || originalMsgRaw?.message?.deviceSentMessage?.message?.messageContextInfo?.messageSecret
+                  || originalMsgRaw?.messageSecret;
 
                 if (!msgSecRaw) {
                   throw new Error('Original message secret key is missing in stored metadata');
