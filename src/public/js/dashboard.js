@@ -1471,17 +1471,29 @@ async function openMarkReadModal() {
 
   if (nameEl) nameEl.textContent = chatName;
   reasonInput.value = '';
-  confirmBtn.disabled = true;
+  hideMarkReadReasonError();
+  if (confirmBtn) confirmBtn.disabled = false;
   modal.style.display = 'flex';
   reasonInput.focus();
 
   reasonInput.oninput = () => {
-    confirmBtn.disabled = reasonInput.value.trim().length < 3;
+    hideMarkReadReasonError();
   };
+}
+
+function hideMarkReadReasonError() {
+  const errorEl = document.getElementById('markReadReasonError');
+  if (errorEl) errorEl.style.display = 'none';
+}
+
+function showMarkReadReasonError() {
+  const errorEl = document.getElementById('markReadReasonError');
+  if (errorEl) errorEl.style.display = 'block';
 }
 
 function closeMarkReadModal() {
   const modal = document.getElementById('markReadModal');
+  hideMarkReadReasonError();
   if (modal) modal.style.display = 'none';
 }
 
@@ -1490,8 +1502,13 @@ async function submitMarkAsRead() {
   const reasonInput = document.getElementById('markReadReasonInput');
   const confirmBtn = document.getElementById('markReadConfirmBtn');
   const reason = reasonInput?.value?.trim() || '';
-  if (reason.length < 3) return;
+  if (reason.length < 3) {
+    showMarkReadReasonError();
+    reasonInput?.focus();
+    return;
+  }
 
+  hideMarkReadReasonError();
   if (confirmBtn) confirmBtn.disabled = true;
 
   try {
@@ -1517,7 +1534,7 @@ async function submitMarkAsRead() {
     console.error('Failed to mark chat as read', err);
     alert('Failed to mark as read: ' + err.message);
   } finally {
-    if (confirmBtn) confirmBtn.disabled = reasonInput?.value?.trim().length < 3;
+    if (confirmBtn) confirmBtn.disabled = false;
   }
 }
 
@@ -3182,7 +3199,9 @@ async function loadReadEvents() {
       const agentLabel = ev.user
         ? escapeHtml(ev.user.displayName || ev.user.email)
         : '<span style="color: var(--text-muted); font-style: italic;">Phone</span>';
-      const chatLabel = escapeHtml(ev.chat.name || ev.chat.waChatId);
+      const chatLabel = escapeHtml(
+        ev.chat.chatName || getChatDisplayName(ev.chat) || ev.chat.waChatId
+      );
       const triggerBadge = ev.trigger === 'manual'
         ? '<span class="badge-status connected">MANUAL</span>'
         : '<span class="badge-status connecting">REPLY</span>';

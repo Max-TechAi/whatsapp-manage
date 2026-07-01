@@ -613,10 +613,11 @@
       <div style="display: flex; flex-direction: column; gap: 0.35rem;">
         <label for="markReadReasonInput" style="font-size: 0.8rem; color: var(--text-muted);">Reason (required)</label>
         <textarea id="markReadReasonInput" rows="3" placeholder="Why are you marking this as read? e.g. Called customer, issue resolved" style="width: 100%; padding: 0.5rem; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-main); font-size: 0.85rem; outline: none; resize: vertical;"></textarea>
+        <p id="markReadReasonError" style="display: none; color: var(--danger); font-size: 0.8rem; margin: 0;">Please enter a reason (at least 3 characters).</p>
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 0.25rem;">
         <button type="button" class="btn btn-secondary" onclick="closeMarkReadModal()">Cancel</button>
-        <button type="button" id="markReadConfirmBtn" class="btn" onclick="submitMarkAsRead()" disabled>Confirm</button>
+        <button type="button" id="markReadConfirmBtn" class="btn" onclick="submitMarkAsRead()">Confirm</button>
       </div>
     </div>
   </div>

@@ -553,7 +553,7 @@ export class ChatService {
       trigger: 'manual' | 'reply';
       reason: string | null;
       user: { id: string; displayName: string | null; email: string } | null;
-      chat: { id: string; name: string | null; waChatId: string };
+      chat: { id: string; name: string | null; chatName: string | null; waChatId: string };
       session: { id: string; sessionName: string };
     }>;
     nextCursor: string | null;
@@ -592,6 +592,20 @@ export class ChatService {
         chatId: chats.id,
         chatName: chats.name,
         chatWaChatId: chats.waChatId,
+        contactName: sql<string | null>`(
+          SELECT ${contacts.displayName} FROM ${contacts}
+          WHERE ${contacts.sessionId} = ${chats.sessionId}
+            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
+          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
+          LIMIT 1
+        )`,
+        contactPushName: sql<string | null>`(
+          SELECT ${contacts.pushName} FROM ${contacts}
+          WHERE ${contacts.sessionId} = ${chats.sessionId}
+            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
+          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
+          LIMIT 1
+        )`,
         sessionId: sessions.id,
         sessionName: sessions.sessionName,
       })
@@ -620,7 +634,8 @@ export class ChatService {
         : null,
       chat: {
         id: row.chatId,
-        name: row.chatName,
+        name: row.contactName ?? row.contactPushName ?? row.chatName ?? null,
+        chatName: row.contactName ?? row.contactPushName ?? row.chatName ?? null,
         waChatId: row.chatWaChatId,
       },
       session: {
