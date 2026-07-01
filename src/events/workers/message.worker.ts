@@ -13,7 +13,7 @@ import { extractMessageContent, getJidType, normalizeJid } from '../../modules/s
 import { resolveLidJid } from '../../modules/sessions/lid-mapping.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
-import { messages } from '../../db/schema.js';
+import { messages, chats } from '../../db/schema.js';
 import { eq, and, desc } from 'drizzle-orm';
 import { aesDecryptGCM, hmacSign, proto } from '@whiskeysockets/baileys';
 
@@ -237,6 +237,46 @@ export function createMessageWorker(): Worker {
                 waMessageId: targetId,
                 newContent,
               });
+
+              // If this message is the most recent message in the chat, update the chat preview
+              try {
+                const [latestMsg] = await db
+                  .select({ id: messages.id })
+                  .from(messages)
+                  .where(eq(messages.chatId, originalMsg.chatId))
+                  .orderBy(desc(messages.createdAt), desc(messages.id))
+                  .limit(1);
+
+                if (latestMsg && latestMsg.id === originalMsg.id) {
+                  await db
+                    .update(chats)
+                    .set({
+                      lastMessagePreview: newContent,
+                      updatedAt: new Date(),
+                    })
+                    .where(eq(chats.id, originalMsg.chatId));
+
+                  logger.info('[DEBUG EDIT_DELETE] Updated chat lastMessagePreview successfully', {
+                    chatId: originalMsg.chatId,
+                    lastMessagePreview: newContent,
+                  });
+
+                  // Broadcast chat update event via Redis stream / WebSockets
+                  const resolvedChat = await chatService.getChatById(orgId, originalMsg.chatId);
+                  if (resolvedChat) {
+                    await eventBus.publishToStream(STREAMS.CHATS, 'chat:update', {
+                      sessionId,
+                      orgId,
+                      chat: resolvedChat,
+                    });
+                  }
+                }
+              } catch (chatErr) {
+                logger.error('[DEBUG EDIT_DELETE] Failed to update chat preview or broadcast update', {
+                  chatId: originalMsg.chatId,
+                  error: (chatErr as Error).message,
+                });
+              }
 
               // Broadcast update via message:status_update
               await eventBus.publishToStream(STREAMS.MESSAGES, 'message:status_update', {
