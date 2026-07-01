@@ -3,6 +3,7 @@
  * All queries scoped by orgId for multi-tenant isolation.
  */
 
+import { contactDisplayNameSubquery, contactPushNameSubquery, resolveChatDisplayName } from './contact-name-sql.js';
 import { db } from '../../config/database.js';
 import { chats, contacts, messages, sessions, chatReadEvents, users } from '../../db/schema.js';
 import { eq, and, desc, lt, sql, ne, notLike, or, isNull, gte, lte } from 'drizzle-orm';
@@ -593,20 +594,8 @@ export class ChatService {
         chatId: chats.id,
         chatName: chats.name,
         chatWaChatId: chats.waChatId,
-        contactName: sql<string | null>`(
-          SELECT ${contacts.displayName} FROM ${contacts}
-          WHERE ${contacts.sessionId} = ${chats.sessionId}
-            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
-          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
-          LIMIT 1
-        )`,
-        contactPushName: sql<string | null>`(
-          SELECT ${contacts.pushName} FROM ${contacts}
-          WHERE ${contacts.sessionId} = ${chats.sessionId}
-            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
-          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
-          LIMIT 1
-        )`,
+        contactName: contactDisplayNameSubquery,
+        contactPushName: contactPushNameSubquery,
         sessionId: sessions.id,
         sessionName: sessions.sessionName,
       })
@@ -635,8 +624,8 @@ export class ChatService {
         : null,
       chat: {
         id: row.chatId,
-        name: row.contactName ?? row.contactPushName ?? row.chatName ?? null,
-        chatName: row.contactName ?? row.contactPushName ?? row.chatName ?? null,
+        name: resolveChatDisplayName(row.contactName, row.contactPushName, row.chatName),
+        chatName: resolveChatDisplayName(row.contactName, row.contactPushName, row.chatName),
         waChatId: row.chatWaChatId,
       },
       session: {

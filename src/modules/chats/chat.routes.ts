@@ -7,8 +7,9 @@ import { z } from 'zod';
 import { chatService } from './chat.service.js';
 import { authenticate, requireRole } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
+import { contactDisplayNameSubquery, contactPushNameSubquery, resolveChatDisplayName } from './contact-name-sql.js';
 import { db } from '../../config/database.js';
-import { users, userSessionAccess, sessions, chats, contacts } from '../../db/schema.js';
+import { users, userSessionAccess, sessions, chats } from '../../db/schema.js';
 import { desc, eq, and, or, sql, inArray } from 'drizzle-orm';
 import { wsServer } from '../../websocket/ws-server.js';
 
@@ -110,20 +111,8 @@ chatRouter.get('/unified', async (req, res) => {
         chatType: chats.chatType,
         sessionName: sessions.sessionName,
         phoneNumber: sessions.phoneNumber,
-        contactName: sql<string | null>`(
-          SELECT ${contacts.displayName} FROM ${contacts}
-          WHERE ${contacts.sessionId} = ${chats.sessionId}
-            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
-          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
-          LIMIT 1
-        )`,
-        contactPushName: sql<string | null>`(
-          SELECT ${contacts.pushName} FROM ${contacts}
-          WHERE ${contacts.sessionId} = ${chats.sessionId}
-            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
-          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
-          LIMIT 1
-        )`,
+        contactName: contactDisplayNameSubquery,
+        contactPushName: contactPushNameSubquery,
       })
       .from(chats)
       .innerJoin(sessions, eq(chats.sessionId, sessions.id))
@@ -146,7 +135,7 @@ chatRouter.get('/unified', async (req, res) => {
       id: r.id,
       sessionId: r.sessionId,
       waChatId: r.waChatId,
-      name: r.contactName ?? r.contactPushName ?? r.name ?? null,
+      name: resolveChatDisplayName(r.contactName, r.contactPushName, r.name),
       avatarUrl: r.avatarUrl,
       unreadCount: r.unreadCount,
       lastMessagePreview: r.lastMessagePreview,

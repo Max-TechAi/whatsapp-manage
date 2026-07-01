@@ -3387,9 +3387,7 @@ async function loadReadEvents() {
       const agentLabel = ev.user
         ? escapeHtml(ev.user.displayName || ev.user.email)
         : '<span style="color: var(--text-muted); font-style: italic;">Phone</span>';
-      const chatLabel = escapeHtml(
-        ev.chat.chatName || getChatDisplayName(ev.chat) || ev.chat.waChatId
-      );
+      const chatLabel = escapeHtml(ev.chat.chatName || ev.chat.waChatId);
       const triggerBadge = ev.trigger === 'manual'
         ? '<span class="badge-status connected">MANUAL</span>'
         : '<span class="badge-status connecting">REPLY</span>';
