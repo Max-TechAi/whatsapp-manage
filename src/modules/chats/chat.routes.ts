@@ -147,7 +147,7 @@ chatRouter.get('/unified', async (req, res) => {
       id: r.id,
       sessionId: r.sessionId,
       waChatId: r.waChatId,
-      name: r.contactPushName ?? r.contactName ?? r.name ?? null,
+      name: r.contactName ?? r.contactPushName ?? r.name ?? null,
       avatarUrl: r.avatarUrl,
       unreadCount: r.unreadCount,
       lastMessagePreview: r.lastMessagePreview,

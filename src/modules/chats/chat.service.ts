@@ -265,7 +265,7 @@ export class ChatService {
       sessionId: r.sessionId,
       waChatId: r.waChatId,
       chatType: r.chatType,
-      name: r.contactPushName ?? r.contactName ?? r.name ?? null,
+      name: r.contactName ?? r.contactPushName ?? r.name ?? null,
       avatarUrl: r.avatarUrl,
       unreadCount: r.unreadCount,
       isArchived: r.isArchived,
@@ -331,8 +331,7 @@ export class ChatService {
       sessionId: result.sessionId,
       waChatId: result.waChatId,
       chatType: result.chatType,
-      // BUG 4: Prioritize name resolution in order: contact.pushname -> contact.name -> chat.name
-      name: result.contactPushName ?? result.contactName ?? result.name ?? null,
+      name: result.contactName ?? result.contactPushName ?? result.name ?? null,
       avatarUrl: result.avatarUrl,
       unreadCount: result.unreadCount,
       isArchived: result.isArchived,
