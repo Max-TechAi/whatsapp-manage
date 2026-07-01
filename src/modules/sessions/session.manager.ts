@@ -20,7 +20,7 @@ import type { WASocket, BaileysEventMap, WAMessage } from '@whiskeysockets/baile
 import * as QRCode from 'qrcode';
 import pino from 'pino';
 import { v4 as uuidv4 } from 'uuid';
-import { eq, and, inArray, sql, lte, ne, desc } from 'drizzle-orm';
+import { eq, and, or, inArray, sql, lte, ne, desc } from 'drizzle-orm';
 import { Boom } from '@hapi/boom';
 import { Worker } from 'bullmq';
 
@@ -958,47 +958,52 @@ class SessionManager {
     socket.ev.on('presence.update', async (presence) => {
       const { id: jid, presences } = presence;
 
-      logger.info('[DEBUG PRESENCE] presence.update event received from Baileys', {
-        sessionId,
-        jid,
-        participantCount: presences ? Object.keys(presences).length : 0,
-        presences: presences
-          ? Object.fromEntries(
-              Object.entries(presences).map(([p, data]) => [
-                p,
-                {
-                  lastKnownPresence: data.lastKnownPresence,
-                  lastSeen: data.lastSeen ?? null,
-                },
-              ]),
-            )
-          : null,
-      });
-
       if (!presences || jid.endsWith('@g.us')) return;
 
       try {
-        // Store each participant's presence in Redis with 5-minute TTL
+        const canonicalChatJid = normalizeJid(await resolveLidJid(sessionId, jid));
+
+        logger.info('[DEBUG PRESENCE] presence.update event received from Baileys', {
+          sessionId,
+          jid,
+          canonicalChatJid,
+          participantCount: Object.keys(presences).length,
+          presences: Object.fromEntries(
+            Object.entries(presences).map(([p, data]) => [
+              p,
+              {
+                lastKnownPresence: data.lastKnownPresence,
+                lastSeen: data.lastSeen ?? null,
+              },
+            ]),
+          ),
+        });
+
+        const canonicalPresences: Record<string, { lastKnownPresence: string; lastSeen?: number | null }> = {};
+
         for (const [participantJid, presenceData] of Object.entries(presences)) {
-          const normJid = normalizeJid(jid);
-          const normParticipant = normalizeJid(participantJid);
-          const redisKey = `presence:${sessionId}:${normJid}:${normParticipant}`;
+          const canonicalParticipantJid = normalizeJid(
+            await resolveLidJid(sessionId, participantJid),
+          );
+          canonicalPresences[canonicalParticipantJid] = presenceData;
+
           const value = JSON.stringify({
             lastKnownPresence: presenceData.lastKnownPresence,
             lastSeen: presenceData.lastSeen ?? null,
             updatedAt: Date.now(),
           });
 
+          const redisKey = `presence:${sessionId}:${canonicalChatJid}:${canonicalParticipantJid}`;
           await redis.setex(redisKey, 300, value);
-          await redis.setex(`presence:lookup:${sessionId}:${normParticipant}`, 300, value);
-          if (normJid !== normParticipant) {
-            await redis.setex(`presence:lookup:${sessionId}:${normJid}`, 300, value);
+          await redis.setex(`presence:lookup:${sessionId}:${canonicalParticipantJid}`, 300, value);
+          if (canonicalChatJid !== canonicalParticipantJid) {
+            await redis.setex(`presence:lookup:${sessionId}:${canonicalChatJid}`, 300, value);
           }
         }
 
         let chatId: string | undefined;
         try {
-          const normalizedJid = normalizeJid(jid);
+          const normalizedOriginalJid = normalizeJid(jid);
           const [chatRow] = await db
             .select({ id: chats.id })
             .from(chats)
@@ -1006,7 +1011,10 @@ class SessionManager {
               and(
                 eq(chats.sessionId, sessionId),
                 eq(chats.orgId, orgId),
-                eq(chats.waChatId, normalizedJid),
+                or(
+                  eq(chats.waChatId, canonicalChatJid),
+                  eq(chats.waChatId, normalizedOriginalJid),
+                ),
               ),
             )
             .limit(1);
@@ -1015,6 +1023,7 @@ class SessionManager {
           logger.debug('Failed to resolve chatId for presence broadcast', {
             sessionId,
             jid,
+            canonicalChatJid,
             error: (lookupErr as Error).message,
           });
         }
@@ -1022,9 +1031,9 @@ class SessionManager {
         await eventBus.publishToStream(STREAMS.PRESENCE, 'presence:update', {
           sessionId,
           orgId,
-          chatJid: jid,
+          chatJid: canonicalChatJid,
           ...(chatId ? { chatId } : {}),
-          presences,
+          presences: canonicalPresences,
         });
       } catch (error) {
         logger.warn('Failed to store or broadcast presence update', {
