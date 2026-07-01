@@ -3093,8 +3093,11 @@ async function loadUnifiedInbox() {
     }
 
     listBody.innerHTML = chatsList.map(c => {
-      const rawName = c.name || c.waChatId.split('@')[0];
-      const displayName = formatPhoneNumberFallback(rawName);
+      const displayName = getChatDisplayName({
+        waChatId: c.waChatId,
+        name: c.name,
+        chatType: c.chatType
+      });
       const accountName = `${c.sessionName} (${c.phoneNumber || 'Unlinked'})`;
       const rawPreview = c.lastMessagePreview || '';
       const preview = rawPreview ? escapeHtml(rawPreview) : '<span style="font-style: italic; color: var(--text-muted);">No messages</span>';
