@@ -1033,6 +1033,15 @@ function renderMessages(msgList) {
             `;
           } else if (m.metadata?.mediaFileId) {
             const mediaUrl = `/api/media/${m.metadata.mediaFileId}?token=${token}`;
+            let captionHtml = '';
+            if (m.content && m.content.trim() !== '') {
+              captionHtml = `
+                <div class="media-caption" style="margin-top: 0.5rem; color: var(--text-normal); font-size: 0.9rem; white-space: pre-wrap; word-break: break-word; line-height: 1.4;">
+                  ${escapeHtml(m.content)}
+                </div>
+              `;
+            }
+
             if (m.messageType === 'image' || m.messageType === 'sticker') {
               const ext = m.mediaMimeType === 'image/png' ? 'png' : 'jpg';
               const imgName = m.metadata?.fileName || `image_${m.id.substring(0, 8)}.${ext}`;
@@ -1046,10 +1055,16 @@ function renderMessages(msgList) {
                       <a href="${downloadUrl}" download="${escapeHtml(imgName)}" title="Download" style="color: #4fc3f7; text-decoration: none; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; background: rgba(255,255,255,0.05); padding: 0.15rem 0.4rem; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);"><span style="font-size: 0.8rem;">📥</span> Download</a>
                     </div>
                   ` : ''}
+                  ${captionHtml}
                 </div>
               `;
             } else if (m.messageType === 'video') {
-              bodyHtml = `<div class="media-container"><video src="${mediaUrl}" controls class="chat-video" style="max-width: 300px; border-radius: 8px; margin-top: 5px;"></video></div>`;
+              bodyHtml = `
+                <div class="media-container" style="position: relative; display: inline-block;">
+                  <video src="${mediaUrl}" controls class="chat-video" style="max-width: 300px; border-radius: 8px; margin-top: 5px; display: block;"></video>
+                  ${captionHtml}
+                </div>
+              `;
             } else if (m.messageType === 'audio') {
               const isVoiceNote = m.metadata?.ptt === true || (m.mediaMimeType && m.mediaMimeType.includes('ogg')) || m.mediaMimeType === 'audio/ogg';
               if (isVoiceNote) {
@@ -1140,17 +1155,20 @@ function renderMessages(msgList) {
               }
 
               bodyHtml = `
-                <div class="document-card ${themeClass}">
-                  <div class="document-info">
-                    <div class="document-icon">${icon}</div>
-                    <div class="document-details">
-                      <div class="document-name" title="${escapeHtml(docName)}">${escapeHtml(docName)}</div>
-                      <div class="document-meta">${escapeHtml(metaText)}</div>
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                  <div class="document-card ${themeClass}">
+                    <div class="document-info">
+                      <div class="document-icon">${icon}</div>
+                      <div class="document-details">
+                        <div class="document-name" title="${escapeHtml(docName)}">${escapeHtml(docName)}</div>
+                        <div class="document-meta">${escapeHtml(metaText)}</div>
+                      </div>
+                    </div>
+                    <div class="document-actions">
+                      ${actionsHtml}
                     </div>
                   </div>
-                  <div class="document-actions">
-                    ${actionsHtml}
-                  </div>
+                  ${captionHtml}
                 </div>
               `;
             }
