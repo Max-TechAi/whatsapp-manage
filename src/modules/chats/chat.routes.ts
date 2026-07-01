@@ -8,7 +8,7 @@ import { chatService } from './chat.service.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { logger } from '../../observability/logger.js';
 import { db } from '../../config/database.js';
-import { messages, users, userSessionAccess, sessions, chats } from '../../db/schema.js';
+import { messages, users, userSessionAccess, sessions, chats, contacts } from '../../db/schema.js';
 import { desc, eq, and, or, sql, inArray } from 'drizzle-orm';
 import { wsServer } from '../../websocket/ws-server.js';
 import { eventBus } from '../../events/event-bus.js';
@@ -97,7 +97,7 @@ chatRouter.get('/unified', async (req, res) => {
         )
       );
 
-    // 3. Fetch the sorted chats joined with session metadata
+    // 3. Fetch the sorted chats joined with session and contact metadata
     const chatsList = await db
       .select({
         id: chats.id,
@@ -111,9 +111,18 @@ chatRouter.get('/unified', async (req, res) => {
         chatType: chats.chatType,
         sessionName: sessions.sessionName,
         phoneNumber: sessions.phoneNumber,
+        contactName: contacts.displayName,
+        contactPushName: contacts.pushName,
       })
       .from(chats)
       .innerJoin(sessions, eq(chats.sessionId, sessions.id))
+      .leftJoin(
+        contacts,
+        and(
+          eq(chats.sessionId, contacts.sessionId),
+          eq(chats.waChatId, contacts.waId)
+        )
+      )
       .where(
         and(
           eq(chats.orgId, req.user!.orgId),
@@ -129,8 +138,22 @@ chatRouter.get('/unified', async (req, res) => {
       )
       .limit(limit);
 
+    const mappedChats = chatsList.map((r) => ({
+      id: r.id,
+      sessionId: r.sessionId,
+      waChatId: r.waChatId,
+      name: r.contactPushName ?? r.contactName ?? r.name ?? null,
+      avatarUrl: r.avatarUrl,
+      unreadCount: r.unreadCount,
+      lastMessagePreview: r.lastMessagePreview,
+      lastMessageAt: r.lastMessageAt,
+      chatType: r.chatType,
+      sessionName: r.sessionName,
+      phoneNumber: r.phoneNumber,
+    }));
+
     return res.status(200).json({
-      chats: chatsList,
+      chats: mappedChats,
       summary: {
         unreadChatsCount: Number(summaryResult?.unreadChatsCount || 0),
         totalUnreadMessages: Number(summaryResult?.totalUnreadMessages || 0),
