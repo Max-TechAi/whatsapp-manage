@@ -179,7 +179,13 @@ export function createMessageWorker(): Worker {
                   || originalMsgRaw?.messageSecret;
 
                 if (!msgSecRaw) {
-                  throw new Error('Original message secret key is missing in stored metadata');
+                  logger.warn('[DEBUG EDIT_DELETE] Edit decryption unavailable — messageSecret not present in stored metadata (expected for outgoing fromMe messages where companion device does not receive the secret from the phone)', {
+                    targetId,
+                    fromMe: waMessage.key.fromMe,
+                  });
+                  // Cannot decrypt without the secret; suppress the edit silently
+                  // (success stays false, no DB update, early return at end prevents new bubble)
+                  return { messageId: null };
                 }
 
                 const msgSec = getBufferFromSecret(msgSecRaw);
