@@ -3347,6 +3347,24 @@ async function loadStats() {
 }
 window.loadStats = loadStats;
 
+async function ensureContactMapsForReadEvents(preferredSessionId) {
+  if (Object.keys(contactsMap).length > 0) return;
+
+  const targetSessionId = preferredSessionId || activeSessionId;
+  if (!targetSessionId) return;
+
+  const previousSessionId = activeSessionId;
+  activeSessionId = targetSessionId;
+  try {
+    await Promise.all([
+      loadContactsForSession(),
+      loadLidMappingsForSession(),
+    ]);
+  } finally {
+    activeSessionId = previousSessionId;
+  }
+}
+
 async function loadReadEvents() {
   const sessionFilter = document.getElementById('readEventsSessionFilter');
   const listBody = document.getElementById('readEventsListBody');
@@ -3383,11 +3401,18 @@ async function loadReadEvents() {
       return;
     }
 
+    await ensureContactMapsForReadEvents(sessionId || events[0]?.session?.id);
+
     listBody.innerHTML = events.map(ev => {
       const agentLabel = ev.user
         ? escapeHtml(ev.user.displayName || ev.user.email)
         : '<span style="color: var(--text-muted); font-style: italic;">Phone</span>';
-      const chatLabel = escapeHtml(ev.chat.chatName || ev.chat.waChatId);
+      const displayName = getChatDisplayName({
+        waChatId: ev.chat.waChatId,
+        name: ev.chat.chatName,
+        chatType: ev.chat.chatType,
+      });
+      const chatLabel = escapeHtml(displayName);
       const triggerBadge = ev.trigger === 'manual'
         ? '<span class="badge-status connected">MANUAL</span>'
         : '<span class="badge-status connecting">REPLY</span>';
