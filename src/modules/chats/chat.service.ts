@@ -3,7 +3,13 @@
  * All queries scoped by orgId for multi-tenant isolation.
  */
 
-import { contactDisplayNameSubquery, contactPushNameSubquery, resolveChatDisplayName } from './contact-name-sql.js';
+import {
+  contactDisplayNameSubquery,
+  contactPushNameSubquery,
+  resolveChatDisplayName,
+  lookupContactNamesForChat,
+  CONTACT_DISPLAY_NAME_SUBQUERY_SQL,
+} from './contact-name-sql.js';
 import { db } from '../../config/database.js';
 import { chats, contacts, messages, sessions, chatReadEvents, users } from '../../db/schema.js';
 import { eq, and, desc, lt, sql, ne, notLike, or, isNull, gte, lte } from 'drizzle-orm';
@@ -592,6 +598,7 @@ export class ChatService {
         userDisplayName: users.displayName,
         userEmail: users.email,
         chatId: chats.id,
+        chatOrgId: chats.orgId,
         chatName: chats.name,
         chatWaChatId: chats.waChatId,
         contactName: contactDisplayNameSubquery,
@@ -610,7 +617,58 @@ export class ChatService {
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
 
-    const events = page.map((row) => ({
+    const resolvedRows = await Promise.all(
+      page.map(async (row) => {
+        const subqueryDisplayName = row.contactName;
+        const subqueryPushName = row.contactPushName;
+        let contactName = subqueryDisplayName;
+        let contactPushName = subqueryPushName;
+        let lookupSource: 'subquery' | 'resolveLidJid+db' = 'subquery';
+
+        if (!contactName && !contactPushName) {
+          const lookedUp = await lookupContactNamesForChat(
+            row.sessionId,
+            row.chatOrgId,
+            row.chatWaChatId,
+          );
+          contactName = lookedUp.displayName;
+          contactPushName = lookedUp.pushName;
+          lookupSource = 'resolveLidJid+db';
+        }
+
+        return {
+          ...row,
+          contactName,
+          contactPushName,
+          subqueryDisplayName,
+          subqueryPushName,
+          lookupSource,
+        };
+      }),
+    );
+
+    if (resolvedRows.length > 0) {
+      logger.debug('listReadEvents contact name resolution sample', {
+        subquerySql: CONTACT_DISPLAY_NAME_SUBQUERY_SQL,
+        samples: resolvedRows.slice(0, 5).map((row) => ({
+          eventId: row.id,
+          chatId: row.chatId,
+          waChatId: row.chatWaChatId,
+          waChatIdType: row.chatWaChatId.endsWith('@lid')
+            ? 'lid'
+            : row.chatWaChatId.endsWith('@s.whatsapp.net')
+              ? 'phone'
+              : 'other',
+          chatsName: row.chatName,
+          subqueryDisplayName: row.subqueryDisplayName,
+          subqueryPushName: row.subqueryPushName,
+          lookupSource: row.lookupSource,
+          resolvedChatName: resolveChatDisplayName(row.contactName, row.contactPushName, row.chatName),
+        })),
+      });
+    }
+
+    const events = resolvedRows.map((row) => ({
       id: row.id,
       createdAt: row.createdAt,
       trigger: row.trigger as 'manual' | 'reply',
