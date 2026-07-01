@@ -2169,9 +2169,17 @@ function getSenderDisplayName(senderJid, pushNameMetadata) {
   return formatPhoneNumberFallback(phone);
 }
 
+function linkifyText(text) {
+  const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/g;
+  return text.replace(urlRegex, url => {
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: #25d366; text-decoration: underline;">${url}</a>`;
+  });
+}
+
 function formatMessageContent(content) {
   if (!content) return '';
   let formatted = escapeHtml(content);
+  formatted = linkifyText(formatted);
   // Replace mentions (e.g. @905384534139 or @31083399782580@lid) with contact name/pushname
   formatted = formatted.replace(/@(\d+)(?:@s\.whatsapp\.net|@lid)?/g, (match, id) => {
     let lookupKey = id;
