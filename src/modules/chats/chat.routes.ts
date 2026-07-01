@@ -97,7 +97,7 @@ chatRouter.get('/unified', async (req, res) => {
         )
       );
 
-    // 3. Fetch the sorted chats joined with session and contact metadata
+    // 3. Fetch the sorted chats joined with session metadata
     const chatsList = await db
       .select({
         id: chats.id,
@@ -111,18 +111,23 @@ chatRouter.get('/unified', async (req, res) => {
         chatType: chats.chatType,
         sessionName: sessions.sessionName,
         phoneNumber: sessions.phoneNumber,
-        contactName: contacts.displayName,
-        contactPushName: contacts.pushName,
+        contactName: sql<string | null>`(
+          SELECT ${contacts.displayName} FROM ${contacts}
+          WHERE ${contacts.sessionId} = ${chats.sessionId}
+            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
+          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
+          LIMIT 1
+        )`,
+        contactPushName: sql<string | null>`(
+          SELECT ${contacts.pushName} FROM ${contacts}
+          WHERE ${contacts.sessionId} = ${chats.sessionId}
+            AND (${contacts.waId} = ${chats.waChatId} OR ${contacts.metadata}->>'lid' = ${chats.waChatId})
+          ORDER BY CASE WHEN ${contacts.displayName} IS NOT NULL OR ${contacts.pushName} IS NOT NULL THEN 0 ELSE 1 END ASC
+          LIMIT 1
+        )`,
       })
       .from(chats)
       .innerJoin(sessions, eq(chats.sessionId, sessions.id))
-      .leftJoin(
-        contacts,
-        and(
-          eq(chats.sessionId, contacts.sessionId),
-          eq(chats.waChatId, contacts.waId)
-        )
-      )
       .where(
         and(
           eq(chats.orgId, req.user!.orgId),
