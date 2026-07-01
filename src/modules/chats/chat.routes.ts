@@ -321,6 +321,78 @@ chatRouter.patch('/:id', async (req, res) => {
 });
 
 /**
+ * GET /api/chats/:id/presence
+ * Return cached presence snapshot for a private chat from Redis.
+ */
+chatRouter.get('/:id/presence', async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const chatId = req.params.id;
+
+    const hasAccess = await chatService.hasChatAccess(orgId, chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
+    }
+
+    const chat = await chatService.getChatById(orgId, chatId);
+    if (!chat) {
+      return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    if (chatService.isGroupChat(chat)) {
+      return res.status(400).json({ error: 'Presence is not available for group chats' });
+    }
+
+    const presence = await chatService.getCachedPresence(chat.sessionId, chat.waChatId);
+
+    return res.json({
+      success: true,
+      chatJid: chat.waChatId,
+      presence,
+    });
+  } catch (err) {
+    logger.error('Failed to get chat presence', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to get chat presence' });
+  }
+});
+
+/**
+ * POST /api/chats/:id/presence/subscribe
+ * Subscribe to live presence updates for a private chat (on-demand).
+ */
+chatRouter.post('/:id/presence/subscribe', async (req, res) => {
+  try {
+    const orgId = req.user!.orgId;
+    const chatId = req.params.id;
+
+    const hasAccess = await chatService.hasChatAccess(orgId, chatId, req.user!);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied: you do not have permission to access this chat' });
+    }
+
+    const chat = await chatService.getChatById(orgId, chatId);
+    if (!chat) {
+      return res.status(404).json({ error: 'Chat not found' });
+    }
+
+    if (chatService.isGroupChat(chat)) {
+      return res.status(400).json({ error: 'Presence is not available for group chats' });
+    }
+
+    const result = await chatService.subscribeChatPresence(orgId, chatId);
+
+    return res.json({
+      success: true,
+      chatJid: result.chatJid,
+      presence: result.presence,
+    });
+  } catch (err) {
+    logger.error('Failed to subscribe to chat presence', { error: (err as Error).message });
+    return res.status(500).json({ error: 'Failed to subscribe to chat presence' });
+  }
+});
+
+/**
  * POST /api/chats/:id/read
  * Manually mark all messages in a chat as read (requires a reason).
  */

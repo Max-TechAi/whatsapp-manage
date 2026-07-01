@@ -5,6 +5,8 @@ let ws = null;
 let activeSessionId = '';
 let activeChatId = ''; // Remote JID
 let activeChatDbId = ''; // Database Chat ID
+let presenceRefreshInterval = null;
+let activeChatLastSeen = null;
 let chats = [];
 let messagesMap = {}; // cache messages by JID
 let qrPollInterval = null;
@@ -644,6 +646,8 @@ function handleInboxSessionChange() {
   activeSessionId = document.getElementById('inboxSessionSelect').value;
   activeChatId = '';
   activeChatDbId = '';
+  stopPresenceRefresh();
+  clearChatPresence();
   document.getElementById('chatsListContainer').innerHTML = '';
   document.getElementById('chatPlaceholder').style.display = 'flex';
   document.getElementById('activeChatWrapper').style.display = 'none';
@@ -802,6 +806,10 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   cancelAttachmentPreview();
   cancelReplyMode();
 
+  stopPresenceRefresh();
+  clearChatPresence();
+  activeChatLastSeen = null;
+
   activeChatId = waChatJid;
   activeChatDbId = chatDbId;
   
@@ -811,8 +819,14 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   
   // Set headers
   document.getElementById('activeChatName').textContent = chatName;
-  document.getElementById('activeChatJid').textContent = waChatJid;
   document.getElementById('activeChatAvatar').textContent = waChatJid.endsWith('@g.us') ? '👥' : '👤';
+
+  const chatObj = chats.find(c => c.id === chatDbId);
+  if (isPrivateChat(waChatJid, chatObj)) {
+    subscribeChatPresence(chatDbId, waChatJid);
+  } else {
+    clearChatPresence();
+  }
 
   // Toggle wrap
   document.getElementById('chatPlaceholder').style.display = 'none';
@@ -830,6 +844,163 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   await loadMessages(chatDbId);
   updateMarkReadButtonVisibility();
 }
+
+function isPrivateChat(waChatJid, chatObj) {
+  if (waChatJid.endsWith('@g.us')) return false;
+  if (chatObj && chatObj.chatType === 'group') return false;
+  return true;
+}
+
+function stopPresenceRefresh() {
+  if (presenceRefreshInterval) {
+    clearInterval(presenceRefreshInterval);
+    presenceRefreshInterval = null;
+  }
+}
+
+function clearChatPresence() {
+  const el = document.getElementById('activeChatPresence');
+  if (!el) return;
+  el.textContent = '';
+  el.style.display = 'none';
+  el.classList.remove('online');
+}
+
+function extractContactPresence(presences, waChatId) {
+  if (!presences || typeof presences !== 'object') return null;
+  const entries = Object.entries(presences);
+  if (entries.length === 0) return null;
+
+  const phone = (waChatId || '').split('@')[0];
+  for (const [jid, data] of entries) {
+    if (jid === waChatId || (phone && jid.split('@')[0] === phone)) {
+      return data;
+    }
+  }
+
+  return entries[0][1];
+}
+
+function formatLastSeen(timestampSeconds) {
+  if (!timestampSeconds) return '';
+  const date = new Date(timestampSeconds * 1000);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const locale = navigator.language || undefined;
+  const hour12 = locale
+    ? new Intl.DateTimeFormat(locale, { hour: 'numeric' }).resolvedOptions().hour12
+    : true;
+  const timeStr = date.toLocaleTimeString(locale, {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12,
+  });
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+  if (date >= startOfToday) {
+    return `Last seen today at ${timeStr}`;
+  }
+  if (date >= startOfYesterday) {
+    return `Last seen yesterday at ${timeStr}`;
+  }
+
+  const dateStr = date.toLocaleDateString(locale, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  return `Last seen ${dateStr} at ${timeStr}`;
+}
+
+function renderChatPresence(presenceData) {
+  const el = document.getElementById('activeChatPresence');
+  if (!el) return;
+
+  if (!presenceData) {
+    clearChatPresence();
+    return;
+  }
+
+  const { lastKnownPresence, lastSeen } = presenceData;
+  if (lastSeen) {
+    activeChatLastSeen = lastSeen;
+  }
+
+  let text = '';
+  let isOnline = false;
+
+  switch (lastKnownPresence) {
+    case 'available':
+      text = 'Online';
+      isOnline = true;
+      break;
+    case 'composing':
+      text = 'typing...';
+      break;
+    case 'recording':
+      text = 'recording audio...';
+      break;
+    case 'paused':
+      text = activeChatLastSeen ? formatLastSeen(activeChatLastSeen) : '';
+      break;
+    case 'unavailable':
+      text = lastSeen ? formatLastSeen(lastSeen) : '';
+      break;
+    default:
+      text = '';
+  }
+
+  if (!text) {
+    clearChatPresence();
+    return;
+  }
+
+  el.textContent = text;
+  el.style.display = 'block';
+  el.classList.toggle('online', isOnline);
+}
+
+async function subscribeChatPresence(chatDbId, waChatJid) {
+  if (!isPrivateChat(waChatJid)) {
+    clearChatPresence();
+    return;
+  }
+
+  stopPresenceRefresh();
+
+  const doSubscribe = async () => {
+    try {
+      const response = await fetch(`/api/chats/${chatDbId}/presence/subscribe`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to subscribe to presence');
+      }
+
+      if (activeChatDbId !== chatDbId) return;
+
+      const presenceData = resData.presence
+        || extractContactPresence(resData.presences, waChatJid);
+      if (presenceData) {
+        renderChatPresence(presenceData);
+      }
+    } catch (err) {
+      console.warn('Presence subscribe failed', err);
+    }
+  };
+
+  await doSubscribe();
+  presenceRefreshInterval = setInterval(doSubscribe, 60000);
+}
+
+window.clearChatPresence = clearChatPresence;
+window.renderChatPresence = renderChatPresence;
 
 function updateMarkReadButtonVisibility() {
   const btn = document.getElementById('markReadBtn');
@@ -1805,6 +1976,23 @@ function handleWsEvent(data) {
       // If we are currently chatting with this contact, reload messages silently to update checkmarks/media
       if (activeChatDbId === msgChatId) {
         loadMessages(activeChatDbId, true);
+      }
+    }
+  }
+
+  if (type === 'presence:update' && activeSessionId === sessionId) {
+    const chatJid = data.chatJid;
+    if (!chatJid || chatJid.endsWith('@g.us')) return;
+
+    const matchesActiveChat =
+      chatJid === activeChatId
+      || data.chatId === activeChatDbId
+      || (activeChatId && chatJid.split('@')[0] === activeChatId.split('@')[0]);
+
+    if (matchesActiveChat && activeChatId && isPrivateChat(activeChatId)) {
+      const presenceData = extractContactPresence(data.presences, activeChatId);
+      if (presenceData) {
+        renderChatPresence(presenceData);
       }
     }
   }

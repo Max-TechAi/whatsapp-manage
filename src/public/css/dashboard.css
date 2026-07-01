@@ -408,6 +408,17 @@ body {
   color: var(--text-muted);
 }
 
+.active-chat-presence {
+  font-size: 0.75rem;
+  color: var(--text-muted, rgba(255, 255, 255, 0.5));
+  margin-top: 1px;
+  display: block;
+}
+
+.active-chat-presence.online {
+  color: #25d366;
+}
+
 .messages-pane {
   flex: 1;
   padding: 1.5rem;

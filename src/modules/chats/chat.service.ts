@@ -11,6 +11,7 @@ import { resolveLidJid } from '../sessions/lid-mapping.js';
 import { normalizeJid } from '../sessions/session.events.js';
 import type { Chat, ChatListQuery, ChatListResponse, ChatUpdatePayload } from './chat.types.js';
 import { eventBus, STREAMS } from '../../events/event-bus.js';
+import { redis } from '../../config/redis.js';
 
 export class ChatService {
   /**
@@ -649,6 +650,98 @@ export class ChatService {
       : null;
 
     return { events, nextCursor };
+  }
+
+  /**
+   * Returns true if the chat is a group (excluded from presence features).
+   */
+  isGroupChat(chat: { chatType: string; waChatId: string }): boolean {
+    return chat.chatType === 'group' || chat.waChatId.endsWith('@g.us');
+  }
+
+  /**
+   * Read cached presence snapshot from Redis for a 1:1 chat contact.
+   */
+  async getCachedPresence(
+    sessionId: string,
+    waChatId: string,
+  ): Promise<{
+    lastKnownPresence: string;
+    lastSeen: number | null;
+    updatedAt: number;
+  } | null> {
+    const candidates = new Set<string>();
+    candidates.add(normalizeJid(waChatId));
+    try {
+      const resolved = await resolveLidJid(sessionId, waChatId);
+      candidates.add(normalizeJid(resolved));
+    } catch {
+      // ignore LID resolution errors
+    }
+
+    for (const jid of candidates) {
+      const raw = await redis.get(`presence:lookup:${sessionId}:${jid}`);
+      if (raw) {
+        try {
+          return JSON.parse(raw) as {
+            lastKnownPresence: string;
+            lastSeen: number | null;
+            updatedAt: number;
+          };
+        } catch {
+          return null;
+        }
+      }
+
+      const compositeRaw = await redis.get(`presence:${sessionId}:${jid}:${jid}`);
+      if (compositeRaw) {
+        try {
+          return JSON.parse(compositeRaw) as {
+            lastKnownPresence: string;
+            lastSeen: number | null;
+            updatedAt: number;
+          };
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Request live presence updates for a private chat and return any cached snapshot.
+   */
+  async subscribeChatPresence(
+    orgId: string,
+    chatId: string,
+  ): Promise<{
+    chatJid: string;
+    presence: {
+      lastKnownPresence: string;
+      lastSeen: number | null;
+      updatedAt: number;
+    } | null;
+  }> {
+    const chat = await this.getChatById(orgId, chatId);
+    if (!chat) {
+      throw new Error('Chat not found');
+    }
+    if (this.isGroupChat(chat)) {
+      throw new Error('Presence is not available for group chats');
+    }
+
+    await eventBus.publishSessionControl(chat.sessionId, 'presence-subscribe', {
+      waChatId: chat.waChatId,
+    });
+
+    const presence = await this.getCachedPresence(chat.sessionId, chat.waChatId);
+
+    return {
+      chatJid: chat.waChatId,
+      presence,
+    };
   }
 
   /**

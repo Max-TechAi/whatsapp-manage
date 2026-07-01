@@ -243,7 +243,7 @@ export class EventBus {
    */
   async publishSessionControl(
     sessionId: string,
-    action: 'restart' | 'destroy' | 'reset-contact-session' | 'mark-read' | 'fetch-history',
+    action: 'restart' | 'destroy' | 'reset-contact-session' | 'mark-read' | 'fetch-history' | 'presence-subscribe',
     payload: Record<string, any> = {}
   ): Promise<string> {
     const queueName = `queue-session-${sessionId}-control`;

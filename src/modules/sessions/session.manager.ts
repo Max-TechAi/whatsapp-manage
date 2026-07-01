@@ -25,7 +25,7 @@ import { Boom } from '@hapi/boom';
 import { Worker } from 'bullmq';
 
 import { db } from '../../config/database.js';
-import { sessions, sessionKeys, messages } from '../../db/schema.js';
+import { sessions, sessionKeys, messages, chats } from '../../db/schema.js';
 import { redis, workerRedis } from '../../config/redis.js';
 import { logger } from '../../observability/logger.js';
 import { usePostgresAuthState } from './session.auth-state.js';
@@ -958,30 +958,64 @@ class SessionManager {
     socket.ev.on('presence.update', async (presence) => {
       const { id: jid, presences } = presence;
 
-      if (!presences) return;
+      if (!presences || jid.endsWith('@g.us')) return;
 
       try {
         // Store each participant's presence in Redis with 5-minute TTL
         for (const [participantJid, presenceData] of Object.entries(presences)) {
-          const redisKey = `presence:${sessionId}:${normalizeJid(jid)}:${normalizeJid(participantJid)}`;
+          const normJid = normalizeJid(jid);
+          const normParticipant = normalizeJid(participantJid);
+          const redisKey = `presence:${sessionId}:${normJid}:${normParticipant}`;
           const value = JSON.stringify({
             lastKnownPresence: presenceData.lastKnownPresence,
             lastSeen: presenceData.lastSeen ?? null,
             updatedAt: Date.now(),
           });
 
-          await redis.setex(redisKey, 300, value); // 5-minute TTL
+          await redis.setex(redisKey, 300, value);
+          await redis.setex(`presence:lookup:${sessionId}:${normParticipant}`, 300, value);
+          if (normJid !== normParticipant) {
+            await redis.setex(`presence:lookup:${sessionId}:${normJid}`, 300, value);
+          }
         }
+
+        let chatId: string | undefined;
+        try {
+          const normalizedJid = normalizeJid(jid);
+          const [chatRow] = await db
+            .select({ id: chats.id })
+            .from(chats)
+            .where(
+              and(
+                eq(chats.sessionId, sessionId),
+                eq(chats.orgId, orgId),
+                eq(chats.waChatId, normalizedJid),
+              ),
+            )
+            .limit(1);
+          chatId = chatRow?.id;
+        } catch (lookupErr) {
+          logger.debug('Failed to resolve chatId for presence broadcast', {
+            sessionId,
+            jid,
+            error: (lookupErr as Error).message,
+          });
+        }
+
+        await eventBus.publishToStream(STREAMS.PRESENCE, 'presence:update', {
+          sessionId,
+          orgId,
+          chatJid: jid,
+          ...(chatId ? { chatId } : {}),
+          presences,
+        });
       } catch (error) {
-        logger.warn('Failed to store presence in Redis', {
+        logger.warn('Failed to store or broadcast presence update', {
           sessionId,
           jid,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
       }
-
-      // TODO: Broadcast presence to WebSocket clients
-      // eventBus.broadcast(orgId, SessionEventType.PRESENCE_UPDATED, { sessionId, jid, presences });
     });
 
     socket.ev.on('messages.update', async (updates) => {
@@ -1726,6 +1760,21 @@ class SessionManager {
             waChatId,
             msgId: lastInboundMsg.waMessageId,
           });
+        } else if (action === 'presence-subscribe') {
+          const active = this.activeSessions.get(sessionId);
+          if (!active?.socket) {
+            throw new Error(`Socket not active locally for session ${sessionId}`);
+          }
+
+          const { waChatId } = payload;
+          if (!waChatId || waChatId.endsWith('@g.us')) {
+            logger.info('presence-subscribe skipped for group or missing JID', { sessionId, waChatId });
+            return;
+          }
+
+          const resolvedJid = await resolveLidJid(sessionId, waChatId);
+          await active.socket.presenceSubscribe(resolvedJid);
+          logger.info('Baileys presenceSubscribe sent', { sessionId, waChatId, resolvedJid });
         }
       },
       { connection: workerRedis.duplicate() as any }
