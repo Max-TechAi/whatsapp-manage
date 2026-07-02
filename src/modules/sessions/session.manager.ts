@@ -35,6 +35,12 @@ import type { ActiveSession, SessionStatus, WhatsAppSession } from './session.ty
 import { saveLidMapping, resolveLidJid } from './lid-mapping.js';
 import { eventBus, STREAMS } from '../../events/event-bus.js';
 
+/** Per-chat mark-read receipt cooldown (seconds) — gates Baileys readMessages only */
+const MARK_READ_COOLDOWN_SEC = 10;
+/** Randomized delay before readMessages (ms) */
+const MARK_READ_DELAY_MIN_MS = 500;
+const MARK_READ_DELAY_MAX_MS = 1000;
+
 /** Maximum number of reconnection attempts before giving up */
 const MAX_RETRIES = 10;
 
@@ -1561,6 +1567,25 @@ class SessionManager {
     await redis.set(lastKey, Date.now().toString(), 'EX', 3600);
   }
 
+  /**
+   * Pace Baileys readMessages receipts per chat (ban-risk mitigation).
+   * Returns false if a receipt was sent for this chat within the cooldown window.
+   */
+  private async paceMarkReadReceipt(sessionId: string, waChatId: string): Promise<boolean> {
+    const cooldownKey = `wa:mark-read:cooldown:${sessionId}:${waChatId}`;
+    if (await redis.get(cooldownKey)) {
+      logger.debug('mark-read skipped: per-chat cooldown active', { sessionId, waChatId });
+      return false;
+    }
+
+    const maxDelay = Math.max(MARK_READ_DELAY_MAX_MS, MARK_READ_DELAY_MIN_MS);
+    const delayMs =
+      MARK_READ_DELAY_MIN_MS +
+      Math.floor(Math.random() * (maxDelay - MARK_READ_DELAY_MIN_MS + 1));
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return true;
+  }
+
   private startDynamicWorkers(sessionId: string, orgId: string): void {
     this.stopDynamicWorkers(sessionId);
     
@@ -1859,7 +1884,16 @@ class SessionManager {
             key.participant = lastInboundMsg.senderJid;
           }
 
+          const shouldSend = await this.paceMarkReadReceipt(sessionId, waChatId);
+          if (!shouldSend) {
+            return;
+          }
+
           await active.socket.readMessages([key]);
+
+          const cooldownKey = `wa:mark-read:cooldown:${sessionId}:${waChatId}`;
+          await redis.set(cooldownKey, '1', 'EX', MARK_READ_COOLDOWN_SEC);
+
           logger.info('Baileys readMessages sent', {
             sessionId,
             waChatId,

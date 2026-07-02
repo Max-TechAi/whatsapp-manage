@@ -20,6 +20,9 @@ import type { Chat, ChatListQuery, ChatListResponse, ChatUpdatePayload } from '.
 import { eventBus, STREAMS } from '../../events/event-bus.js';
 import { redis } from '../../config/redis.js';
 
+/** Per-chat presence-subscribe cooldown (seconds) — aligns with dashboard 60s refresh */
+const PRESENCE_SUBSCRIBE_COOLDOWN_SEC = 45;
+
 export class ChatService {
   /**
    * Upsert a chat from WhatsApp sync data.
@@ -501,6 +504,16 @@ export class ChatService {
     chatId: string,
   ): Promise<void> {
     try {
+      const cooldownKey = `wa:mark-read:cooldown:${sessionId}:${waChatId}`;
+      if (await redis.get(cooldownKey)) {
+        logger.debug('Skipping mark-read enqueue: per-chat cooldown active', {
+          sessionId,
+          chatId,
+          waChatId,
+        });
+        return;
+      }
+
       const [lastInboundMsg] = await db
         .select({
           waMessageId: messages.waMessageId,
@@ -778,6 +791,22 @@ export class ChatService {
     if (this.isGroupChat(chat)) {
       throw new Error('Presence is not available for group chats');
     }
+
+    // Redis cooldown per (session, chat) — skip WhatsApp subscribe if called too often
+    const rateLimitKey = `limit:presence-subscribe:${chat.sessionId}:${chat.waChatId}`;
+    const isLocked = await redis.get(rateLimitKey);
+    if (isLocked) {
+      logger.debug('Presence subscribe skipped: cooldown active', {
+        sessionId: chat.sessionId,
+        waChatId: chat.waChatId,
+      });
+      const presence = await this.getCachedPresence(chat.sessionId, chat.waChatId);
+      return {
+        chatJid: chat.waChatId,
+        presence,
+      };
+    }
+    await redis.set(rateLimitKey, '1', 'EX', PRESENCE_SUBSCRIBE_COOLDOWN_SEC);
 
     await eventBus.publishSessionControl(chat.sessionId, 'presence-subscribe', {
       waChatId: chat.waChatId,
