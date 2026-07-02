@@ -351,6 +351,48 @@ export function createMessageWorker(): Worker {
         }
       }
 
+      // Intercept emoji reactions — attach to target message, never insert as new row
+      const reactionMessage = waMessage.message?.reactionMessage;
+      if (reactionMessage?.key?.id) {
+        const targetWaMessageId = reactionMessage.key.id;
+        const emoji = reactionMessage.text ?? null;
+        const rawReactor = waMessage.key.participant || waMessage.key.remoteJid;
+        const reactorJid = waMessage.key.fromMe
+          ? 'me'
+          : normalizeJid(await resolveLidJid(sessionId, rawReactor));
+
+        const target = await messageService.applyReactionToTarget(
+          sessionId,
+          targetWaMessageId,
+          reactorJid,
+          emoji
+        );
+
+        if (target) {
+          const reactions = await messageService.getReactionsForMessage(target.id);
+
+          await eventBus.publishToStream(STREAMS.MESSAGES, 'message:status_update', {
+            sessionId,
+            orgId,
+            chatId: target.chatId,
+            messageId: target.waMessageId,
+            reactions: reactions.map((r) => ({
+              emoji: r.emoji,
+              reactorJid: r.reactorJid,
+              createdAt: r.createdAt.toISOString(),
+            })),
+          });
+        } else {
+          logger.warn('Reaction target message not found', {
+            sessionId,
+            targetWaMessageId,
+            reactorJid,
+          });
+        }
+
+        return { messageId: null };
+      }
+
       const waMessageId = waMessage.key.id;
 
       // Ensure the chat exists (create if needed)

@@ -19,6 +19,12 @@ export type MessageType =
 
 export type MessageStatus = 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
 
+export interface MessageReaction {
+  emoji: string;
+  reactorJid: string;
+  createdAt: Date;
+}
+
 export interface Message {
   id: string;
   orgId: string;
@@ -44,6 +50,7 @@ export interface Message {
   isDeleted?: boolean;
   sentByUserId?: string | null;
   sentByDisplayName?: string | null;
+  reactions?: MessageReaction[];
   createdAt: Date;
   updatedAt: Date | null;
   deletedAt: Date | null;

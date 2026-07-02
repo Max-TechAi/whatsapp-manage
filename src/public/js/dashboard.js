@@ -1232,6 +1232,10 @@ function renderMessages(msgList) {
           lastDayKey = dayKey;
         }
 
+        if (m.messageType === 'reaction') {
+          return dateSeparatorHtml;
+        }
+
         const isSelf = m.fromMe;
         const bubbleClass = isSelf ? 'message-bubble self' : 'message-bubble other';
         const time = formatTime(new Date(m.createdAt));
@@ -1531,8 +1535,10 @@ function renderMessages(msgList) {
           </div>
         `;
 
+        const reactionsHtml = renderMessageReactionsHtml(m.reactions, isSelf);
+
         return dateSeparatorHtml + `
-          <div id="msg-${m.waMessageId}" class="message-bubble-wrapper ${isSelf ? 'self' : 'other'}">
+          <div id="msg-${m.waMessageId}" class="message-bubble-wrapper ${isSelf ? 'self' : 'other'}${reactionsHtml ? ' message-bubble-wrapper--has-reactions' : ''}">
             <div class="message-bubble-container">
               <div class="${bubbleClass}">
                 ${forwardedHtml}
@@ -1546,6 +1552,7 @@ function renderMessages(msgList) {
                   ${statusTick}
                 </div>
               </div>
+              ${reactionsHtml}
               ${actionsMenuHtml}
             </div>
           </div>
@@ -2472,6 +2479,33 @@ function renderDateSeparatorHtml(dateInput) {
   const label = formatDateSeparatorLabel(dateInput);
   if (!label) return '';
   return `<div class="date-separator dsep" role="separator" aria-label="${escapeHtml(label)}"><span class="date-separator__pill">${escapeHtml(label)}</span></div>`;
+}
+
+function renderMessageReactionsHtml(reactions, isSelf) {
+  if (!reactions || reactions.length === 0) return '';
+
+  const byEmoji = new Map();
+  for (const reaction of reactions) {
+    if (!reaction?.emoji) continue;
+    const existing = byEmoji.get(reaction.emoji);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      byEmoji.set(reaction.emoji, { emoji: reaction.emoji, count: 1 });
+    }
+  }
+
+  if (byEmoji.size === 0) return '';
+
+  const pills = [...byEmoji.values()].map(({ emoji, count }) => {
+    const countHtml = count > 1
+      ? `<span class="message-reaction-count">${count}</span>`
+      : '';
+    return `<span class="message-reaction-pill">${escapeHtml(emoji)}${countHtml}</span>`;
+  }).join('');
+
+  const sideClass = isSelf ? 'message-reactions--self' : 'message-reactions--other';
+  return `<div class="message-reactions ${sideClass}">${pills}</div>`;
 }
 
 function escapeHtml(unsafe) {

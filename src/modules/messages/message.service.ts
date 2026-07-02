@@ -4,11 +4,12 @@
  */
 
 import { db } from '../../config/database.js';
-import { messages, chats } from '../../db/schema.js';
-import { eq, and, desc, lt, sql, ilike, or } from 'drizzle-orm';
+import { messages, chats, messageReactions } from '../../db/schema.js';
+import { eq, and, desc, lt, sql, ilike, or, inArray, ne } from 'drizzle-orm';
 import { logger } from '../../observability/logger.js';
 import type {
   Message,
+  MessageReaction,
   SendMessageRequest,
   PaginationCursor,
   PaginatedMessages,
@@ -206,12 +207,14 @@ export class MessageService {
           ? and(
               eq(messages.orgId, orgId),
               eq(messages.chatId, chatId),
+              ne(messages.messageType, 'reaction'),
               sql`messages.deleted_at IS NULL`,
               sql`(messages.created_at, messages.id) < (${options.cursor.createdAt}::timestamptz, ${options.cursor.id}::uuid)`
             )
           : and(
               eq(messages.orgId, orgId),
               eq(messages.chatId, chatId),
+              ne(messages.messageType, 'reaction'),
               sql`messages.deleted_at IS NULL`
             )
       )
@@ -230,11 +233,116 @@ export class MessageService {
           }
         : null;
 
+    const reactionsMap = await this.getReactionsForMessageIds(resultRows.map((r) => r.id));
+    const messagesWithReactions = resultRows.map((row) => ({
+      ...row,
+      reactions: reactionsMap.get(row.id) ?? [],
+    }));
+
     return {
-      messages: resultRows as Message[],
+      messages: messagesWithReactions as Message[],
       nextCursor,
       hasMore,
     };
+  }
+
+  /**
+   * Upsert or remove a single reactor's emoji on a message.
+   * Empty/null emoji removes the reaction for that reactor.
+   */
+  async setMessageReaction(
+    messageId: string,
+    reactorJid: string,
+    emoji: string | null
+  ): Promise<void> {
+    const trimmed = emoji?.trim() ?? '';
+    if (!trimmed) {
+      await db
+        .delete(messageReactions)
+        .where(
+          and(
+            eq(messageReactions.messageId, messageId),
+            eq(messageReactions.reactorJid, reactorJid)
+          )
+        );
+      return;
+    }
+
+    await db
+      .insert(messageReactions)
+      .values({
+        messageId,
+        reactorJid,
+        emoji: trimmed,
+      })
+      .onConflictDoUpdate({
+        target: [messageReactions.messageId, messageReactions.reactorJid],
+        set: {
+          emoji: trimmed,
+          createdAt: new Date(),
+        },
+      });
+  }
+
+  async getReactionsForMessage(messageId: string): Promise<MessageReaction[]> {
+    const rows = await db
+      .select({
+        emoji: messageReactions.emoji,
+        reactorJid: messageReactions.reactorJid,
+        createdAt: messageReactions.createdAt,
+      })
+      .from(messageReactions)
+      .where(eq(messageReactions.messageId, messageId))
+      .orderBy(messageReactions.createdAt);
+
+    return rows;
+  }
+
+  async getReactionsForMessageIds(
+    messageIds: string[]
+  ): Promise<Map<string, MessageReaction[]>> {
+    const map = new Map<string, MessageReaction[]>();
+    if (messageIds.length === 0) return map;
+
+    const rows = await db
+      .select({
+        messageId: messageReactions.messageId,
+        emoji: messageReactions.emoji,
+        reactorJid: messageReactions.reactorJid,
+        createdAt: messageReactions.createdAt,
+      })
+      .from(messageReactions)
+      .where(inArray(messageReactions.messageId, messageIds))
+      .orderBy(messageReactions.createdAt);
+
+    for (const row of rows) {
+      const list = map.get(row.messageId) ?? [];
+      list.push({
+        emoji: row.emoji,
+        reactorJid: row.reactorJid,
+        createdAt: row.createdAt,
+      });
+      map.set(row.messageId, list);
+    }
+
+    return map;
+  }
+
+  /**
+   * Apply a WhatsApp reaction event to the target message (by waMessageId).
+   * Returns target metadata when the original message exists.
+   */
+  async applyReactionToTarget(
+    sessionId: string,
+    targetWaMessageId: string,
+    reactorJid: string,
+    emoji: string | null | undefined
+  ): Promise<{ id: string; chatId: string; waMessageId: string } | null> {
+    const original = await this.getMessageByWaId(sessionId, targetWaMessageId);
+    if (!original) return null;
+
+    await this.setMessageReaction(original.id, reactorJid, emoji ?? null);
+    return { id: original.id, chatId: original.chatId, waMessageId: original.waMessageId };
   }
 
   /**

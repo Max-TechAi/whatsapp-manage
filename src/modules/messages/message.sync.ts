@@ -295,6 +295,12 @@ export class MessageSyncService {
         continue;
       }
 
+      if (msg.message?.reactionMessage?.key?.id) {
+        await applyHistorySyncReaction(sessionId, msg);
+        skippedMessagesCount++;
+        continue;
+      }
+
       const { type, content } = extractSyncMessageContent(msg.message);
       const timestamp = msg.messageTimestamp
         ? new Date(Number(msg.messageTimestamp) * 1000)
@@ -547,6 +553,11 @@ export class MessageSyncService {
       const chatId = await chatService.ensureChatExists(orgId, sessionId, normalizedRemoteJid);
       if (!chatId) continue;
 
+      if (msg.message?.reactionMessage?.key?.id) {
+        await applyHistorySyncReaction(sessionId, msg);
+        continue;
+      }
+
       const { type, content } = extractSyncMessageContent(msg);
       const timestamp = msg.messageTimestamp
         ? new Date(Number(msg.messageTimestamp) * 1000)
@@ -589,6 +600,38 @@ export class MessageSyncService {
     const progress = await redis.hgetall(syncProgressKey(sessionId));
     return Object.keys(progress).length > 0 ? progress : null;
   }
+}
+
+/**
+ * Apply a reaction from history sync to the target message (never insert as new row).
+ */
+async function applyHistorySyncReaction(
+  sessionId: string,
+  msg: {
+    key: { fromMe?: boolean; participant?: string; remoteJid: string };
+    message?: { reactionMessage?: { key?: { id?: string }; text?: string | null } };
+  }
+): Promise<void> {
+  const reactionMessage = msg.message?.reactionMessage;
+  const targetWaMessageId = reactionMessage?.key?.id;
+  if (!targetWaMessageId) return;
+
+  const rawReactor = msg.key.fromMe
+    ? 'me'
+    : msg.key.participant || msg.key.remoteJid;
+
+  let reactorJid = 'me';
+  if (rawReactor !== 'me') {
+    const resolvedSender = await resolveLidJid(sessionId, rawReactor);
+    reactorJid = normalizeJid(resolvedSender);
+  }
+
+  await messageService.applyReactionToTarget(
+    sessionId,
+    targetWaMessageId,
+    reactorJid,
+    reactionMessage?.text ?? null
+  );
 }
 
 /**

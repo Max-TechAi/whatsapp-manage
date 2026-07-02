@@ -2296,6 +2296,47 @@ tr:last-child td {
   min-width: 0;
 }
 
+.message-bubble-wrapper--has-reactions {
+  margin-bottom: 0.55rem;
+}
+
+.message-reactions {
+  position: absolute;
+  bottom: -0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  max-width: calc(100% - 0.5rem);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.message-reactions--self {
+  right: 0.4rem;
+}
+
+.message-reactions--other {
+  left: 0.4rem;
+}
+
+.message-reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.1rem 0.38rem;
+  background: var(--bg-elevated-2);
+  border: 0.5px solid var(--border-default);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+
+.message-reaction-count {
+  font-size: 10px;
+  color: var(--text-muted-2);
+  font-weight: var(--font-weight-medium);
+}
+
 .message-actions-menu {
   position: absolute;
   top: 50%;
