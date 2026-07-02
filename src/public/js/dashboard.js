@@ -858,7 +858,12 @@ async function selectChat(chatDbId, waChatJid, chatName) {
   
   // Set headers
   document.getElementById('activeChatName').textContent = chatName;
-  document.getElementById('activeChatAvatar').textContent = waChatJid.endsWith('@g.us') ? '👥' : '👤';
+  const avatarEl = document.getElementById('activeChatAvatar');
+  const isGroup = waChatJid.endsWith('@g.us');
+  if (avatarEl) {
+    avatarEl.className = `chat-avatar ${getChatAvatarColorClass(waChatJid)}${isGroup ? ' chat-avatar--group' : ''}`;
+    avatarEl.innerHTML = `<i class="ti ${isGroup ? 'ti-users' : 'ti-user'}"></i>`;
+  }
 
   const chatObj = chats.find(c => c.id === chatDbId);
   if (isPrivateChat(waChatJid, chatObj)) {
@@ -1192,20 +1197,20 @@ function renderMessages(msgList) {
     let paginationHtml = '';
     if (activeChatHistoryExhausted) {
       paginationHtml = `
-        <div class="pagination-container" style="text-align: center; padding: 1rem 0; color: var(--text-muted); font-size: 0.8rem; font-style: italic; opacity: 0.7;">
+        <div class="messages-pagination">
           End of conversation history
         </div>
       `;
     } else if (activeChatHasMore) {
       paginationHtml = `
-        <div class="pagination-container" style="text-align: center; padding: 1rem 0;">
-          <button id="loadOlderMsgBtn" onclick="loadMoreMessages()" class="btn btn-secondary btn-sm" style="font-size: 0.8rem; padding: 0.3rem 1rem; border-radius: 4px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.15); color: var(--text-normal); cursor: pointer;">Load older messages</button>
+        <div class="messages-pagination">
+          <button id="loadOlderMsgBtn" onclick="loadMoreMessages()" class="btn btn-secondary active-chat-action-pill">Load older messages</button>
         </div>
       `;
     } else {
       paginationHtml = `
-        <div class="pagination-container" style="text-align: center; padding: 1rem 0;">
-          <button id="syncOlderMsgBtn" onclick="syncOlderMessages()" class="btn btn-secondary btn-sm" style="font-size: 0.8rem; padding: 0.3rem 1rem; border-radius: 4px; color: #ffab40; background: rgba(255,171,64,0.1); border: 1px solid rgba(255,171,64,0.25); cursor: pointer; outline: none; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,171,64,0.2)'" onmouseout="this.style.background='rgba(255,171,64,0.1)'" ${isSyncingFromPhone ? 'disabled' : ''}>
+        <div class="messages-pagination">
+          <button id="syncOlderMsgBtn" onclick="syncOlderMessages()" class="btn btn-secondary active-chat-action-pill" ${isSyncingFromPhone ? 'disabled' : ''}>
             ${isSyncingFromPhone ? 'Requesting from phone...' : 'Sync older messages from phone'}
           </button>
         </div>
@@ -1221,18 +1226,18 @@ function renderMessages(msgList) {
         // Status ticks for self messages
         let statusTick = '';
         if (isSelf) {
-          if (m.status === 'read') statusTick = '<span style="color: #4fc3f7;">✓✓</span>';
-          else if (m.status === 'delivered') statusTick = '<span>✓✓</span>';
-          else if (m.status === 'sent') statusTick = '<span>✓</span>';
+          if (m.status === 'read') statusTick = '<span class="message-tick message-tick--read">✓✓</span>';
+          else if (m.status === 'delivered') statusTick = '<span class="message-tick message-tick--delivered">✓✓</span>';
+          else if (m.status === 'sent') statusTick = '<span class="message-tick">✓</span>';
         }
 
         // Attribution for self messages
         let attributionHtml = '';
         if (isSelf) {
           if (m.sentByUserId) {
-            attributionHtml = `<div class="message-attribution" style="font-size: 0.65rem; color: rgba(255,255,255,0.45); text-align: right; margin-top: 0.2rem; font-style: italic;">Sent by: ${escapeHtml(m.sentByDisplayName || 'Unknown Agent')}</div>`;
+            attributionHtml = `<div class="message-attribution">Sent by: ${escapeHtml(m.sentByDisplayName || 'Unknown Agent')}</div>`;
           } else {
-            attributionHtml = `<div class="message-attribution" style="font-size: 0.65rem; color: rgba(255,255,255,0.45); text-align: right; margin-top: 0.2rem; font-style: italic;">Sent from phone</div>`;
+            attributionHtml = `<div class="message-attribution">Sent from phone</div>`;
           }
         }
 
@@ -1240,7 +1245,7 @@ function renderMessages(msgList) {
         let senderHeader = '';
         if (!isSelf && activeChatId.endsWith('@g.us')) {
           const displayName = getSenderDisplayName(m.senderJid, m.metadata?.pushName);
-          senderHeader = `<div class="message-sender" style="font-size: 0.75rem; font-weight: 600; color: #4fc3f7; margin-bottom: 0.2rem; cursor: default;">${escapeHtml(displayName)}</div>`;
+          senderHeader = `<div class="message-sender">${escapeHtml(displayName)}</div>`;
         }
 
         // Render message body (handles text content vs media files)
@@ -1499,9 +1504,9 @@ function renderMessages(msgList) {
         if (m.quotedContent || quotedWaId) {
           const quotedContentTrimmed = (m.quotedContent || '[Media]').trim();
           quotedBoxHtml = `
-            <div class="quoted-message-box" style="background: rgba(0,0,0,0.15); border-left: 3px solid #4fc3f7; padding: 0.25rem 0.5rem; margin-bottom: 0.4rem; border-radius: 2px; font-size: 0.75rem; color: rgba(255,255,255,0.7); cursor: pointer;" onclick="scrollToMessage('${quotedWaId || ''}')">
-              <div style="font-weight: 600; color: #4fc3f7; font-size: 0.7rem; margin-bottom: 0.1rem;">Quoted Message</div>
-              <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(quotedContentTrimmed)}</div>
+            <div class="quoted-message-box" onclick="scrollToMessage('${quotedWaId || ''}')">
+              <div class="quoted-message-box-title">Quoted Message</div>
+              <div class="quoted-message-box-text">${escapeHtml(quotedContentTrimmed)}</div>
             </div>
           `;
         }
@@ -1514,9 +1519,9 @@ function renderMessages(msgList) {
         `;
 
         return `
-          <div id="msg-${m.waMessageId}" class="message-bubble-wrapper ${isSelf ? 'self' : 'other'}" style="margin: 0.25rem 0; display: flex; flex-direction: column; align-items: ${isSelf ? 'flex-end' : 'flex-start'};">
-            <div class="message-bubble-container" style="position: relative; max-width: 65%;">
-              <div class="${bubbleClass}" style="max-width: 100%;">
+          <div id="msg-${m.waMessageId}" class="message-bubble-wrapper ${isSelf ? 'self' : 'other'}">
+            <div class="message-bubble-container">
+              <div class="${bubbleClass}">
                 ${forwardedHtml}
                 ${quotedBoxHtml}
                 ${senderHeader}

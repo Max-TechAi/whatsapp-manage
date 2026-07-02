@@ -134,37 +134,34 @@
 
           <!-- Active Chat Pane (center) -->
           <div class="active-chat-pane">
-            <div id="chatPlaceholder" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem; color: var(--text-muted);">
-              <span style="font-size: 3rem; margin-bottom: 1rem;">💬</span>
-              <h3>No Active Chat Selected</h3>
-              <p style="font-size: 0.9rem; margin-top: 0.5rem; max-width: 300px;">Select a conversation from the sidebar or link a session to start messaging.</p>
+            <div id="chatPlaceholder" class="chat-placeholder">
+              <i class="ti ti-messages chat-placeholder-icon" aria-hidden="true"></i>
+              <h3 class="chat-placeholder-title">No Active Chat Selected</h3>
+              <p class="chat-placeholder-text">Select a conversation from the sidebar or link a session to start messaging.</p>
             </div>
 
             <!-- Main active message screen (initially hidden) -->
-            <div id="activeChatWrapper" style="display: none; flex: 1; flex-direction: column; overflow: hidden;">
+            <div id="activeChatWrapper" class="active-chat-wrapper" style="display: none;">
               <!-- Header -->
-              <div class="active-chat-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <div class="active-chat-header">
                 <div class="active-chat-user">
-                  <div class="chat-avatar" id="activeChatAvatar">👤</div>
+                  <div class="chat-avatar chat-avatar--blue" id="activeChatAvatar"><i class="ti ti-user"></i></div>
                   <div class="active-chat-details">
                     <span class="active-chat-name" id="activeChatName">Contact Name</span>
                     <span class="active-chat-presence" id="activeChatPresence" style="display: none;"></span>
                   </div>
                 </div>
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                  <!-- Mark as read (manual) -->
-                  <button id="markReadBtn" class="btn btn-secondary" onclick="openMarkReadModal()" style="display: none; padding: 0.3rem 0.6rem; font-size: 0.8rem; height: auto;">
-                    ✓ Mark as Read
+                <div class="active-chat-header-actions">
+                  <button id="markReadBtn" type="button" class="active-chat-action-pill btn-secondary" onclick="openMarkReadModal()" style="display: none;">
+                    <i class="ti ti-checks" aria-hidden="true"></i>
+                    <span>Mark as Read</span>
                   </button>
-                  <!-- Reset encryption session -->
-                  <button class="btn btn-secondary" onclick="handleResetContactSession()" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; height: auto;">
-                    🔄 Reset Encryption
+                  <button type="button" class="icon-btn" onclick="handleResetContactSession()" title="Reset Encryption" aria-label="Reset Encryption">
+                    <i class="ti ti-lock-off" aria-hidden="true"></i>
                   </button>
-                  
-                  <!-- Assign chat dropdown -->
-                  <div id="assignChatContainer" style="display: none; align-items: center; gap: 0.25rem;">
-                    <span style="font-size: 0.8rem; color: var(--text-muted);">Assignee:</span>
-                    <select id="chatAssigneeSelect" onchange="handleAssignChatChange()" style="padding: 0.3rem; font-size: 0.8rem; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 4px; height: auto; cursor: pointer;">
+                  <div id="assignChatContainer" class="active-chat-assignee" style="display: none;">
+                    <label class="active-chat-assignee-label" for="chatAssigneeSelect">Assignee</label>
+                    <select id="chatAssigneeSelect" class="active-chat-assignee-select" onchange="handleAssignChatChange()">
                       <option value="">Unassigned</option>
                     </select>
                   </div>
@@ -179,30 +176,35 @@
               <!-- Input text box -->
               <div class="message-input-pane">
                 <!-- Quoted reply preview banner -->
-                <div id="replyPreviewContainer" style="display: none; align-items: center; justify-content: space-between; padding: 0.5rem 1rem; background: rgba(255,255,255,0.05); border-left: 4px solid #4fc3f7; border-bottom: 1px solid var(--border-color); font-size: 0.8rem; border-radius: 4px 4px 0 0; margin-bottom: 0.25rem;">
-                  <div style="display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90%; min-width: 0;">
-                    <span id="replyPreviewSender" style="font-weight: 600; color: #4fc3f7; font-size: 0.75rem;"></span>
-                    <span id="replyPreviewContent" style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                <div id="replyPreviewContainer" class="input-preview-bar input-preview-bar--reply" style="display: none;">
+                  <div class="input-preview-bar-body">
+                    <span id="replyPreviewSender" class="input-preview-bar-label"></span>
+                    <span id="replyPreviewContent" class="input-preview-bar-text"></span>
                   </div>
-                  <button type="button" onclick="cancelReplyMode()" style="background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; padding: 0 0.25rem; outline: none;">×</button>
+                  <button type="button" class="input-preview-bar-close" onclick="cancelReplyMode()" aria-label="Cancel reply">&times;</button>
                 </div>
 
                 <!-- Attachment preview banner -->
-                <div id="attachmentPreviewContainer" style="display: none; align-items: center; justify-content: space-between; padding: 0.5rem 1rem; background: rgba(255,255,255,0.05); border-left: 4px solid var(--accent-green); border-bottom: 1px solid var(--border-color); font-size: 0.8rem; border-radius: 4px 4px 0 0; margin-bottom: 0.25rem;">
-                  <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden; max-width: 90%;">
-                    <div id="attachmentPreviewMedia" style="flex-shrink: 0; display: flex; align-items: center; justify-content: center;"></div>
-                    <div style="display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                      <span id="attachmentPreviewFilename" style="font-weight: 600; color: var(--accent-green); font-size: 0.75rem;"></span>
-                      <span id="attachmentPreviewMime" style="color: var(--text-muted); font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                <div id="attachmentPreviewContainer" class="input-preview-bar input-preview-bar--attachment" style="display: none;">
+                  <div class="input-preview-bar-body input-preview-bar-body--row">
+                    <div id="attachmentPreviewMedia" class="input-preview-bar-media"></div>
+                    <div class="input-preview-bar-copy">
+                      <span id="attachmentPreviewFilename" class="input-preview-bar-label input-preview-bar-label--green"></span>
+                      <span id="attachmentPreviewMime" class="input-preview-bar-text"></span>
                     </div>
                   </div>
-                  <button type="button" onclick="cancelAttachmentPreview()" style="background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; padding: 0 0.25rem; outline: none;">×</button>
+                  <button type="button" class="input-preview-bar-close" onclick="cancelAttachmentPreview()" aria-label="Remove attachment">&times;</button>
                 </div>
 
                 <form id="dashboardSendMessageForm" class="message-form" onsubmit="handleSendMessageSubmit(event)">
-                  <button type="button" id="attachmentBtn" onclick="triggerAttachmentUpload()" class="btn btn-secondary" style="padding: 0.3rem 0.5rem; font-size: 1rem; border-radius: 4px; background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); color: var(--text-main); cursor: pointer; outline: none; margin-right: 0.25rem;">📎</button>
+                  <button type="button" id="attachmentBtn" onclick="triggerAttachmentUpload()" class="icon-btn message-attach-btn" title="Attach file" aria-label="Attach file">
+                    <i class="ti ti-paperclip" aria-hidden="true"></i>
+                  </button>
                   <textarea id="dashboardMessageInput" class="message-input" rows="1" placeholder="Type a message..." autocomplete="off" required></textarea>
-                  <button type="submit" class="btn">Send</button>
+                  <button type="submit" class="btn message-send-btn">
+                    <i class="ti ti-send" aria-hidden="true"></i>
+                    <span>Send</span>
+                  </button>
                 </form>
                 <input type="file" id="mediaAttachmentInput" style="display: none;" onchange="handleAttachmentUpload(event)">
               </div>
