@@ -4,64 +4,55 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WhatsApp Business Platform — Inbox & Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
   <link rel="stylesheet" href="/css/dashboard.css">
 </head>
 <body>
 
-  <!-- ─── APP HEADER ─────────────────────────────────────────── -->
-  <header class="app-header">
-    <div class="logo-section">
-      <div class="logo-icon">WA</div>
-      <div class="logo-text">WhatsApp Business API</div>
-    </div>
-    
-    <div class="header-actions">
-      <!-- WS Status -->
-      <div class="status-badge">
-        <div id="wsStatusDot" class="status-dot disconnected"></div>
-        <span id="wsStatusText">WebSocket Offline</span>
+  <div class="app-shell">
+
+    <!-- ─── NAV RAIL (icon strip) ──────────────────────────────── -->
+    <aside class="nav-rail" aria-label="Main navigation">
+      <div class="nav-rail-logo" title="WhatsApp Business API">
+        <div class="logo-icon">WA</div>
       </div>
 
-      <!-- Logged-in indicator -->
-      <div style="font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 0.5rem;">
-        <span>👤</span>
-        <span id="headerUserName" class="text-muted">Agent</span>
-      </div>
-    </div>
-  </header>
+      <nav class="nav-links">
+        <button id="navBtnInbox" type="button" class="nav-link active" onclick="switchTab('inbox')" aria-label="Chat Inbox" title="Chat Inbox">
+          <i class="ti ti-message-circle" aria-hidden="true"></i>
+          <span class="nav-unread-dot" id="navInboxUnreadDot" hidden></span>
+        </button>
+        <button id="navBtnUnifiedInbox" type="button" class="nav-link" onclick="switchTab('unified-inbox')" aria-label="Unified Inbox" title="Unified Inbox">
+          <i class="ti ti-inbox" aria-hidden="true"></i>
+        </button>
+        <button id="navBtnSessions" type="button" class="nav-link" onclick="switchTab('sessions')" aria-label="WhatsApp Sessions" title="WhatsApp Sessions">
+          <i class="ti ti-device-mobile" aria-hidden="true"></i>
+        </button>
+        <button id="navBtnWebhooks" type="button" class="nav-link" onclick="switchTab('webhooks')" aria-label="Webhook Settings" title="Webhook Settings">
+          <i class="ti ti-webhook" aria-hidden="true"></i>
+        </button>
+        <button id="navBtnTeam" type="button" class="nav-link" onclick="switchTab('team')" aria-label="Team Settings" title="Team Settings" style="display: none;">
+          <i class="ti ti-users" aria-hidden="true"></i>
+        </button>
+        <button id="navBtnStats" type="button" class="nav-link" onclick="switchTab('stats')" aria-label="Employee Stats" title="Employee Stats" style="display: none;">
+          <i class="ti ti-chart-bar" aria-hidden="true"></i>
+        </button>
+        <button id="navBtnDevConsole" type="button" class="nav-link" onclick="window.location.href='/dev-console.html'" aria-label="Dev Console" title="Dev Console" style="display: none;">
+          <i class="ti ti-terminal-2" aria-hidden="true"></i>
+        </button>
+      </nav>
 
-  <!-- ─── MAIN APP CONTAINER ─────────────────────────────────── -->
-  <div class="app-container">
-    
-    <!-- ─── SIDEBAR NAVIGATION ───────────────────────────────── -->
-    <aside class="app-sidebar">
-      <div class="nav-links">
-        <button id="navBtnInbox" class="nav-link active" onclick="switchTab('inbox')">
-          <span>💬</span> Chat Inbox
-        </button>
-        <button id="navBtnUnifiedInbox" class="nav-link" onclick="switchTab('unified-inbox')">
-          <span>📥</span> Unified Inbox
-        </button>
-        <button id="navBtnSessions" class="nav-link" onclick="switchTab('sessions')">
-          <span>📱</span> WhatsApp Sessions
-        </button>
-        <button id="navBtnWebhooks" class="nav-link" onclick="switchTab('webhooks')">
-          <span>🔗</span> Webhook Settings
-        </button>
-        <button id="navBtnTeam" class="nav-link" onclick="switchTab('team')" style="display: none;">
-          <span>👥</span> Team Settings
-        </button>
-        <button id="navBtnStats" class="nav-link" onclick="switchTab('stats')" style="display: none;">
-          <span>📊</span> Employee Stats
-        </button>
-        <button id="navBtnDevConsole" class="nav-link" onclick="window.location.href='/dev-console.html'" style="display: none;">
-          <span>🛠️</span> Dev Console
-        </button>
-      </div>
-
-      <div>
-        <button class="nav-link" onclick="handleLogout()" style="color: var(--danger);">
-          <span>🚪</span> Logout
+      <div class="nav-rail-footer">
+        <div class="nav-ws-status" id="navWsStatus" title="WebSocket Offline">
+          <div id="wsStatusDot" class="status-dot disconnected"></div>
+          <span id="wsStatusText" class="sr-only">WebSocket Offline</span>
+        </div>
+        <div class="nav-user-avatar" id="navUserAvatar" title="Agent">
+          <i class="ti ti-user" aria-hidden="true"></i>
+          <span id="headerUserName" class="sr-only">Agent</span>
+        </div>
+        <button type="button" class="nav-link nav-logout-btn" onclick="handleLogout()" aria-label="Logout" title="Logout">
+          <i class="ti ti-logout" aria-hidden="true"></i>
         </button>
       </div>
     </aside>

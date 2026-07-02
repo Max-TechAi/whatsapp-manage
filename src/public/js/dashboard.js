@@ -321,6 +321,8 @@ if (!token) {
     const userEmailVerified = !!payload.emailVerified;
 
     document.getElementById('headerUserName').textContent = userDisplayName;
+    const navUserAvatar = document.getElementById('navUserAvatar');
+    if (navUserAvatar) navUserAvatar.title = userDisplayName;
 
     // Show email verification banner if not verified
     if (!userEmailVerified) {
@@ -796,6 +798,11 @@ function renderChatsList(chatList) {
         </div>
       `;
     }).join('');
+
+    const navInboxUnreadDot = document.getElementById('navInboxUnreadDot');
+    if (navInboxUnreadDot) {
+      navInboxUnreadDot.hidden = !sortedList.some((c) => Number(c.unreadCount) > 0);
+    }
   } catch (err) {
     console.error('Failed to render chat list:', err);
     document.getElementById('chatsListContainer').innerHTML = `<div style="color: var(--danger); padding: 1rem; font-size: 0.85rem;">Error loading chats</div>`;
@@ -1833,12 +1840,16 @@ function connectWS() {
   ws.onopen = () => {
     document.getElementById('wsStatusDot').className = 'status-dot connected';
     document.getElementById('wsStatusText').textContent = 'WebSocket Online';
+    const navWsStatus = document.getElementById('navWsStatus');
+    if (navWsStatus) navWsStatus.title = 'WebSocket Online';
     document.getElementById('reconnectingBanner').style.display = 'none';
   };
 
   ws.onclose = () => {
     document.getElementById('wsStatusDot').className = 'status-dot disconnected';
     document.getElementById('wsStatusText').textContent = 'WebSocket Offline';
+    const navWsStatus = document.getElementById('navWsStatus');
+    if (navWsStatus) navWsStatus.title = 'WebSocket Offline';
     if (isHistorySyncCompleted && activeSessionId) {
       document.getElementById('reconnectingBanner').style.display = 'block';
     }
