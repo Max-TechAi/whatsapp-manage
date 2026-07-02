@@ -232,11 +232,11 @@
           <!-- Info guide -->
           <div class="card">
             <div class="card-title">How Connecting Works</div>
-            <p style="font-size: 0.95rem; line-height: 1.6; color: var(--text-muted); margin-bottom: 0.75rem;">
-              When you add a device, our system initializes a background WhatsApp virtual browser session. 
+            <p class="page-prose">
+              When you add a device, our system initializes a background WhatsApp virtual browser session.
             </p>
-            <p style="font-size: 0.95rem; line-height: 1.6; color: var(--text-muted);">
-              Click <b>"Get QR Code"</b> on your session to display the QR, scan it using WhatsApp on your phone (Linked Devices -> Link a Device), and the system will sync your chats automatically.
+            <p class="page-prose">
+              Click <strong>Get QR Code</strong> on your session to display the QR, scan it using WhatsApp on your phone (Linked Devices → Link a Device), and the system will sync your chats automatically.
             </p>
           </div>
         </div>
@@ -244,7 +244,7 @@
         <!-- Sessions List -->
         <div class="card">
           <div class="card-title">WhatsApp Session Connections</div>
-          <div style="overflow-x: auto;">
+          <div style="overflow-x: auto;" class="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -285,18 +285,22 @@
               
               <div class="input-group">
                 <label>Event Subscriptions</label>
-                <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem;">
-                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
-                    <input type="checkbox" name="webhookEvents" value="message.received" checked> Inbound Message Received
+                <div class="checkbox-group">
+                  <label class="checkbox-row">
+                    <input type="checkbox" name="webhookEvents" value="message.received" checked>
+                    <span>Inbound Message Received</span>
                   </label>
-                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
-                    <input type="checkbox" name="webhookEvents" value="message.sent" checked> Outbound Message Sent
+                  <label class="checkbox-row">
+                    <input type="checkbox" name="webhookEvents" value="message.sent" checked>
+                    <span>Outbound Message Sent</span>
                   </label>
-                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
-                    <input type="checkbox" name="webhookEvents" value="session.status" checked> WhatsApp Session Status Update
+                  <label class="checkbox-row">
+                    <input type="checkbox" name="webhookEvents" value="session.status" checked>
+                    <span>WhatsApp Session Status Update</span>
                   </label>
-                  <label style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-main); font-weight: normal; cursor: pointer;">
-                    <input type="checkbox" name="webhookEvents" value="webhook.test"> Test Webhook Event
+                  <label class="checkbox-row">
+                    <input type="checkbox" name="webhookEvents" value="webhook.test">
+                    <span>Test Webhook Event</span>
                   </label>
                 </div>
               </div>
@@ -307,7 +311,7 @@
           <!-- Webhook deliveries logs preview -->
           <div class="card">
             <div class="card-title">Active Webhooks & Status</div>
-            <div style="overflow-x: auto;">
+            <div style="overflow-x: auto;" class="table-scroll">
               <table>
                 <thead>
                   <tr>
@@ -355,7 +359,7 @@
           <!-- Members list -->
           <div class="card">
             <div class="card-title">Team Members</div>
-            <div style="overflow-x: auto;">
+            <div style="overflow-x: auto;" class="table-scroll">
               <table>
                 <thead>
                   <tr>
@@ -398,7 +402,7 @@
               </select>
             </div>
           </div>
-          <div style="overflow-x: auto;">
+          <div style="overflow-x: auto;" class="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -430,7 +434,7 @@
               </select>
             </div>
           </div>
-          <div style="overflow-x: auto;">
+          <div style="overflow-x: auto;" class="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -484,7 +488,7 @@
               </select>
             </div>
           </div>
-          <div style="overflow-x: auto;">
+          <div style="overflow-x: auto;" class="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -513,19 +517,19 @@
   <div id="qrModalOverlay" class="qr-modal-overlay">
     <div class="qr-modal-card">
       <div class="card-title" id="qrModalTitle">Link Device QR</div>
-      <p style="color: var(--text-muted); font-size: 0.9rem;">Scan the code using WhatsApp -> Linked Devices on your phone.</p>
+      <p class="modal-hint">Scan the code using WhatsApp → Linked Devices on your phone.</p>
       
       <div class="qr-box">
         <img id="qrModalImage" src="" alt="QR Code Loading...">
       </div>
       
-      <div id="qrModalStatus" style="font-weight: 500; font-size: 0.95rem; margin-bottom: 1.5rem; color: var(--accent-blue);">
+      <div id="qrModalStatus" class="modal-status modal-status--info">
         Waiting for socket stream...
       </div>
 
-      <div style="display: flex; justify-content: center; gap: 1rem;">
-        <button class="btn btn-secondary" onclick="closeQrModal()">Close</button>
-        <button class="btn" onclick="checkQrConnectionStatus()">Check Status</button>
+      <div class="modal-actions modal-actions--center">
+        <button type="button" class="btn btn-secondary" onclick="closeQrModal()">Close</button>
+        <button type="button" class="btn" onclick="checkQrConnectionStatus()">Check Status</button>
       </div>
     </div>
   </div>
@@ -533,39 +537,36 @@
   <!-- ─── INITIAL SYNC LOCK OVERLAY ──────────────────────────── -->
   <div id="syncLockOverlay" class="sync-lock-overlay" style="display: none;">
     <div class="sync-lock-card">
-      <span class="sync-lock-icon">🔄</span>
+      <i class="ti ti-refresh sync-lock-icon" aria-hidden="true"></i>
       <h3 class="sync-lock-title">Syncing your conversations</h3>
       <p class="sync-lock-text">We are syncing your messages for the first time. This may take a few minutes.</p>
       
-      <!-- Progress container -->
       <div class="sync-progress-container">
         <div id="syncProgressBar" class="sync-progress-bar indeterminate"></div>
       </div>
       
-      <!-- Status text -->
       <div id="syncProgressText" class="sync-progress-text">Preparing messages...</div>
       
-      <!-- Error container -->
-      <div id="syncErrorContainer" style="display: none; margin-top: 1rem;">
-        <div id="syncErrorText" style="color: var(--danger); font-size: 0.85rem; margin-bottom: 1rem;">Sync failed.</div>
-        <button class="btn" id="syncRetryBtn" onclick="handleSyncRetry()">Retry Sync</button>
+      <div id="syncErrorContainer" class="sync-error-container" style="display: none;">
+        <div id="syncErrorText" class="sync-error-text">Sync failed.</div>
+        <button type="button" class="btn" id="syncRetryBtn" onclick="handleSyncRetry()">Retry Sync</button>
       </div>
     </div>
   </div>
 
   <!-- ─── MEMBER EDIT MODAL ──────────────────────────────────── -->
   <div id="teamModalOverlay" class="qr-modal-overlay">
-    <div class="qr-modal-card" style="max-width: 500px; text-align: left;">
+    <div class="qr-modal-card qr-modal-card--form">
       <div class="card-title" id="teamModalTitle">Edit Team Member</div>
       <form id="editMemberForm" onsubmit="handleSaveMember(event)">
         <input type="hidden" id="editUserId">
         
-        <div class="input-group" style="margin-bottom: 1rem;">
+        <div class="input-group input-group--compact">
           <label>Display Name</label>
           <input type="text" id="editDisplayName" placeholder="John Doe" required>
         </div>
 
-        <div class="input-group" style="margin-bottom: 1rem;">
+        <div class="input-group input-group--compact">
           <label>Role</label>
           <select id="editRole" onchange="toggleEditRoleSettings()" required>
             <option value="agent">Agent</option>
@@ -573,37 +574,38 @@
           </select>
         </div>
 
-        <div class="input-group" style="margin-bottom: 1rem;">
+        <div class="input-group input-group--compact">
           <label>Reset Password (leave blank to keep current)</label>
           <input type="password" id="editPassword" placeholder="••••••••" minlength="8">
         </div>
 
-        <div class="input-group" style="margin-bottom: 1rem;">
-          <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text-main);">
-            <input type="checkbox" id="editIsActive"> Active User
+        <div class="input-group input-group--compact">
+          <label class="checkbox-row">
+            <input type="checkbox" id="editIsActive">
+            <span>Active User</span>
           </label>
         </div>
 
-        <!-- Session Access Gating (Only for Agents) -->
-        <div id="sessionAccessContainer" style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
-          <h4 style="margin: 0 0 0.5rem 0; font-size: 0.95rem; color: var(--text-main);">WhatsApp Session Permissions</h4>
+        <div id="sessionAccessContainer" class="session-access-section">
+          <h4 class="session-access-title">WhatsApp Session Permissions</h4>
           
-          <div class="input-group" style="margin-bottom: 0.75rem;">
-            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text-main);">
-              <input type="checkbox" id="editAllSessionsAccess" onchange="toggleAllSessionsCheckbox()"> Access to All Sessions (current & future)
+          <div class="input-group input-group--compact">
+            <label class="checkbox-row">
+              <input type="checkbox" id="editAllSessionsAccess" onchange="toggleAllSessionsCheckbox()">
+              <span>Access to All Sessions (current &amp; future)</span>
             </label>
           </div>
 
-          <div id="specificSessionsGroup" style="padding-left: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; max-height: 150px; overflow-y: auto;">
+          <div id="specificSessionsGroup" class="checkbox-group checkbox-group--nested">
             <!-- Checkboxes will be populated dynamically -->
           </div>
           
-          <div id="adminSessionsNote" style="display: none; color: var(--text-muted); font-size: 0.85rem; font-style: italic;">
+          <div id="adminSessionsNote" class="session-access-note" style="display: none;">
             Admins automatically have access to all sessions.
           </div>
         </div>
 
-        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
+        <div class="modal-actions">
           <button type="button" class="btn btn-secondary" onclick="closeTeamModal()">Cancel</button>
           <button type="submit" class="btn">Save Changes</button>
         </div>
@@ -612,19 +614,19 @@
   </div>
 
   <!-- Mark as Read Modal -->
-  <div id="markReadModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; width: 420px; max-width: 90%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
-      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
-        <h3 style="margin: 0; color: var(--text-main); font-size: 1.1rem;">Mark as Read</h3>
-        <button type="button" onclick="closeMarkReadModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; line-height: 1; outline: none; padding: 0;">×</button>
+  <div id="markReadModal" class="app-modal">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 class="modal-title">Mark as Read</h3>
+        <button type="button" class="modal-close-btn" onclick="closeMarkReadModal()" aria-label="Close">&times;</button>
       </div>
-      <p id="markReadChatName" style="margin: 0; font-size: 0.85rem; color: var(--text-muted);"></p>
-      <div style="display: flex; flex-direction: column; gap: 0.35rem;">
-        <label for="markReadReasonInput" style="font-size: 0.8rem; color: var(--text-muted);">Reason (required)</label>
-        <textarea id="markReadReasonInput" rows="3" placeholder="Why are you marking this as read? e.g. Called customer, issue resolved" style="width: 100%; padding: 0.5rem; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-main); font-size: 0.85rem; outline: none; resize: vertical;"></textarea>
-        <p id="markReadReasonError" style="display: none; color: var(--danger); font-size: 0.8rem; margin: 0;">Please enter a reason (at least 3 characters).</p>
+      <p id="markReadChatName" class="modal-subtitle"></p>
+      <div class="input-group input-group--compact">
+        <label for="markReadReasonInput">Reason (required)</label>
+        <textarea id="markReadReasonInput" class="modal-textarea" rows="3" placeholder="Why are you marking this as read? e.g. Called customer, issue resolved"></textarea>
+        <p id="markReadReasonError" class="form-error" style="display: none;">Please enter a reason (at least 3 characters).</p>
       </div>
-      <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 0.25rem;">
+      <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick="closeMarkReadModal()">Cancel</button>
         <button type="button" id="markReadConfirmBtn" class="btn" onclick="submitMarkAsRead()">Confirm</button>
       </div>
@@ -632,37 +634,35 @@
   </div>
 
   <!-- Forward Message Modal -->
-  <div id="forwardModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; width: 400px; max-width: 90%; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
-      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
-        <h3 style="margin: 0; color: var(--text-main); font-size: 1.1rem;">Forward Message</h3>
-        <button type="button" onclick="closeForwardModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; line-height: 1; outline: none; padding: 0;">×</button>
+  <div id="forwardModal" class="app-modal">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 class="modal-title">Forward Message</h3>
+        <button type="button" class="modal-close-btn" onclick="closeForwardModal()" aria-label="Close">&times;</button>
       </div>
-      <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-        <input type="text" id="forwardSearchInput" placeholder="Search chats..." oninput="filterForwardChats()" style="width: 100%; padding: 0.5rem; background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-main); font-size: 0.85rem; outline: none;">
-        <div id="forwardChatsList" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem;">
+      <div class="forward-modal-body">
+        <input type="text" id="forwardSearchInput" class="modal-input" placeholder="Search chats..." oninput="filterForwardChats()">
+        <div id="forwardChatsList" class="chat-picker-list">
           <!-- Chats list populated dynamically -->
         </div>
       </div>
-      <div style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 0.5rem;">
+      <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick="closeForwardModal()">Cancel</button>
       </div>
     </div>
   </div>
 
   <!-- Image Preview Lightbox Modal -->
-  <div id="imagePreviewModal" class="modal" onclick="closeImagePreviewModal(event)" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px);">
-    <div class="modal-content" onclick="event.stopPropagation()" style="position: relative; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; gap: 0.75rem; background: transparent; border: none; box-shadow: none; padding: 0;">
-      <!-- Close button -->
-      <button type="button" onclick="closeImagePreviewModal()" style="position: absolute; top: -40px; right: 0; background: none; border: none; color: #ffffff; font-size: 2rem; cursor: pointer; outline: none; transition: color 0.2s;" onmouseover="this.style.color='#ff5252'" onmouseout="this.style.color='#ffffff'">×</button>
-      
-      <!-- Large image -->
-      <img id="previewImageEl" src="" style="max-width: 90vw; max-height: 80vh; object-fit: contain; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
-      
-      <!-- Actions bar -->
-      <div style="display: flex; gap: 1rem; align-items: center; margin-top: 0.25rem;">
-        <span id="previewImageTitle" style="color: #ffffff; font-size: 0.9rem; text-shadow: 1px 1px 3px rgba(0,0,0,0.8);"></span>
-        <a id="previewImageDownloadBtn" href="" class="btn" style="padding: 0.4rem 1rem; font-size: 0.8rem; border-radius: 20px; background: var(--accent-green); color: #0b0f19; text-decoration: none; display: flex; align-items: center; gap: 0.25rem;">📥 Download</a>
+  <div id="imagePreviewModal" class="app-modal app-modal--lightbox" onclick="closeImagePreviewModal(event)">
+    <div class="modal-panel modal-panel--lightbox" onclick="event.stopPropagation()">
+      <button type="button" class="lightbox-close-btn" onclick="closeImagePreviewModal()" aria-label="Close">&times;</button>
+      <img id="previewImageEl" class="lightbox-image" src="" alt="">
+      <div class="lightbox-actions">
+        <span id="previewImageTitle" class="lightbox-title"></span>
+        <a id="previewImageDownloadBtn" href="" class="btn lightbox-download-btn">
+          <i class="ti ti-download" aria-hidden="true"></i>
+          <span>Download</span>
+        </a>
       </div>
     </div>
   </div>

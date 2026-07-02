@@ -485,7 +485,7 @@ function renderSessionsTable(sessions) {
   if (sessions.length === 0) {
     tableBody.innerHTML = `
       <tr>
-        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+        <td colspan="5" class="table-empty-cell">
           No sessions found. Link a new WhatsApp device above.
         </td>
       </tr>
@@ -504,15 +504,15 @@ function renderSessionsTable(sessions) {
 
     return `
       <tr>
-        <td style="font-weight: 500;">${escapeHtml(s.sessionName)}</td>
-        <td><code>${s.phoneNumber || 'Pending Scan'}</code></td>
-        <td style="font-size: 0.8rem; color: var(--text-muted);"><code>${s.id}</code></td>
+        <td>${escapeHtml(s.sessionName)}</td>
+        <td><code class="cell-code">${s.phoneNumber || 'Pending Scan'}</code></td>
+        <td class="cell-muted"><code class="cell-code">${s.id}</code></td>
         <td><span class="${statusClass}">${s.status.toUpperCase()}</span></td>
         <td>
-          <div style="display: flex; gap: 0.5rem;">
-            ${showQrButton ? `<button onclick="openQrModal('${s.id}', '${escapeHtml(s.sessionName)}')" class="btn" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">Get QR</button>` : ''}
-            <button onclick="restartSession('${s.id}')" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">Restart</button>
-            <button onclick="deleteSession('${s.id}')" class="btn btn-danger" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">Delete</button>
+          <div class="table-actions">
+            ${showQrButton ? `<button type="button" onclick="openQrModal('${s.id}', '${escapeHtml(s.sessionName)}')" class="btn btn-table-action">Get QR</button>` : ''}
+            <button type="button" onclick="restartSession('${s.id}')" class="btn btn-secondary btn-table-action">Restart</button>
+            <button type="button" onclick="deleteSession('${s.id}')" class="btn btn-danger btn-table-action">Delete</button>
           </div>
         </td>
       </tr>
@@ -582,11 +582,18 @@ async function deleteSession(sessionId) {
 }
 
 // ─── QR MODAL LIFE ────────────────────────────────────────────
+function setQrModalStatus(text, variant = 'info') {
+  const el = document.getElementById('qrModalStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `modal-status modal-status--${variant}`;
+}
+
 function openQrModal(sessionId, sessionName) {
   currentQrSessionId = sessionId;
   document.getElementById('qrModalTitle').textContent = `Link ${sessionName}`;
   document.getElementById('qrModalImage').src = '';
-  document.getElementById('qrModalStatus').textContent = 'Generating QR code...';
+  setQrModalStatus('Generating QR code...', 'info');
   document.getElementById('qrModalOverlay').classList.add('active');
 
   // Load immediately
@@ -624,11 +631,10 @@ async function checkQrConnectionStatus() {
       const status = sessionData.data.status;
 
       if (status === 'connected') {
-        document.getElementById('qrModalStatus').textContent = '✅ WhatsApp Connected Successfully!';
-        document.getElementById('qrModalStatus').style.color = 'var(--accent-green)';
+        setQrModalStatus('WhatsApp Connected Successfully!', 'success');
         setTimeout(closeQrModal, 1500);
       } else {
-        document.getElementById('qrModalStatus').textContent = 'Waiting for WhatsApp backend initialization...';
+        setQrModalStatus('Waiting for WhatsApp backend initialization...', 'info');
       }
       return;
     }
@@ -636,8 +642,7 @@ async function checkQrConnectionStatus() {
     const resData = await response.json();
     if (resData.success && resData.data.qr) {
       document.getElementById('qrModalImage').src = resData.data.qr;
-      document.getElementById('qrModalStatus').textContent = 'Waiting for scan...';
-      document.getElementById('qrModalStatus').style.color = 'var(--accent-blue)';
+      setQrModalStatus('Waiting for scan...', 'info');
     }
   } catch (err) {
     console.error('Error checking QR code', err);
@@ -1803,13 +1808,13 @@ function renderWebhooksTable(webhooksList) {
 
     return `
       <tr>
-        <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-          <code style="font-size: 0.85rem;">${escapeHtml(w.url)}</code>
+        <td class="cell-truncate">
+          <code class="cell-code">${escapeHtml(w.url)}</code>
         </td>
-        <td style="font-size: 0.85rem; color: var(--text-muted);">${escapeHtml(eventsStr)}</td>
+        <td class="cell-muted">${escapeHtml(eventsStr)}</td>
         <td><span class="${statusClass}">${statusText}</span></td>
         <td>
-          <button onclick="deleteWebhook('${w.id}')" class="btn btn-danger" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">Delete</button>
+          <button type="button" onclick="deleteWebhook('${w.id}')" class="btn btn-danger btn-table-action">Delete</button>
         </td>
       </tr>
     `;
@@ -2642,7 +2647,7 @@ function renderTeamMembersTable(members) {
   if (members.length === 0) {
     tableBody.innerHTML = `
       <tr>
-        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+        <td colspan="5" class="table-empty-cell">
           No team members found.
         </td>
       </tr>
@@ -2654,14 +2659,14 @@ function renderTeamMembersTable(members) {
     const statusText = m.isActive ? '<span class="badge-status connected">ACTIVE</span>' : '<span class="badge-status disconnected">INACTIVE</span>';
     return `
       <tr>
-        <td style="font-weight: 500;">${escapeHtml(m.displayName || '')}</td>
-        <td><code>${escapeHtml(m.email)}</code></td>
+        <td>${escapeHtml(m.displayName || '')}</td>
+        <td><code class="cell-code">${escapeHtml(m.email)}</code></td>
         <td><span class="badge-status connecting" style="text-transform: uppercase;">${m.role}</span></td>
         <td>${statusText}</td>
         <td>
-          <div style="display: flex; gap: 0.5rem;">
-            <button onclick="openTeamModal('${m.id}')" class="btn" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;">Edit</button>
-            <button onclick="removeTeamMember('${m.id}')" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; color: var(--danger); border-color: var(--danger);">Remove</button>
+          <div class="table-actions">
+            <button type="button" onclick="openTeamModal('${m.id}')" class="btn btn-table-action">Edit</button>
+            <button type="button" onclick="removeTeamMember('${m.id}')" class="btn btn-danger btn-table-action">Remove</button>
           </div>
         </td>
       </tr>
@@ -2786,8 +2791,9 @@ async function openTeamModal(userId) {
   group.innerHTML = allOrgSessions.map(s => {
     const checked = permissions.sessionIds.includes(s.id) ? 'checked' : '';
     return `
-      <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; color: var(--text-main); font-size: 0.9rem;">
-        <input type="checkbox" class="specific-session-checkbox" value="${s.id}" ${checked}> ${escapeHtml(s.sessionName)} (${s.phoneNumber || 'Unlinked'})
+      <label class="checkbox-row">
+        <input type="checkbox" class="specific-session-checkbox" value="${s.id}" ${checked}>
+        <span>${escapeHtml(s.sessionName)} (${s.phoneNumber || 'Unlinked'})</span>
       </label>
     `;
   }).join('');
@@ -3150,7 +3156,7 @@ async function openForwardModal() {
   const searchInput = document.getElementById('forwardSearchInput');
 
   modal.style.display = 'flex';
-  listContainer.innerHTML = '<div style="color: var(--text-muted); padding: 0.5rem; font-size: 0.85rem;">Loading chats...</div>';
+  listContainer.innerHTML = '<div class="chat-picker-status chat-picker-status--loading">Loading chats...</div>';
   searchInput.value = '';
 
   try {
@@ -3164,7 +3170,7 @@ async function openForwardModal() {
     renderForwardChats(allChatsListCache);
   } catch (err) {
     console.error('Failed to load chats for forward picker:', err);
-    listContainer.innerHTML = `<div style="color: var(--danger); padding: 0.5rem; font-size: 0.85rem;">Failed to load chats, please try again.</div>`;
+    listContainer.innerHTML = `<div class="chat-picker-status chat-picker-status--error">Failed to load chats, please try again.</div>`;
   }
 }
 window.openForwardModal = openForwardModal;
@@ -3172,19 +3178,19 @@ window.openForwardModal = openForwardModal;
 function renderForwardChats(chatList) {
   const listContainer = document.getElementById('forwardChatsList');
   if (chatList.length === 0) {
-    listContainer.innerHTML = '<div style="color: var(--text-muted); padding: 0.5rem; font-size: 0.85rem;">No chats found.</div>';
+    listContainer.innerHTML = '<div class="chat-picker-status">No chats found.</div>';
     return;
   }
 
   listContainer.innerHTML = chatList.map(c => {
     const displayName = getChatDisplayName(c);
     return `
-      <div class="chat-picker-item" onclick="submitForward('${c.waChatId}')" style="display: flex; align-items: center; justify-content: space-between; padding: 0.5rem; border-radius: 4px; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='none'">
-        <div style="display: flex; flex-direction: column;">
-          <span style="font-weight: 500; font-size: 0.85rem; color: var(--text-main);">${escapeHtml(displayName)}</span>
-          <span style="font-size: 0.7rem; color: var(--text-muted);">${escapeHtml(c.waChatId)}</span>
+      <div class="chat-picker-item" onclick="submitForward('${c.waChatId}')">
+        <div class="chat-picker-copy">
+          <span class="chat-picker-name">${escapeHtml(displayName)}</span>
+          <span class="chat-picker-jid">${escapeHtml(c.waChatId)}</span>
         </div>
-        <span style="font-size: 0.8rem; color: var(--accent-green);">Forward ➔</span>
+        <span class="chat-picker-action">Forward</span>
       </div>
     `;
   }).join('');
@@ -3219,7 +3225,7 @@ async function submitForward(targetJid) {
 
   const modal = document.getElementById('forwardModal');
   const listContainer = document.getElementById('forwardChatsList');
-  listContainer.innerHTML = '<div style="color: var(--accent-green); padding: 1rem; text-align: center;">Forwarding message...</div>';
+  listContainer.innerHTML = '<div class="chat-picker-status chat-picker-status--progress">Forwarding message...</div>';
 
   try {
     const response = await fetch('/api/messages', {
