@@ -1222,8 +1222,16 @@ function renderMessages(msgList) {
       `;
     }
 
+    let lastDayKey = null;
     container.innerHTML = paginationHtml + sorted.map(m => {
       try {
+        const dayKey = getLocalDayKey(m.createdAt);
+        let dateSeparatorHtml = '';
+        if (dayKey && dayKey !== lastDayKey) {
+          dateSeparatorHtml = renderDateSeparatorHtml(m.createdAt);
+          lastDayKey = dayKey;
+        }
+
         const isSelf = m.fromMe;
         const bubbleClass = isSelf ? 'message-bubble self' : 'message-bubble other';
         const time = formatTime(new Date(m.createdAt));
@@ -1523,7 +1531,7 @@ function renderMessages(msgList) {
           </div>
         `;
 
-        return `
+        return dateSeparatorHtml + `
           <div id="msg-${m.waMessageId}" class="message-bubble-wrapper ${isSelf ? 'self' : 'other'}">
             <div class="message-bubble-container">
               <div class="${bubbleClass}">
@@ -2428,6 +2436,42 @@ function handleLogout() {
 
 function formatTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function getLocalDayKey(dateInput) {
+  const date = new Date(dateInput);
+  if (Number.isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatDateSeparatorLabel(dateInput) {
+  const date = new Date(dateInput);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+  const messageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  if (messageDay.getTime() === startOfToday.getTime()) return 'Today';
+  if (messageDay.getTime() === startOfYesterday.getTime()) return 'Yesterday';
+
+  const locale = navigator.language || undefined;
+  return date.toLocaleDateString(locale, {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function renderDateSeparatorHtml(dateInput) {
+  const label = formatDateSeparatorLabel(dateInput);
+  if (!label) return '';
+  return `<div class="date-separator dsep" role="separator" aria-label="${escapeHtml(label)}"><span class="date-separator__pill">${escapeHtml(label)}</span></div>`;
 }
 
 function escapeHtml(unsafe) {
