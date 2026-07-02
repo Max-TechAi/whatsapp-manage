@@ -2354,10 +2354,10 @@ tr:last-child td {
   display: flex;
 }
 .message-bubble-wrapper.self .message-actions-menu {
-  left: -85px;
+  left: -115px;
 }
 .message-bubble-wrapper.other .message-actions-menu {
-  right: -85px;
+  right: -115px;
 }
 .message-actions-menu button {
   background: none;
@@ -2369,6 +2369,14 @@ tr:last-child td {
   border-radius: 4px;
   font-family: var(--font-family);
   transition: background var(--transition-fast), color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.message-actions-menu button .ti {
+  font-size: 0.95rem;
+  line-height: 1;
 }
 
 .message-actions-menu button:hover {

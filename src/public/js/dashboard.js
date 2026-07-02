@@ -1528,10 +1528,16 @@ function renderMessages(msgList) {
           `;
         }
 
+        const copyableText = getCopyableMessageText(m);
+        const copyButtonHtml = copyableText
+          ? `<button type="button" data-message-id="${m.id}" onclick="copyMessageText(this)" title="Copy" aria-label="Copy"><i class="ti ti-copy" aria-hidden="true"></i></button>`
+          : '';
+
         const actionsMenuHtml = `
           <div class="message-actions-menu">
             <button type="button" data-message-id="${m.id}" onclick="initiateReply(this)">Reply</button>
             <button type="button" data-message-id="${m.id}" onclick="initiateForward(this)">Forward</button>
+            ${copyButtonHtml}
           </div>
         `;
 
@@ -3042,6 +3048,34 @@ async function handleResetContactSession(event) {
 window.handleResetContactSession = handleResetContactSession;
 
 // ─── REPLY & FORWARD INTEGRATION ────────────────────────────────────
+
+function getCopyableMessageText(message) {
+  if (!message || message.isDeleted || message.metadata?.decryptionFailed) return '';
+  return (message.content || '').trim();
+}
+
+async function copyMessageText(btn) {
+  const messageId = btn.getAttribute('data-message-id');
+  const msg = activeChatMessages.find((m) => m.id === messageId);
+  const text = getCopyableMessageText(msg);
+  if (!text) return;
+
+  try {
+    await navigator.clipboard.writeText(text);
+    const icon = btn.querySelector('.ti');
+    if (icon) {
+      icon.classList.remove('ti-copy');
+      icon.classList.add('ti-check');
+      setTimeout(() => {
+        icon.classList.remove('ti-check');
+        icon.classList.add('ti-copy');
+      }, 1500);
+    }
+  } catch (err) {
+    console.error('Failed to copy message text:', err);
+  }
+}
+window.copyMessageText = copyMessageText;
 
 function initiateReply(btn) {
   const messageId = btn.getAttribute('data-message-id');
