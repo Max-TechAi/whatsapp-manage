@@ -402,7 +402,29 @@ export function createMessageWorker(): Worker {
       }
 
       // Extract message content
+      const hasCallSignal = !!(
+        waMessage.messageStubType != null
+        || waMessage.message?.callLogMesssage
+        || waMessage.message?.call
+      );
       const { type: messageType, content, mediaInfo } = extractMessageContent(waMessage);
+      const extractedType = messageType as string;
+
+      if (extractedType === 'call' || hasCallSignal) {
+        logger.info('[DEBUG CALL] extractMessageContent result', {
+          sessionId,
+          orgId,
+          waMessageId: waMessage.key.id,
+          remoteJid: waMessage.key.remoteJid,
+          hasCallSignal,
+          messageStubType: waMessage.messageStubType,
+          hasCallLogMesssage: !!waMessage.message?.callLogMesssage,
+          hasMessageCall: !!waMessage.message?.call,
+          extractedType,
+          extractedContent: content,
+          misclassified: hasCallSignal && extractedType !== 'call',
+        });
+      }
 
       // Extract quoted message info
       const contextInfo = waMessage.message?.extendedTextMessage?.contextInfo

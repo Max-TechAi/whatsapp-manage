@@ -24,6 +24,30 @@ import { eq, and, or, inArray, sql, lte, ne, desc } from 'drizzle-orm';
 import { Boom } from '@hapi/boom';
 import { Worker } from 'bullmq';
 
+/** Serialize Baileys payloads for diagnostic logs (Buffers → hex preview). */
+function serializeDebugJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_key, v) => {
+      if (v instanceof Buffer || v instanceof Uint8Array) {
+        const buf = Buffer.from(v);
+        const hex = buf.subarray(0, 32).toString('hex');
+        return `<Buffer len=${buf.length} hex=${hex}${buf.length > 32 ? '…' : ''}>`;
+      }
+      return v;
+    });
+  } catch (err) {
+    return `[serialize error: ${(err as Error).message}]`;
+  }
+}
+
+function hasCallRelatedUpsertFields(msg: WAMessage): boolean {
+  return !!(
+    msg.messageStubType != null
+    || msg.message?.callLogMesssage
+    || msg.message?.call
+  );
+}
+
 import { db } from '../../config/database.js';
 import { env } from '../../config/env.js';
 import { sessions, sessionKeys, messages, chats } from '../../db/schema.js';
@@ -240,6 +264,7 @@ class SessionManager {
           existingSession.socket.ev.removeAllListeners('connection.update');
           existingSession.socket.ev.removeAllListeners('creds.update');
           existingSession.socket.ev.removeAllListeners('messages.upsert');
+          existingSession.socket.ev.removeAllListeners('call');
           existingSession.socket.ev.removeAllListeners('messages.update');
           existingSession.socket.ev.removeAllListeners('message-receipt.update');
           existingSession.socket.ev.removeAllListeners('messaging-history.set');
@@ -347,6 +372,7 @@ class SessionManager {
         active.socket.ev.removeAllListeners('connection.update');
         active.socket.ev.removeAllListeners('creds.update');
         active.socket.ev.removeAllListeners('messages.upsert');
+        active.socket.ev.removeAllListeners('call');
         active.socket.ev.removeAllListeners('messages.update');
         active.socket.ev.removeAllListeners('message-receipt.update');
         active.socket.ev.removeAllListeners('messaging-history.set');
@@ -700,6 +726,7 @@ class SessionManager {
                     active.socket.ev.removeAllListeners('connection.update');
                     active.socket.ev.removeAllListeners('creds.update');
                     active.socket.ev.removeAllListeners('messages.upsert');
+                    active.socket.ev.removeAllListeners('call');
                     active.socket.ev.removeAllListeners('messages.update');
                     active.socket.ev.removeAllListeners('message-receipt.update');
                     active.socket.ev.removeAllListeners('messaging-history.set');
@@ -763,12 +790,39 @@ class SessionManager {
 
     // ── Inbound Messages ──────────────────────────────────────────────
 
+    socket.ev.on('call', async (calls) => {
+      logger.info('[DEBUG CALL] Baileys call event received', {
+        sessionId,
+        orgId,
+        callCount: calls?.length ?? 0,
+        rawPayload: serializeDebugJson(calls),
+      });
+    });
+
     socket.ev.on('messages.upsert', async ({ messages, type }) => {
       logger.debug('Messages upsert received', {
         sessionId,
         count: messages.length,
         type,
       });
+
+      for (const msg of messages) {
+        if (hasCallRelatedUpsertFields(msg)) {
+          logger.info('[DEBUG CALL] messages.upsert call-related payload (pre-queue)', {
+            sessionId,
+            orgId,
+            upsertType: type,
+            waMessageId: msg.key?.id,
+            remoteJid: msg.key?.remoteJid,
+            fromMe: msg.key?.fromMe,
+            messageStubType: msg.messageStubType,
+            messageStubParameters: msg.messageStubParameters,
+            hasCallLogMesssage: !!msg.message?.callLogMesssage,
+            hasMessageCall: !!msg.message?.call,
+            rawMessage: serializeDebugJson(msg),
+          });
+        }
+      }
 
       // Check for decryption failure (StubType.CIPHERTEXT) and reset per-contact session
       for (const msg of messages) {
@@ -1346,6 +1400,7 @@ class SessionManager {
         active.socket.ev.removeAllListeners('connection.update');
         active.socket.ev.removeAllListeners('creds.update');
         active.socket.ev.removeAllListeners('messages.upsert');
+        active.socket.ev.removeAllListeners('call');
         active.socket.ev.removeAllListeners('messages.update');
         active.socket.ev.removeAllListeners('message-receipt.update');
         active.socket.ev.removeAllListeners('messaging-history.set');
@@ -1562,6 +1617,7 @@ class SessionManager {
         active.socket.ev.removeAllListeners('connection.update');
         active.socket.ev.removeAllListeners('creds.update');
         active.socket.ev.removeAllListeners('messages.upsert');
+        active.socket.ev.removeAllListeners('call');
         active.socket.ev.removeAllListeners('messages.update');
         active.socket.ev.removeAllListeners('message-receipt.update');
         active.socket.ev.removeAllListeners('messaging-history.set');
