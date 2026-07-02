@@ -386,15 +386,13 @@
       <!-- ─── STATISTICS TAB ──────────────────────────────────── -->
       <div id="tab-stats" class="tab-content">
         <div class="card">
-          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-            <span>📈 Employee Performance Statistics</span>
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-              <!-- Session Filter -->
-              <select id="statsSessionFilter" onchange="loadStats()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+          <div class="card-title-bar">
+            <span class="card-title-text"><i class="ti ti-chart-bar" aria-hidden="true"></i> Employee Performance Statistics</span>
+            <div class="card-filters">
+              <select id="statsSessionFilter" onchange="loadStats()" class="form-select" aria-label="Filter by session">
                 <option value="">All Sessions</option>
               </select>
-              <!-- Date Filter -->
-              <select id="statsDateFilter" onchange="loadStats()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+              <select id="statsDateFilter" onchange="loadStats()" class="form-select" aria-label="Filter by date range">
                 <option value="today">Today</option>
                 <option value="this_week">This Week</option>
                 <option value="this_month">This Month</option>
@@ -402,8 +400,8 @@
               </select>
             </div>
           </div>
-          <div style="overflow-x: auto;" class="table-scroll">
-            <table>
+          <div class="table-scroll">
+            <table class="data-table">
               <thead>
                 <tr>
                   <th>Employee Name</th>
@@ -416,26 +414,24 @@
               </thead>
               <tbody id="statsListBody">
                 <tr>
-                  <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
-                    ⏳ Loading statistics...
-                  </td>
+                  <td colspan="6" class="table-empty-cell">Loading statistics...</td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
 
-        <div class="card" style="margin-top: 1rem;">
-          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-            <span>📋 Mark-as-Read Audit Log</span>
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-              <select id="readEventsSessionFilter" onchange="loadReadEvents()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+        <div class="card card--spaced">
+          <div class="card-title-bar">
+            <span class="card-title-text"><i class="ti ti-clipboard-list" aria-hidden="true"></i> Mark-as-Read Audit Log</span>
+            <div class="card-filters">
+              <select id="readEventsSessionFilter" onchange="loadReadEvents()" class="form-select" aria-label="Filter audit log by session">
                 <option value="">All Sessions</option>
               </select>
             </div>
           </div>
-          <div style="overflow-x: auto;" class="table-scroll">
-            <table>
+          <div class="table-scroll">
+            <table class="data-table">
               <thead>
                 <tr>
                   <th>When</th>
@@ -448,9 +444,7 @@
               </thead>
               <tbody id="readEventsListBody">
                 <tr>
-                  <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
-                    ⏳ Loading audit log...
-                  </td>
+                  <td colspan="6" class="table-empty-cell">Loading audit log...</td>
                 </tr>
               </tbody>
             </table>
@@ -460,49 +454,49 @@
 
       <!-- ─── UNIFIED INBOX TAB ───────────────────────────────── -->
       <div id="tab-unified-inbox" class="tab-content">
-        <!-- Summary Cards Row -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
-          <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem;">
-            <div style="font-size: 2.2rem; background: rgba(79, 195, 247, 0.15); color: #4fc3f7; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">💬</div>
-            <div>
-              <div id="unifiedUnreadChatsCount" style="font-size: 1.8rem; font-weight: 700; color: var(--text-normal); line-height: 1.1;">0</div>
-              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">Chats with unread messages</div>
+        <div class="metric-cards-row">
+          <div class="metric-card">
+            <div class="metric-card__icon metric-card__icon--blue">
+              <i class="ti ti-messages" aria-hidden="true"></i>
+            </div>
+            <div class="metric-card__copy">
+              <div id="unifiedUnreadChatsCount" class="metric-card__value">0</div>
+              <div class="metric-card__label">Chats with unread messages</div>
             </div>
           </div>
-          <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem;">
-            <div style="font-size: 2.2rem; background: rgba(16, 185, 129, 0.15); color: #10b981; width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">📥</div>
-            <div>
-              <div id="unifiedTotalUnreadMessages" style="font-size: 1.8rem; font-weight: 700; color: var(--accent-green); line-height: 1.1;">0</div>
-              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">Total unread messages</div>
+          <div class="metric-card">
+            <div class="metric-card__icon metric-card__icon--green">
+              <i class="ti ti-inbox" aria-hidden="true"></i>
+            </div>
+            <div class="metric-card__copy">
+              <div id="unifiedTotalUnreadMessages" class="metric-card__value metric-card__value--accent">0</div>
+              <div class="metric-card__label">Total unread messages</div>
             </div>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-            <span>📥 Unified Inbox Overview</span>
-            <div>
-              <!-- Session Filter -->
-              <select id="unifiedSessionFilter" onchange="loadUnifiedInbox()" class="form-select" style="background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-normal); padding: 0.35rem 0.5rem; border-radius: 4px; font-size: 0.8rem; outline: none;">
+          <div class="card-title-bar">
+            <span class="card-title-text"><i class="ti ti-inbox" aria-hidden="true"></i> Unified Inbox Overview</span>
+            <div class="card-filters">
+              <select id="unifiedSessionFilter" onchange="loadUnifiedInbox()" class="form-select" aria-label="Filter unified inbox by session">
                 <option value="">All Sessions</option>
               </select>
             </div>
           </div>
-          <div style="overflow-x: auto;" class="table-scroll">
-            <table>
+          <div class="table-scroll">
+            <table class="data-table">
               <thead>
                 <tr>
                   <th>Contact Name</th>
                   <th>WhatsApp Account</th>
                   <th>Last Message</th>
-                  <th style="width: 100px; text-align: center;">Unread</th>
+                  <th class="th-center th-narrow">Unread</th>
                 </tr>
               </thead>
               <tbody id="unifiedInboxListBody">
                 <tr>
-                  <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-                    ⏳ Loading chats...
-                  </td>
+                  <td colspan="4" class="table-empty-cell">Loading chats...</td>
                 </tr>
               </tbody>
             </table>

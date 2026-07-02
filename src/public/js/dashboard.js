@@ -3357,9 +3357,7 @@ async function loadStats() {
   try {
     listBody.innerHTML = `
       <tr>
-        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
-          ⏳ Loading statistics...
-        </td>
+        <td colspan="6" class="table-empty-cell">Loading statistics...</td>
       </tr>
     `;
 
@@ -3373,26 +3371,24 @@ async function loadStats() {
     if (stats.length === 0) {
       listBody.innerHTML = `
         <tr>
-          <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
-            No employee statistics found.
-          </td>
+          <td colspan="6" class="table-empty-cell">No employee statistics found.</td>
         </tr>
       `;
       return;
     }
 
     listBody.innerHTML = stats.map(s => {
-      const roleText = s.role === 'admin' 
-        ? '<span class="badge-status connected">ADMIN</span>' 
-        : '<span class="badge-status connecting">AGENT</span>';
+      const roleText = s.role === 'admin'
+        ? '<span class="badge-pill badge-pill--role-admin">ADMIN</span>'
+        : '<span class="badge-pill badge-pill--role-agent">AGENT</span>';
       return `
         <tr>
-          <td style="font-weight: 500;">${escapeHtml(s.displayName || s.email)}</td>
-          <td><code>${escapeHtml(s.email)}</code></td>
+          <td>${escapeHtml(s.displayName || s.email)}</td>
+          <td><code class="cell-code">${escapeHtml(s.email)}</code></td>
           <td>${roleText}</td>
-          <td style="font-weight: 600;">${s.assignedChatsCount}</td>
-          <td style="font-weight: 600;">${s.interactedChatsCount}</td>
-          <td style="font-weight: 600; color: var(--accent-green);">${s.sentMessagesCount}</td>
+          <td class="table-cell-metric">${s.assignedChatsCount}</td>
+          <td class="table-cell-metric">${s.interactedChatsCount}</td>
+          <td class="table-cell-metric table-cell-metric--accent">${s.sentMessagesCount}</td>
         </tr>
       `;
     }).join('');
@@ -3400,9 +3396,7 @@ async function loadStats() {
     console.error(err);
     listBody.innerHTML = `
       <tr>
-        <td colspan="6" style="text-align: center; color: var(--danger); padding: 1.5rem;">
-          ⚠️ Error loading statistics: ${escapeHtml(err.message)}
-        </td>
+        <td colspan="6" class="table-cell-error">Error loading statistics: ${escapeHtml(err.message)}</td>
       </tr>
     `;
   }
@@ -3439,9 +3433,7 @@ async function loadReadEvents() {
   try {
     listBody.innerHTML = `
       <tr>
-        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
-          ⏳ Loading audit log...
-        </td>
+        <td colspan="6" class="table-empty-cell">Loading audit log...</td>
       </tr>
     `;
 
@@ -3455,9 +3447,7 @@ async function loadReadEvents() {
     if (events.length === 0) {
       listBody.innerHTML = `
         <tr>
-          <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
-            No mark-as-read events recorded yet.
-          </td>
+          <td colspan="6" class="table-empty-cell">No mark-as-read events recorded yet.</td>
         </tr>
       `;
       return;
@@ -3468,7 +3458,7 @@ async function loadReadEvents() {
     listBody.innerHTML = events.map(ev => {
       const agentLabel = ev.user
         ? escapeHtml(ev.user.displayName || ev.user.email)
-        : '<span style="color: var(--text-muted); font-style: italic;">Phone</span>';
+        : '<span class="table-cell-muted-italic">Phone</span>';
       const displayName = getChatDisplayName({
         waChatId: ev.chat.waChatId,
         name: ev.chat.chatName,
@@ -3476,16 +3466,16 @@ async function loadReadEvents() {
       });
       const chatLabel = escapeHtml(displayName);
       const triggerBadge = ev.trigger === 'manual'
-        ? '<span class="badge-status connected">MANUAL</span>'
-        : '<span class="badge-status connecting">REPLY</span>';
+        ? '<span class="badge-pill badge-pill--trigger-manual">MANUAL</span>'
+        : '<span class="badge-pill badge-pill--trigger-reply">REPLY</span>';
       return `
         <tr>
-          <td style="white-space: nowrap; font-size: 0.85rem;">${formatTime(new Date(ev.createdAt))}</td>
+          <td class="table-cell-nowrap">${formatTime(new Date(ev.createdAt))}</td>
           <td>${agentLabel}</td>
           <td>${chatLabel}</td>
-          <td style="font-size: 0.85rem;">${escapeHtml(ev.session.sessionName)}</td>
+          <td class="cell-muted">${escapeHtml(ev.session.sessionName)}</td>
           <td>${triggerBadge}</td>
-          <td style="font-size: 0.85rem; max-width: 280px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(ev.reason || '—')}</td>
+          <td class="table-cell-reason" title="${escapeHtml(ev.reason || '')}">${escapeHtml(ev.reason || '—')}</td>
         </tr>
       `;
     }).join('');
@@ -3493,9 +3483,7 @@ async function loadReadEvents() {
     console.error(err);
     listBody.innerHTML = `
       <tr>
-        <td colspan="6" style="text-align: center; color: var(--danger); padding: 1.5rem;">
-          ⚠️ Error loading audit log: ${escapeHtml(err.message)}
-        </td>
+        <td colspan="6" class="table-cell-error">Error loading audit log: ${escapeHtml(err.message)}</td>
       </tr>
     `;
   }
@@ -3520,9 +3508,7 @@ async function loadUnifiedInbox() {
   try {
     listBody.innerHTML = `
       <tr>
-        <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-          ⏳ Loading chats...
-        </td>
+        <td colspan="4" class="table-empty-cell">Loading chats...</td>
       </tr>
     `;
 
@@ -3540,9 +3526,7 @@ async function loadUnifiedInbox() {
     if (chatsList.length === 0) {
       listBody.innerHTML = `
         <tr>
-          <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-            No chats found.
-          </td>
+          <td colspan="4" class="table-empty-cell">No chats found.</td>
         </tr>
       `;
       return;
@@ -3556,20 +3540,22 @@ async function loadUnifiedInbox() {
       });
       const accountName = `${c.sessionName} (${c.phoneNumber || 'Unlinked'})`;
       const rawPreview = c.lastMessagePreview || '';
-      const preview = rawPreview ? escapeHtml(rawPreview) : '<span style="font-style: italic; color: var(--text-muted);">No messages</span>';
-      
-      const unreadBadge = c.unreadCount > 0 
-        ? `<span class="chat-badge" style="background: var(--accent-green); color: #0b0f19; font-weight: bold; border-radius: 50%; padding: 0.15rem 0.4rem; font-size: 0.75rem;">${c.unreadCount}</span>`
-        : '<span style="color: var(--text-muted); font-size: 0.8rem;">-</span>';
+      const preview = rawPreview
+        ? escapeHtml(rawPreview)
+        : '<span class="table-cell-preview--empty">No messages</span>';
+
+      const unreadBadge = c.unreadCount > 0
+        ? `<span class="chat-badge">${c.unreadCount}</span>`
+        : '<span class="unread-dash">-</span>';
 
       const rowClick = `openChatInInbox('${c.sessionId}', '${c.id}', '${c.waChatId}', '${escapeHtml(displayName)}')`;
 
       return `
-        <tr onclick="${rowClick}" style="cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.03)'" onmouseout="this.style.background='transparent'">
-          <td style="font-weight: 500; color: var(--text-normal);">${escapeHtml(displayName)}</td>
-          <td><code>${escapeHtml(accountName)}</code></td>
-          <td style="color: var(--text-muted); font-size: 0.85rem; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(c.lastMessagePreview || '')}">${preview}</td>
-          <td style="text-align: center;">${unreadBadge}</td>
+        <tr class="table-row-clickable" onclick="${rowClick}">
+          <td>${escapeHtml(displayName)}</td>
+          <td><code class="cell-code">${escapeHtml(accountName)}</code></td>
+          <td class="table-cell-preview" title="${escapeHtml(c.lastMessagePreview || '')}">${preview}</td>
+          <td class="td-center">${unreadBadge}</td>
         </tr>
       `;
     }).join('');
@@ -3577,9 +3563,7 @@ async function loadUnifiedInbox() {
     console.error(err);
     listBody.innerHTML = `
       <tr>
-        <td colspan="4" style="text-align: center; color: var(--danger); padding: 2rem;">
-          ⚠️ Error loading unified inbox: ${escapeHtml(err.message)}
-        </td>
+        <td colspan="4" class="table-cell-error">Error loading unified inbox: ${escapeHtml(err.message)}</td>
       </tr>
     `;
   }

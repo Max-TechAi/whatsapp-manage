@@ -426,6 +426,227 @@ body {
   color: var(--text-primary);
 }
 
+.card--spaced {
+  margin-top: 1rem;
+}
+
+.card-title-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.card-title-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--font-size-section);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.card-title-text .ti {
+  font-size: 1.1rem;
+  color: var(--text-muted-2);
+  line-height: 1;
+}
+
+.card-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.form-select {
+  padding: 0.35rem 0.55rem;
+  background: var(--bg-input);
+  border: 0.5px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: 6px;
+  font-size: var(--font-size-meta);
+  font-family: var(--font-family);
+  outline: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.form-select:focus {
+  border-color: var(--accent-green-border);
+  background-color: var(--bg-hover);
+}
+
+.metric-cards-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.metric-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--border-default);
+  border-radius: 8px;
+}
+
+.metric-card__icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 0.5px solid var(--border-subtle);
+}
+
+.metric-card__icon .ti {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.metric-card__icon--blue {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--info);
+}
+
+.metric-card__icon--green {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+}
+
+.metric-card__copy {
+  min-width: 0;
+}
+
+.metric-card__value {
+  font-size: 1.6rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.metric-card__value--accent {
+  color: var(--accent-green);
+}
+
+.metric-card__label {
+  font-size: var(--font-size-meta);
+  color: var(--text-muted-2);
+  margin-top: 0.2rem;
+  line-height: 1.35;
+}
+
+.data-table {
+  margin-top: 0;
+}
+
+.th-center {
+  text-align: center;
+}
+
+.th-narrow {
+  width: 100px;
+}
+
+.td-center {
+  text-align: center;
+}
+
+.table-cell-metric {
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.table-cell-metric--accent {
+  color: var(--accent-green);
+}
+
+.table-cell-nowrap {
+  white-space: nowrap;
+  font-size: var(--font-size-meta);
+}
+
+.table-cell-preview {
+  color: var(--text-muted-2);
+  font-size: var(--font-size-meta);
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-cell-preview--empty {
+  font-style: italic;
+  color: var(--text-muted-3);
+}
+
+.table-cell-reason {
+  font-size: var(--font-size-meta);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-cell-muted-italic {
+  color: var(--text-muted-2);
+  font-style: italic;
+}
+
+.table-row-clickable {
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.table-row-clickable:hover td {
+  background-color: var(--bg-hover);
+}
+
+.table-cell-error {
+  text-align: center;
+  color: var(--danger);
+  padding: 1.5rem;
+}
+
+.badge-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.5rem;
+  border-radius: 6px;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.2;
+  border: 0.5px solid transparent;
+  white-space: nowrap;
+}
+
+.badge-pill--role-admin,
+.badge-pill--trigger-manual {
+  background-color: var(--accent-green-dim);
+  color: var(--accent-green);
+  border-color: var(--accent-green-border);
+}
+
+.badge-pill--role-agent,
+.badge-pill--trigger-reply {
+  background-color: var(--bg-elevated-2);
+  color: var(--text-muted-2);
+  border-color: var(--border-default);
+}
+
+.unread-dash {
+  color: var(--text-muted-3);
+  font-size: var(--font-size-meta);
+}
+
 /* ─── CHAT SPLIT WINDOW ──────────────────────────────────────── */
 .main-content:has(#tab-inbox.active) {
   padding: 0;
