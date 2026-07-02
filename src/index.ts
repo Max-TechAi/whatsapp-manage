@@ -7,6 +7,8 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { getEnv } from './config/env.js';
 import { logger, httpLogger } from './observability/logger.js';
@@ -32,6 +34,7 @@ import { emailService } from './modules/email/email.service.js';
 
 const env = getEnv();
 const app = express();
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 let outboundWorker: any = null;
 let mediaWorker: any = null;
 
@@ -42,6 +45,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('src/public'));
+app.use(
+  '/vendor/tabler',
+  express.static(path.join(moduleDir, '../node_modules/@tabler/icons-webfont/dist')),
+);
 app.use(httpLogger);
 app.use(metricsMiddleware);
 

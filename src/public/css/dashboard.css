@@ -260,7 +260,7 @@ body {
   -webkit-appearance: none;
   background-color: var(--bg-elevated-2);
   border: 0.5px solid var(--border-default);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
@@ -270,8 +270,13 @@ body {
 }
 
 .nav-link .ti {
-  font-size: 1.25rem;
+  font-family: 'tabler-icons' !important;
+  font-size: 1.3rem;
   line-height: 1;
+  color: inherit;
+  display: block;
+  font-style: normal;
+  font-weight: normal;
 }
 
 .nav-link:hover {
@@ -331,8 +336,14 @@ body {
   border-radius: 10px;
   background-color: var(--bg-elevated-2);
   border: 0.5px solid var(--border-default);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 1.1rem;
+}
+
+.nav-user-avatar .ti {
+  font-family: 'tabler-icons' !important;
+  font-size: 1.3rem;
+  line-height: 1;
 }
 
 .nav-logout-btn {
