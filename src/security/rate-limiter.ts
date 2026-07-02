@@ -8,6 +8,16 @@ interface RateLimitConfig {
   windowMs: number;
   max: number;
   keyPrefix: string;
+  /** When true, skip counting this request (still runs next()) */
+  skip?: (req: Request) => boolean;
+}
+
+/** POST /api/chats/:id/presence/subscribe — already gated by M2 Redis cooldown */
+export function isPresenceSubscribeRequest(req: Request): boolean {
+  return (
+    req.method === 'POST' &&
+    /^\/chats\/[^/]+\/presence\/subscribe\/?$/.test(req.path)
+  );
 }
 
 /**
@@ -41,6 +51,11 @@ export function decodeOptionalAuth(req: Request, res: Response, next: NextFuncti
  */
 export function createRateLimiter(config: RateLimitConfig) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (config.skip?.(req)) {
+      next();
+      return;
+    }
+
     // If auth middleware has run, scope by orgId/userId. Otherwise by IP.
     const identifier = req.user ? `${req.user.orgId}:${req.user.userId}` : req.ip;
     const key = `ratelimit:${config.keyPrefix}:${identifier}`;
@@ -109,4 +124,5 @@ export const apiRateLimiter = createRateLimiter({
   windowMs: 1 * 60 * 1000, // 1 min
   max: env.RATE_LIMIT_API,
   keyPrefix: 'api',
+  skip: isPresenceSubscribeRequest,
 });

@@ -1014,38 +1014,68 @@ function renderChatPresence(presenceData) {
 }
 
 async function subscribeChatPresence(chatDbId, waChatJid) {
-  if (!isPrivateChat(waChatJid)) {
-    clearChatPresence();
-    return;
-  }
+  try {
+    if (!isPrivateChat(waChatJid)) {
+      clearChatPresence();
+      return;
+    }
 
-  stopPresenceRefresh();
+    stopPresenceRefresh();
 
-  const doSubscribe = async () => {
-    try {
-      const response = await fetch(`/api/chats/${chatDbId}/presence/subscribe`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      const resData = await response.json();
-      if (!response.ok) {
-        throw new Error(resData.error || 'Failed to subscribe to presence');
-      }
-
+    const doSubscribe = async () => {
       if (activeChatDbId !== chatDbId) return;
 
-      const presenceData = resData.presence
-        || extractContactPresence(resData.presences, waChatJid);
-      if (presenceData) {
-        renderChatPresence(presenceData);
-      }
-    } catch (err) {
-      console.warn('Presence subscribe failed', err);
-    }
-  };
+      try {
+        const response = await fetch(`/api/chats/${chatDbId}/presence/subscribe`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
 
-  await doSubscribe();
-  presenceRefreshInterval = setInterval(doSubscribe, 60000);
+        let resData = {};
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          try {
+            resData = await response.json();
+          } catch (_) {
+            /* non-JSON body — ignore */
+          }
+        }
+
+        if (!response.ok) {
+          console.warn('Presence subscribe non-OK response', {
+            chatDbId,
+            status: response.status,
+            error: resData.error,
+          });
+          return;
+        }
+
+        if (activeChatDbId !== chatDbId) return;
+
+        const presenceData = resData.presence
+          || extractContactPresence(resData.presences, waChatJid);
+        if (presenceData) {
+          renderChatPresence(presenceData);
+        }
+      } catch (err) {
+        console.warn('Presence subscribe failed', err);
+      }
+    };
+
+    await doSubscribe().catch((err) => {
+      console.warn('Presence subscribe failed', err);
+    });
+
+    if (activeChatDbId === chatDbId) {
+      presenceRefreshInterval = setInterval(() => {
+        doSubscribe().catch((err) => {
+          console.warn('Presence subscribe failed', err);
+        });
+      }, 60000);
+    }
+  } catch (err) {
+    console.warn('Presence subscribe setup failed', err);
+  }
 }
 
 window.clearChatPresence = clearChatPresence;
@@ -1062,7 +1092,7 @@ function updateMarkReadButtonVisibility() {
   btn.style.display = unread > 0 ? 'inline-flex' : 'none';
 }
 
-async function loadMessages(chatDbId, silent = false, cursorParam = null) {
+async function loadMessages(chatDbId, silent = false, cursorParam = null, is429Retry = false) {
   const container = document.getElementById('messagesContainer');
   
   if (!cursorParam) {
@@ -1082,9 +1112,45 @@ async function loadMessages(chatDbId, silent = false, cursorParam = null) {
       url += `&cursor=${encodeURIComponent(cursorParam)}`;
     }
 
-    const resData = await safeFetchJson(url, {
+    const response = await fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
+
+    if (response.status === 429 && !is429Retry) {
+      console.warn('Messages load rate-limited (429), retrying once after 1s', { chatDbId });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (chatDbId !== activeChatDbId) return;
+      return loadMessages(chatDbId, silent, cursorParam, true);
+    }
+
+    if (response.status === 429) {
+      console.warn('Messages load rate-limited (429) after retry; leaving current view unchanged', {
+        chatDbId,
+        activeChatDbId,
+      });
+      return;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok) {
+      let errorMsg = `HTTP error! Status: ${response.status}`;
+      if (contentType.includes('application/json')) {
+        try {
+          const errData = await response.json();
+          errorMsg = errData.error || errorMsg;
+        } catch (_) { /* ignore */ }
+      }
+      throw new Error(errorMsg);
+    }
+
+    if (!contentType.includes('application/json')) {
+      throw new Error('Response is not JSON format');
+    }
+
+    const resData = await response.json();
+
+    // Stale response guard — user may have switched chats while fetch was in flight
+    if (chatDbId !== activeChatDbId) return;
 
     const newMessages = resData.messages || [];
     
@@ -1118,6 +1184,8 @@ async function loadMessages(chatDbId, silent = false, cursorParam = null) {
       container.scrollTop = container.scrollHeight;
     }
   } catch (err) {
+    if (chatDbId !== activeChatDbId) return;
+
     if (!cursorParam) {
       if (silent) {
         console.error('Failed to silently reload messages:', err);
