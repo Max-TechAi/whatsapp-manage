@@ -1554,15 +1554,22 @@ class SessionManager {
     }
 
     // 2. Randomized minimum gap since the previous send
+    await this.paceWhatsAppGap(sessionId, `wa:send:last:${sessionId}`);
+  }
+
+  /**
+   * Enforce a randomized inter-action gap for WhatsApp socket operations (ban-risk mitigation).
+   * Uses WA_SEND_DELAY_MIN_MS..WA_SEND_DELAY_MAX_MS since the last action recorded in lastKey.
+   */
+  private async paceWhatsAppGap(sessionId: string, lastKey: string): Promise<void> {
     const minDelay = env.WA_SEND_DELAY_MIN_MS;
     const maxDelay = Math.max(env.WA_SEND_DELAY_MAX_MS, minDelay);
     const gapMs = minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1));
 
-    const lastKey = `wa:send:last:${sessionId}`;
-    const lastSendAt = parseInt((await redis.get(lastKey)) ?? '0', 10);
-    const elapsed = Date.now() - lastSendAt;
+    const lastActionAt = parseInt((await redis.get(lastKey)) ?? '0', 10);
+    const elapsed = Date.now() - lastActionAt;
     if (elapsed < gapMs) {
-      await sleep(gapMs - elapsed);
+      await new Promise((resolve) => setTimeout(resolve, gapMs - elapsed));
     }
     await redis.set(lastKey, Date.now().toString(), 'EX', 3600);
   }
@@ -1774,6 +1781,8 @@ class SessionManager {
         
         const active = this.activeSessions.get(sessionId);
         if (!active || !active.socket) throw new Error(`Socket not active locally for session ${sessionId}`);
+
+        await this.paceWhatsAppGap(sessionId, `wa:media:last:${sessionId}`);
         
         const { downloadMediaMessage } = await import('@whiskeysockets/baileys');
         const buffer = await downloadMediaMessage(

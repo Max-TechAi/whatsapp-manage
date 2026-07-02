@@ -32,7 +32,6 @@ export function generateHistorySyncJobId(
 export const QUEUES = {
   MESSAGE_INBOUND: 'message-inbound',
   MESSAGE_OUTBOUND: 'message-outbound',
-  MEDIA_DOWNLOAD: 'media-download',
   MEDIA_TRANSCODE: 'media-transcode',
   HISTORY_SYNC: 'history-sync',
   WEBHOOK_DELIVERY: 'webhook-delivery',
