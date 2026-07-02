@@ -47,6 +47,12 @@ const MAX_RETRIES = 10;
 /** Maximum reconnection delay in milliseconds (5 minutes) */
 const MAX_RETRY_DELAY_MS = 300_000;
 
+/** Minimum first reconnect delay (ms) — avoids aggressive 1s retry */
+const MIN_RECONNECT_DELAY_MS = 3000;
+
+/** Consecutive saveCreds failures before terminating session */
+const SAVE_CREDS_MAX_FAILURES = 3;
+
 /**
  * Validate that a given string is a valid UUID v4 format.
  * This prevents PostgreSQL from throwing "invalid input syntax for type uuid".
@@ -91,6 +97,9 @@ class SessionManager {
 
   /** Map of sessionId → scheduled reconnect Timeout */
   private pendingReconnects: Map<string, NodeJS.Timeout> = new Map();
+
+  /** Map of sessionId → consecutive saveCreds failures */
+  private saveCredsFailures: Map<string, number> = new Map();
 
   /** Map of sessionId → initial sync timeout (inactivity timer) */
   private syncTimeouts: Map<string, NodeJS.Timeout> = new Map();
@@ -656,11 +665,7 @@ class SessionManager {
           const retryCount = active ? active.retryCount + 1 : 1;
 
           if (retryCount <= MAX_RETRIES) {
-            // Exponential backoff: delay = min(retryCount^2 * 1000, 300000)
-            const delay = Math.min(
-              Math.pow(retryCount, 2) * 1000,
-              MAX_RETRY_DELAY_MS,
-            );
+            const delay = this.computeReconnectDelayMs(retryCount);
 
             if (active) {
               active.retryCount = retryCount;
@@ -735,11 +740,24 @@ class SessionManager {
     socket.ev.on('creds.update', async () => {
       try {
         await saveCreds();
+        this.saveCredsFailures.delete(sessionId);
       } catch (error) {
+        const failures = (this.saveCredsFailures.get(sessionId) ?? 0) + 1;
+        this.saveCredsFailures.set(sessionId, failures);
+
         logger.error('Failed to save credentials on update', {
           sessionId,
+          consecutiveFailures: failures,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
+
+        if (failures >= SAVE_CREDS_MAX_FAILURES) {
+          await this.terminateSessionDueToAuthFailure(
+            sessionId,
+            orgId,
+            `Auth credentials could not be persisted after ${failures} consecutive attempts`,
+          );
+        }
       }
     });
 
@@ -1113,6 +1131,72 @@ class SessionManager {
   }
 
   /**
+   * Compute reconnect backoff with a 3s floor and ±20% jitter (ban-risk mitigation).
+   */
+  private computeReconnectDelayMs(retryCount: number): number {
+    const baseDelay = Math.min(
+      Math.pow(retryCount, 2) * 1000,
+      MAX_RETRY_DELAY_MS,
+    );
+    const flooredDelay = Math.max(MIN_RECONNECT_DELAY_MS, baseDelay);
+    const jitter = 0.8 + Math.random() * 0.4;
+    return Math.round(flooredDelay * jitter);
+  }
+
+  /**
+   * Terminate a session after repeated auth persistence failures.
+   * Marks disconnected + metadata.authStateError so reconciliation does not auto-restart.
+   */
+  private async terminateSessionDueToAuthFailure(
+    sessionId: string,
+    orgId: string,
+    reason: string,
+  ): Promise<void> {
+    if (!isValidUuid(sessionId)) return;
+
+    this.saveCredsFailures.delete(sessionId);
+
+    logger.error('Terminating session due to auth persistence failure', {
+      sessionId,
+      orgId,
+      reason,
+    });
+
+    try {
+      const errorPayload = {
+        authStateError: reason,
+        authStateErrorAt: new Date().toISOString(),
+      };
+      await db
+        .update(sessions)
+        .set({
+          status: 'disconnected',
+          metadata: sql`
+            COALESCE(sessions.metadata, '{}'::jsonb) ||
+            ${JSON.stringify(errorPayload)}::jsonb
+          `,
+          updatedAt: new Date(),
+        })
+        .where(eq(sessions.id, sessionId));
+    } catch (err) {
+      logger.error('Failed to persist authStateError metadata', {
+        sessionId,
+        error: (err as Error).message,
+      });
+      await this.updateSessionStatus(sessionId, 'disconnected');
+    }
+
+    await eventBus.publishToStream(STREAMS.SESSIONS, 'session:status', {
+      sessionId,
+      orgId,
+      status: 'disconnected',
+      authStateError: reason,
+    });
+
+    await this.forceTerminateSocket(sessionId);
+  }
+
+  /**
    * Helper to update session status in the database.
    *
    * @param sessionId - Session to update
@@ -1465,6 +1549,8 @@ class SessionManager {
       clearTimeout(reconnectTimeout);
       this.pendingReconnects.delete(sessionId);
     }
+
+    this.saveCredsFailures.delete(sessionId);
     
     this.clearSyncTimeout(sessionId);
     this.clearLockRenewal(sessionId);

@@ -17,6 +17,10 @@ logger.info('Starting WhatsApp Session Runner Service...', {
   replicaId: sessionManager.replicaId,
 });
 
+/** Randomized delay before reconciliation-triggered session re-init (ms) */
+const RECONCILIATION_STAGGER_MIN_MS = 2000;
+const RECONCILIATION_STAGGER_MAX_MS = 5000;
+
 // Set environment variable flag if not already set to enable runner behaviors
 process.env.RUN_SESSION_RUNNER = 'true';
 
@@ -60,11 +64,16 @@ orchestrationWorker.on('failed', (job, err) => {
 async function runReconciliation(): Promise<void> {
   try {
     const sessionsToReconcile = await db
-      .select({ id: sessions.id, orgId: sessions.orgId, status: sessions.status })
+      .select({ id: sessions.id, orgId: sessions.orgId, status: sessions.status, metadata: sessions.metadata })
       .from(sessions)
       .where(inArray(sessions.status, ['connected', 'disconnected', 'connecting', 'qr_pending']));
 
     for (const session of sessionsToReconcile) {
+      const metadata = (session.metadata || {}) as Record<string, unknown>;
+      if (metadata.authStateError) {
+        continue;
+      }
+
       const lockKey = `session:${session.id}:owner`;
       const owner = await redis.get(lockKey);
       if (!owner) {
@@ -73,7 +82,11 @@ async function runReconciliation(): Promise<void> {
           status: session.status,
         });
 
-        // Trigger startup via orchestration queue to distribute/deduplicate
+        const staggerMs =
+          RECONCILIATION_STAGGER_MIN_MS +
+          Math.floor(Math.random() * (RECONCILIATION_STAGGER_MAX_MS - RECONCILIATION_STAGGER_MIN_MS + 1));
+        await new Promise((resolve) => setTimeout(resolve, staggerMs));
+
         await sessionManager.initializeSocket(session.id, session.orgId).catch((err) => {
           logger.error('Reconciliation failed to initialize socket', { sessionId: session.id, error: err.message });
         });

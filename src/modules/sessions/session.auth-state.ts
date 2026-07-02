@@ -55,7 +55,7 @@ export async function usePostgresAuthState(sessionId: string): Promise<{
       creds = JSON.parse(JSON.stringify(decrypted), BufferJSON.reviver);
       logger.debug('Loaded existing auth credentials', { sessionId });
     } catch (error) {
-      logger.warn('Failed to decrypt auth creds, initializing fresh', {
+      logger.error('Auth credential decrypt failed — initializing fresh creds (forced re-pairing required)', {
         sessionId,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
