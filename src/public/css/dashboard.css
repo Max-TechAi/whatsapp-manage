@@ -256,11 +256,13 @@ body {
   height: 44px;
   padding: 0;
   border-radius: 10px;
-  border: 0.5px solid transparent;
-  background: var(--btn-bg);
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--bg-elevated-2);
+  border: 0.5px solid var(--border-default);
   color: var(--text-muted);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
 
 .nav-link[style*="display: none"] {
@@ -273,9 +275,9 @@ body {
 }
 
 .nav-link:hover {
-  background: var(--btn-bg-hover);
+  background-color: var(--bg-hover);
   color: var(--text-primary);
-  border-color: var(--btn-border);
+  border-color: var(--border-strong);
 }
 
 .nav-link:active {
@@ -283,7 +285,7 @@ body {
 }
 
 .nav-link.active {
-  background: var(--accent-green-dim);
+  background-color: var(--accent-green-dim);
   color: var(--accent-green);
   border-color: var(--accent-green-border);
 }
@@ -316,8 +318,8 @@ body {
   width: 44px;
   height: 28px;
   border-radius: 8px;
-  background: var(--btn-bg);
-  border: 0.5px solid var(--btn-border);
+  background-color: var(--bg-elevated-2);
+  border: 0.5px solid var(--border-default);
 }
 
 .nav-user-avatar {
@@ -327,8 +329,8 @@ body {
   width: 44px;
   height: 44px;
   border-radius: 10px;
-  background: var(--btn-bg);
-  border: 0.5px solid var(--btn-border);
+  background-color: var(--bg-elevated-2);
+  border: 0.5px solid var(--border-default);
   color: var(--text-muted);
   font-size: 1.1rem;
 }
@@ -339,8 +341,8 @@ body {
 
 .nav-logout-btn:hover {
   color: var(--danger);
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.25);
+  background-color: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.28);
 }
 
 /* WS connection indicator */
