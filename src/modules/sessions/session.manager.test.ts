@@ -17,6 +17,20 @@ vi.mock('../../config/database.js', () => {
   return { db: dbMock };
 });
 
+// Mock config/env.js so importing session.manager doesn't trigger env validation
+vi.mock('../../config/env.js', () => ({
+  env: {
+    RATE_LIMIT_WA_MESSAGES: 20,
+    WA_SEND_DELAY_MIN_MS: 1000,
+    WA_SEND_DELAY_MAX_MS: 3000,
+  },
+  getEnv: () => ({
+    RATE_LIMIT_WA_MESSAGES: 20,
+    WA_SEND_DELAY_MIN_MS: 1000,
+    WA_SEND_DELAY_MAX_MS: 3000,
+  }),
+}));
+
 // Mock config/redis.js
 vi.mock('../../config/redis.js', () => ({
   redis: {

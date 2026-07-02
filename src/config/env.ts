@@ -44,6 +44,11 @@ const envSchema = z.object({
   RATE_LIMIT_API: z.coerce.number().int().default(100),
   RATE_LIMIT_WA_MESSAGES: z.coerce.number().int().default(20),
 
+  // WhatsApp outbound send pacing (ban-risk mitigation):
+  // randomized delay between consecutive sends per session
+  WA_SEND_DELAY_MIN_MS: z.coerce.number().int().min(0).default(1000),
+  WA_SEND_DELAY_MAX_MS: z.coerce.number().int().min(0).default(3000),
+
   // SMTP Email Configuration
   SMTP_HOST: z.string().default('localhost'),
   SMTP_PORT: z.coerce.number().int().default(587),

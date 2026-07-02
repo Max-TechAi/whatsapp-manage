@@ -25,6 +25,7 @@ import { Boom } from '@hapi/boom';
 import { Worker } from 'bullmq';
 
 import { db } from '../../config/database.js';
+import { env } from '../../config/env.js';
 import { sessions, sessionKeys, messages, chats } from '../../db/schema.js';
 import { redis, workerRedis } from '../../config/redis.js';
 import { logger } from '../../observability/logger.js';
@@ -1504,6 +1505,62 @@ class SessionManager {
     }
   }
 
+  /**
+   * Pace outbound WhatsApp sends per session (ban-risk mitigation):
+   * 1. Per-minute cap (RATE_LIMIT_WA_MESSAGES): once the cap is reached,
+   *    waits until the current 60s window expires before sending.
+   * 2. Randomized inter-send gap (WA_SEND_DELAY_MIN_MS..WA_SEND_DELAY_MAX_MS)
+   *    since the previous send, so bursts are spread into a human-like rhythm.
+   *
+   * Sleeping in the processor is safe: the outbound worker runs with
+   * concurrency 1 per session and BullMQ auto-renews the job lock while
+   * the processor is running, so queued jobs simply wait their turn.
+   */
+  private async throttleOutboundSend(sessionId: string): Promise<void> {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // 1. Per-minute send cap (no race: only the single lock-owning replica's
+    //    serial outbound worker touches these keys for a given session)
+    const countKey = `wa:send:count:${sessionId}`;
+    for (;;) {
+      const current = parseInt((await redis.get(countKey)) ?? '0', 10);
+      if (current < env.RATE_LIMIT_WA_MESSAGES) {
+        const count = await redis.incr(countKey);
+        if (count === 1) {
+          await redis.expire(countKey, 60);
+        }
+        break;
+      }
+
+      const ttl = await redis.ttl(countKey);
+      if (ttl <= 0) {
+        // Key expired or has no TTL (anomaly) — clear and retry
+        await redis.del(countKey);
+        continue;
+      }
+
+      logger.warn('Outbound send rate limit reached; delaying send', {
+        sessionId,
+        limitPerMinute: env.RATE_LIMIT_WA_MESSAGES,
+        waitMs: ttl * 1000,
+      });
+      await sleep(ttl * 1000);
+    }
+
+    // 2. Randomized minimum gap since the previous send
+    const minDelay = env.WA_SEND_DELAY_MIN_MS;
+    const maxDelay = Math.max(env.WA_SEND_DELAY_MAX_MS, minDelay);
+    const gapMs = minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1));
+
+    const lastKey = `wa:send:last:${sessionId}`;
+    const lastSendAt = parseInt((await redis.get(lastKey)) ?? '0', 10);
+    const elapsed = Date.now() - lastSendAt;
+    if (elapsed < gapMs) {
+      await sleep(gapMs - elapsed);
+    }
+    await redis.set(lastKey, Date.now().toString(), 'EX', 3600);
+  }
+
   private startDynamicWorkers(sessionId: string, orgId: string): void {
     this.stopDynamicWorkers(sessionId);
     
@@ -1533,7 +1590,12 @@ class SessionManager {
         
         logger.info('Dynamic outbound worker processing job', { jobId: job.id, sessionId, waChatJid, type });
         
+        let result: any;
         try {
+          // Pace outbound sends (randomized delay + per-minute cap) to avoid
+          // burst patterns that trigger WhatsApp bans
+          await this.throttleOutboundSend(sessionId);
+
           // Fencing check before send
           const owner = await redis.get(`session:${sessionId}:owner`);
           if (owner !== this.replicaId) {
@@ -1561,7 +1623,6 @@ class SessionManager {
           }
 
           // Send message
-          let result;
           if (type === 'forward') {
             if (!forwardRawMessage) throw new Error('forwardRawMessage is required for forwards');
             result = await active.socket.sendMessage(waChatJid, { forward: forwardRawMessage }, sendOptions);
@@ -1583,9 +1644,26 @@ class SessionManager {
           } else {
             throw new Error(`Unsupported outbound type: ${type}`);
           }
-          
+        } catch (err) {
+          // Message was NOT delivered to WhatsApp — safe for BullMQ to retry.
+          logger.error('Outbound worker send failed (job will retry)', {
+            jobId: job.id,
+            sessionId,
+            waChatJid,
+            type,
+            mediaUrl,
+            error: (err as Error).message,
+            stack: (err as Error).stack,
+          });
+          throw err;
+        }
+
+        // From here on, the message HAS been delivered to WhatsApp. Any failure
+        // below must NOT rethrow: a BullMQ retry would re-run sendMessage and
+        // deliver a duplicate message (ban-risk + user-facing bug).
+        try {
           if (!result?.key?.id) throw new Error('No message ID returned from Baileys');
-          
+
           // Resolve saved type (especially for forwards)
           let savedType = type;
           if (type === 'forward' && result.message) {
@@ -1645,16 +1723,17 @@ class SessionManager {
             reason: 'Auto: reply sent from dashboard',
           });
         } catch (err) {
-          logger.error('Outbound worker job execution failed', {
+          // Swallow (do not rethrow): message was already sent to WhatsApp,
+          // retrying the job would send it again.
+          logger.error('Outbound post-send processing failed; message WAS sent to WhatsApp but may not be saved/broadcast locally', {
             jobId: job.id,
             sessionId,
             waChatJid,
             type,
-            mediaUrl,
+            waMessageId: result?.key?.id ?? null,
             error: (err as Error).message,
             stack: (err as Error).stack,
           });
-          throw err;
         }
       },
       { connection: workerRedis.duplicate() as any }
