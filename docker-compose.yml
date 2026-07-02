@@ -90,7 +90,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio_secret_password}
       MINIO_BUCKET: ${MINIO_BUCKET:-whatsapp-media}
       MINIO_USE_SSL: "false"
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-256-bit-secret-key-in-production}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       PORT: 3000
@@ -132,7 +132,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minio_secret_password}
       MINIO_BUCKET: ${MINIO_BUCKET:-whatsapp-media}
       MINIO_USE_SSL: "false"
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-256-bit-secret-key-in-production}
+      JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SMTP_HOST: ${SMTP_HOST}
@@ -172,7 +172,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-whatsapp-media}
       MINIO_USE_SSL: "false"
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
-      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-256-bit-secret-key-in-production}
+      JWT_SECRET: ${JWT_SECRET}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}

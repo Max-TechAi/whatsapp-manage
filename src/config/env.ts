@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+/** Known placeholder from .env.example — must never be used in any environment */
+export const JWT_SECRET_PLACEHOLDER = 'change-me-to-a-256-bit-secret-key-in-production';
+
 /**
  * Environment configuration schema with runtime validation.
  * All environment variables are validated at startup — fail fast on misconfiguration.
@@ -26,7 +29,13 @@ const envSchema = z.object({
   ).default(false),
 
   // JWT
-  JWT_SECRET: z.string().min(32),
+  JWT_SECRET: z
+    .string()
+    .min(32)
+    .refine(
+      (val) => val !== JWT_SECRET_PLACEHOLDER,
+      'JWT_SECRET must not use the default placeholder — set a strong random secret (see .env.example)',
+    ),
   JWT_EXPIRES_IN: z.string().default('7d'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
 
