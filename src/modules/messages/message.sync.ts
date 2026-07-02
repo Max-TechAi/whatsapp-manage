@@ -88,7 +88,7 @@ export class MessageSyncService {
 
     await updateSyncProgress(sessionId, 'syncing', processedMessages, totalMessages);
 
-    /* BUG 1: Save LID-to-Phone JID mappings first so they are available when processing chats/messages */
+    /* FIX: Save LID-to-Phone JID mappings first so they are available when processing chats/messages */
     if (data.lidPnMappings && Array.isArray(data.lidPnMappings)) {
       logger.info('Saving history sync LID mappings', { sessionId, count: data.lidPnMappings.length });
       for (const mapping of data.lidPnMappings) {

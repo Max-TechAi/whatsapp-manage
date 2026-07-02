@@ -44,7 +44,7 @@ export class ChatService {
     metadata?: Record<string, unknown>;
     isHistorySync?: boolean;
   }): Promise<Chat | null> {
-    // BUG 2: Exclude WhatsApp Status broadcast threads
+    // FIX: Exclude WhatsApp Status broadcast threads
     const resolvedJid = await resolveLidJid(data.sessionId, data.waChatId);
     const normalizedChatJid = normalizeJid(resolvedJid);
 
@@ -57,7 +57,7 @@ export class ChatService {
       return null;
     }
 
-    logger.info('[DEBUG UNREAD] chat.service.ts upsertChat starting', {
+    logger.debug('[DEBUG UNREAD] chat.service.ts upsertChat starting', {
       sessionId: data.sessionId,
       waChatId: normalizedChatJid,
       inputUnreadCount: data.unreadCount,
@@ -97,7 +97,7 @@ export class ChatService {
       .returning();
 
     if (result) {
-      logger.info('[DEBUG UNREAD] chat.service.ts upsertChat completed', {
+      logger.debug('[DEBUG UNREAD] chat.service.ts upsertChat completed', {
         sessionId: result.sessionId,
         waChatId: result.waChatId,
         dbUnreadCount: result.unreadCount,
@@ -444,7 +444,7 @@ export class ChatService {
     const chat = await this.getChatById(orgId, chatId);
     if (!chat) return null;
 
-    logger.info('[DEBUG UNREAD] chat.service.ts markChatAsRead called', {
+    logger.debug('[DEBUG UNREAD] chat.service.ts markChatAsRead called', {
       orgId,
       chatId,
       trigger: options.trigger,
@@ -482,17 +482,6 @@ export class ChatService {
     }
 
     return updatedChat;
-  }
-
-  /**
-   * @deprecated Use markChatAsRead instead.
-   */
-  async markAsRead(orgId: string, chatId: string): Promise<void> {
-    await this.markChatAsRead(orgId, chatId, {
-      trigger: 'manual',
-      reason: 'Legacy mark-as-read',
-      skipAudit: true,
-    });
   }
 
   /**
@@ -830,7 +819,7 @@ export class ChatService {
   }
 
   /**
-   * BUG 1: Merge a chat and contact that was created with a LID JID into its phone JID.
+   * FIX: Merge a chat and contact that was created with a LID JID into its phone JID.
    * This is triggered asynchronously when a LID-to-phone mapping is discovered/saved.
    */
   async mergeLidChatAndContact(

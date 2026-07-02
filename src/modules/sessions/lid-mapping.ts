@@ -92,7 +92,7 @@ export async function saveLidMapping(sessionId: string, lid: string, phone: stri
         logger.error('Failed to persist LID mapping to database contact metadata', { sessionId, lid: normalizedLid, phone: normalizedPhone, error: (dbErr as Error).message });
       }
 
-      /* BUG 1: Dynamically import chatService and trigger database-level merge of LID chat/contact */
+      /* FIX: Dynamically import chatService and trigger database-level merge of LID chat/contact */
       import('../chats/chat.service.js')
         .then(({ chatService }) => {
           chatService.mergeLidChatAndContact(sessionId, normalizedLid, normalizedPhone)

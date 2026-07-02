@@ -1349,7 +1349,7 @@ function renderMessages(msgList) {
           `;
         } else if (['image', 'video', 'audio', 'document', 'sticker'].includes(m.messageType)) {
           if (m.metadata?.mediaStatus === 'failed') {
-            // BUG 6: Handle download failures gracefully with a retry and a "media unavailable" fallback UI
+            // FIX: Handle download failures gracefully with a retry and a "media unavailable" fallback UI
             bodyHtml = `
               <div class="media-failed-container" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0;">
                 <span style="color: #ff5252; font-style: italic; font-size: 0.85rem;">⚠️ Media unavailable</span>
@@ -2045,7 +2045,7 @@ function handleWsEvent(data) {
     const msgChatId = data.chatId || data.data?.chatId;
 
     if (activeSessionId === sessionId && msgChatId) {
-      // BUG 1: Deduplicate message processing using a Set of processed message IDs
+      // FIX: Deduplicate message processing using a Set of processed message IDs
       const msgId = data.message?.waMessageId || data.waMessageId || data.message?.id || data.id;
       let isDuplicate = false;
       if (msgId) {
@@ -2055,14 +2055,6 @@ function handleWsEvent(data) {
           processedMessageIds.add(msgId);
         }
       }
-
-      console.log('[DEBUG UNREAD] WS message event received:', {
-        type,
-        msgChatId,
-        msgId,
-        isDuplicate,
-        fromMe: data.fromMe || data.message?.fromMe || false
-      });
 
       // In-memory array update for instant chat list updates & sorting
       const chatObj = chats.find(c => c.id === msgChatId || c.waChatId === msgChatId);
@@ -2081,25 +2073,19 @@ function handleWsEvent(data) {
         
         const isFromMe = data.fromMe || data.message?.fromMe || false;
         if (isFromMe) {
-          console.log('[DEBUG UNREAD] Resetting unread count to 0 in chatObj due to fromMe message', { msgChatId, oldVal: chatObj.unreadCount });
           chatObj.unreadCount = 0; // Reset count since we replied!
         } else if (!isDuplicate) {
           // Increment unread count for every new inbound message that is not a duplicate
-          const oldVal = chatObj.unreadCount;
           chatObj.unreadCount = (Number(chatObj.unreadCount) || 0) + 1;
-          console.log('[DEBUG UNREAD] Incrementing unread count in chatObj', { msgChatId, oldVal, newVal: chatObj.unreadCount });
 
           // Show a desktop notification for new INBOUND messages (only on message:new, not status/media updates)
           if (type === 'message:new' && !isDuplicate) {
             showDesktopNotification(data.message || data, chatObj, msgChatId);
           }
-        } else {
-          console.log('[DEBUG UNREAD] Skipping unread increment because it is a duplicate message', { msgChatId, msgId });
         }
         renderChatsList(chats);
         updateMarkReadButtonVisibility();
       } else {
-        console.log('[DEBUG UNREAD] Chat object not found in chats array, calling loadChats()', { msgChatId });
         // Fallback: reload chats list from server
         loadChats();
       }
@@ -2139,7 +2125,7 @@ function handleWsEvent(data) {
     }
   }
 
-  /* BUG 3: Handle in-memory updating, sorting, and re-rendering on chat updates (e.g. from Baileys) */
+  /* FIX: Handle in-memory updating, sorting, and re-rendering on chat updates (e.g. from Baileys) */
   if (type === 'chat:update' || type === 'chat:updated') {
     const updatedChat = data.chat;
     if (activeSessionId === sessionId && updatedChat) {
@@ -2147,27 +2133,11 @@ function handleWsEvent(data) {
       if (index !== -1) {
         // Merge updated properties, preserving current unread count unless explicitly read (0)
         const oldUnreadCount = chats[index].unreadCount;
-        console.log('[DEBUG UNREAD] WS chat:update event received for existing chat', {
-          chatId: updatedChat.id,
-          waChatId: updatedChat.waChatId,
-          oldUnreadCount,
-          incomingUnreadCount: updatedChat.unreadCount
-        });
         chats[index] = { ...chats[index], ...updatedChat };
         if (updatedChat.unreadCount !== 0) {
-          console.log('[DEBUG UNREAD] WS chat:update preserving oldUnreadCount because incoming is non-zero', {
-            chatId: updatedChat.id,
-            oldUnreadCount,
-            incomingUnreadCount: updatedChat.unreadCount
-          });
           chats[index].unreadCount = oldUnreadCount;
         }
       } else {
-        console.log('[DEBUG UNREAD] WS chat:update event received for NEW chat', {
-          chatId: updatedChat.id,
-          waChatId: updatedChat.waChatId,
-          incomingUnreadCount: updatedChat.unreadCount
-        });
         // Insert new chat if it doesn't exist locally
         chats.push(updatedChat);
       }
@@ -2180,7 +2150,6 @@ function handleWsEvent(data) {
   if (type === 'chat:delete' || type === 'chat:deleted') {
     const deletedChatId = data.chatId;
     if (activeSessionId === sessionId && deletedChatId) {
-      console.log('[DEBUG] WS chat:delete event received', { deletedChatId });
       const index = chats.findIndex(c => c.id === deletedChatId);
       if (index !== -1) {
         chats.splice(index, 1);
@@ -2430,7 +2399,7 @@ function updateVnProgress(audio) {
     console.error('Error updating audio progress:', err);
   }
 }
-// BUG 6: Handle media download retries from UI
+// FIX: Handle media download retries from UI
 async function retryMediaDownload(evt, messageId) {
   try {
     const btn = evt.target;

@@ -85,7 +85,7 @@ export function createMessageWorker(): Worker {
         return;
       }
 
-      logger.info('[DEBUG EDIT_DELETE UNCONDITIONAL] Message Worker starting processing', {
+      logger.debug('[DEBUG EDIT_DELETE UNCONDITIONAL] Message Worker starting processing', {
         jobId: job.id,
         sessionId,
         waMessageId: waMessage.key.id,
@@ -124,7 +124,7 @@ export function createMessageWorker(): Worker {
           : secretEncryptedMessage.targetMessageKey?.id;
 
         if (targetId) {
-          logger.info('[DEBUG EDIT_DELETE] Intercepted message edit/revoke event', {
+          logger.debug('[DEBUG EDIT_DELETE] Intercepted message edit/revoke event', {
             sessionId,
             orgId,
             editMessageId: waMessage.key.id,
@@ -152,7 +152,7 @@ export function createMessageWorker(): Worker {
             .limit(1);
 
           if (originalMsg) {
-            logger.info('[DEBUG EDIT_DELETE] Original message FOUND in database', {
+            logger.debug('[DEBUG EDIT_DELETE] Original message FOUND in database', {
               targetId,
               dbMessageId: originalMsg.id,
               dbChatId: originalMsg.chatId,
@@ -199,7 +199,7 @@ export function createMessageWorker(): Worker {
                 }
 
                 const decryptedMsg = decryptEditedMessage(secretEncryptedMessage, msgSec!, senderJid);
-                logger.info('[DEBUG EDIT_DELETE] Successfully decrypted secretEncryptedMessage edit payload', {
+                logger.debug('[DEBUG EDIT_DELETE] Successfully decrypted secretEncryptedMessage edit payload', {
                   decryptedKeys: Object.keys(decryptedMsg || {})
                 });
 
@@ -232,7 +232,7 @@ export function createMessageWorker(): Worker {
                 })
                 .where(eq(messages.id, originalMsg.id));
 
-              logger.info('[DEBUG EDIT_DELETE] Updated message content successfully', {
+              logger.debug('[DEBUG EDIT_DELETE] Updated message content successfully', {
                 messageId: originalMsg.id,
                 waMessageId: targetId,
                 newContent,
@@ -256,7 +256,7 @@ export function createMessageWorker(): Worker {
                     })
                     .where(eq(chats.id, originalMsg.chatId));
 
-                  logger.info('[DEBUG EDIT_DELETE] Updated chat lastMessagePreview successfully', {
+                  logger.debug('[DEBUG EDIT_DELETE] Updated chat lastMessagePreview successfully', {
                     chatId: originalMsg.chatId,
                     lastMessagePreview: newContent,
                   });
@@ -297,7 +297,7 @@ export function createMessageWorker(): Worker {
                 })
                 .where(eq(messages.id, originalMsg.id));
 
-              logger.info('[DEBUG EDIT_DELETE] Flagged message as deleted successfully', {
+              logger.debug('[DEBUG EDIT_DELETE] Flagged message as deleted successfully', {
                 messageId: originalMsg.id,
                 waMessageId: targetId,
               });
@@ -334,7 +334,7 @@ export function createMessageWorker(): Worker {
                 .orderBy(desc(messages.createdAt))
                 .limit(5);
 
-              logger.info('[DEBUG EDIT_DELETE DIAGNOSTIC] Stored waMessageId format overview (5 most recent):', {
+              logger.debug('[DEBUG EDIT_DELETE DIAGNOSTIC] Stored waMessageId format overview (5 most recent):', {
                 recentMsgs: recentMsgs.map(m => ({
                   id: m.id,
                   waMessageId: m.waMessageId,
@@ -461,7 +461,7 @@ export function createMessageWorker(): Worker {
         }
       }
 
-      // BUG 1: Upsert mentioned JIDs to ensure they exist in contacts table for name resolution
+      // FIX: Upsert mentioned JIDs to ensure they exist in contacts table for name resolution
       const mentionedJids = contextInfo?.mentionedJid || [];
       for (const jid of mentionedJids) {
         if (jid) {
@@ -525,7 +525,7 @@ export function createMessageWorker(): Worker {
 
       // Publish to Redis Stream for WebSocket broadcast
       if (type === 'notify') {
-        logger.info('[DEBUG UNREAD] MessageWorker publishing message:new to Redis Stream', {
+        logger.debug('[DEBUG UNREAD] MessageWorker publishing message:new to Redis Stream', {
           sessionId,
           waMessageId,
           chatId,

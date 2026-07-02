@@ -112,6 +112,7 @@ export const sessions = pgTable(
   },
   (table) => [
     index('idx_sessions_org_id').on(table.orgId),
+    index('idx_sessions_status').on(table.status),
     /**
      * Partial unique index: a phone number can only belong to one session per org.
      * NULL phone numbers are excluded (multiple sessions can be in QR phase).

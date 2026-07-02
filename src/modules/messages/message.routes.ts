@@ -219,7 +219,7 @@ messageRouter.get('/chats/:chatId/messages', async (req, res) => {
 
     const result = await messageService.getMessages(orgId, chatId, { cursor, limit });
 
-    /* BUG 1: If no messages exist in local DB but the chat has activity (unreadCount > 0 or lastMessageAt), trigger an on-demand history sync from the phone */
+    /* FIX: If no messages exist in local DB but the chat has activity (unreadCount > 0 or lastMessageAt), trigger an on-demand history sync from the phone */
     if (result.messages.length === 0 && !cursorParam) {
       const chat = await chatService.getChatById(orgId, chatId);
       if (chat && (chat.unreadCount > 0 || chat.lastMessageAt)) {

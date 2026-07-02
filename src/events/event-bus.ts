@@ -131,7 +131,7 @@ export class EventBus {
           }
         );
       } catch (err) {
-        // BUG 1 fallback: if the generated jobId still fails, retry with a safe SHA-256 hash to prevent message loss
+        // FIX: fallback — if the generated jobId still fails, retry with a safe SHA-256 hash to prevent message loss
         logger.error('Failed to publish inbound message, retrying with fallback sanitized hash ID', {
           sessionId,
           error: (err as Error).message,
@@ -317,7 +317,7 @@ export class EventBus {
         }
       );
     } catch (err) {
-      // BUG 1 fallback: if the generated jobId still fails, retry with a safe SHA-256 hash to prevent sync stall
+      // FIX: fallback — if the generated jobId still fails, retry with a safe SHA-256 hash to prevent sync stall
       logger.error('Failed to publish history sync, retrying with fallback sanitized hash ID', {
         sessionId,
         error: (err as Error).message,

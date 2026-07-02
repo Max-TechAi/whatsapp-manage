@@ -891,7 +891,7 @@ class SessionManager {
 
       for (const chat of chats) {
         if (chat.unreadCount !== undefined) {
-          logger.info('[DEBUG UNREAD] Baileys chats.upsert event contains unreadCount', {
+          logger.debug('[DEBUG UNREAD] Baileys chats.upsert event contains unreadCount', {
             sessionId,
             waChatId: chat.id,
             unreadCount: chat.unreadCount,
@@ -913,7 +913,7 @@ class SessionManager {
 
       for (const update of updates) {
         if (update.unreadCount !== undefined) {
-          logger.info('[DEBUG UNREAD] Baileys chats.update event contains unreadCount', {
+          logger.debug('[DEBUG UNREAD] Baileys chats.update event contains unreadCount', {
             sessionId,
             waChatId: update.id,
             unreadCount: update.unreadCount,
@@ -965,7 +965,7 @@ class SessionManager {
       });
     });
 
-    /* BUG 1: Listen to dynamic LID-to-Phone JID mappings as they are discovered */
+    /* FIX: Listen to dynamic LID-to-Phone JID mappings as they are discovered */
     socket.ev.on('lid-mapping.update', async (mapping) => {
       const { lid, pn } = mapping;
       logger.debug('LID mapping update event received', { sessionId, lid, pn });
