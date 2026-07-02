@@ -25,6 +25,7 @@ let isSyncingFromPhone = false;
 
 let replyingToMessageId = null;
 let forwardingMessageId = null;
+let chatListFilter = 'all';
 
 let userRole = 'agent';
 let userHasAllSessionsAccess = false;
@@ -738,6 +739,25 @@ async function loadMoreChatsBackground(sessionId, cursor, loadToken, iteration =
   }
 }
 
+function getChatAvatarColorClass(waChatId) {
+  const palette = ['chat-avatar--green', 'chat-avatar--blue', 'chat-avatar--purple', 'chat-avatar--orange', 'chat-avatar--pink'];
+  let hash = 0;
+  const key = waChatId || '';
+  for (let i = 0; i < key.length; i++) {
+    hash = key.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return palette[Math.abs(hash) % palette.length];
+}
+
+function setChatListFilter(filter) {
+  chatListFilter = filter;
+  document.querySelectorAll('.chat-filter-pill').forEach((pill) => {
+    pill.classList.toggle('active', pill.dataset.filter === filter);
+  });
+  handleChatSearch();
+}
+window.setChatListFilter = setChatListFilter;
+
 function renderChatsList(chatList) {
   try {
     const container = document.getElementById('chatsListContainer');
@@ -750,9 +770,16 @@ function renderChatsList(chatList) {
       !c.waChatId.endsWith('@newsletter')
     );
 
-    if (filteredList.length === 0) {
+    let listForView = filteredList;
+    if (chatListFilter === 'unread') {
+      listForView = listForView.filter((c) => Number(c.unreadCount) > 0);
+    } else if (chatListFilter === 'groups') {
+      listForView = listForView.filter((c) => c.chatType === 'group' || c.waChatId.endsWith('@g.us'));
+    }
+
+    if (listForView.length === 0) {
       container.innerHTML = `
-        <div style="text-align: center; color: var(--text-muted); padding: 2rem 1rem; font-size: 0.9rem;">
+        <div class="chats-empty-state">
           No chats synchronized yet. Start a new chat from WhatsApp.
         </div>
       `;
@@ -760,7 +787,7 @@ function renderChatsList(chatList) {
     }
 
     // Sort conversations by most recent message activity (lastMessageAt DESC or fallback to createdAt), pinned first
-    const sortedList = [...filteredList].sort((a, b) => {
+    const sortedList = [...listForView].sort((a, b) => {
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;
       const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
@@ -770,21 +797,26 @@ function renderChatsList(chatList) {
 
     container.innerHTML = sortedList.map(c => {
       const isActive = c.waChatId === activeChatId ? 'active' : '';
-      const avatarIcon = c.chatType === 'group' ? '👥' : '👤';
-      // Use short text preview for sidebar — never render raw HTML/rich cards here
+      const isGroup = c.chatType === 'group' || c.waChatId.endsWith('@g.us');
+      const avatarColor = getChatAvatarColorClass(c.waChatId);
+      const avatarIcon = isGroup ? 'ti-users' : 'ti-user';
       const rawPreview = c.lastMessagePreview || '';
-      const lastMsg = rawPreview ? escapeHtml(rawPreview) : '<i>No messages</i>';
+      const lastMsg = rawPreview ? escapeHtml(rawPreview) : '<span class="chat-preview-empty">No messages</span>';
       const timestamp = c.lastMessageAt ? formatTime(new Date(c.lastMessageAt)) : '';
       
-      // Show numeric unread badge count
       const hasUnread = typeof c.unreadCount !== 'undefined' && c.unreadCount !== null && Number(c.unreadCount) > 0;
-      const unread = hasUnread ? `<span class="chat-badge" title="${c.unreadCount} unread messages">${c.unreadCount}</span>` : '';
+      const isMuted = c.mutedUntil && new Date(c.mutedUntil) > new Date();
+      const badgeClass = isMuted ? 'chat-badge chat-badge--muted' : 'chat-badge';
+      const unread = hasUnread ? `<span class="${badgeClass}" title="${c.unreadCount} unread messages">${c.unreadCount}</span>` : '';
+      const pinnedClass = c.isPinned ? ' chat-item--pinned' : '';
       
       const displayName = getChatDisplayName(c);
 
       return `
-        <div class="chat-item ${isActive}" onclick="selectChat('${c.id}', '${c.waChatId}', '${escapeHtml(displayName)}')">
-          <div class="chat-avatar">${avatarIcon}</div>
+        <div class="chat-item ${isActive}${pinnedClass}" onclick="selectChat('${c.id}', '${c.waChatId}', '${escapeHtml(displayName)}')">
+          <div class="chat-avatar ${avatarColor}${isGroup ? ' chat-avatar--group' : ''}">
+            <i class="ti ${avatarIcon}" aria-hidden="true"></i>
+          </div>
           <div class="chat-info">
             <div class="chat-header-row">
               <span class="chat-name">${escapeHtml(displayName)}</span>

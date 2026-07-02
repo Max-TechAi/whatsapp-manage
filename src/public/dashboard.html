@@ -77,8 +77,24 @@
           
           <!-- Chats list (left) -->
           <div class="chats-list-pane">
+            <div class="chats-sidebar-header">
+              <h2 class="chats-sidebar-title">Chat Inbox</h2>
+              <div class="chats-sidebar-actions">
+                <button type="button" class="icon-btn" onclick="document.getElementById('chatSearchInput').focus()" aria-label="Search chats" title="Search chats">
+                  <i class="ti ti-search" aria-hidden="true"></i>
+                </button>
+              </div>
+            </div>
+
             <div class="chats-search">
+              <i class="ti ti-search chats-search-icon" aria-hidden="true"></i>
               <input type="text" id="chatSearchInput" class="search-input" placeholder="Search chats..." oninput="handleChatSearch()">
+            </div>
+
+            <div class="chats-filter-pills" role="tablist" aria-label="Filter chats">
+              <button type="button" class="chat-filter-pill active" data-filter="all" onclick="setChatListFilter('all')">All</button>
+              <button type="button" class="chat-filter-pill" data-filter="unread" onclick="setChatListFilter('unread')">Unread</button>
+              <button type="button" class="chat-filter-pill" data-filter="groups" onclick="setChatListFilter('groups')">Groups</button>
             </div>
             
             <!-- Reconnecting banner (NOT a full lock) -->
@@ -101,16 +117,16 @@
             </div>
             
             <!-- Quick session selection inside inbox -->
-            <div style="padding: 0.5rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 0.5rem;">
-              <span style="font-size: 0.8rem; color: var(--text-muted);">Session:</span>
-              <select id="inboxSessionSelect" style="flex: 1; padding: 0.3rem; background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); color: white; border-radius: 4px; font-size: 0.85rem;" onchange="handleInboxSessionChange()">
+            <div class="chats-session-row">
+              <label class="chats-session-label" for="inboxSessionSelect">Session</label>
+              <select id="inboxSessionSelect" class="chats-session-select" onchange="handleInboxSessionChange()">
                 <option value="">-- No connected session --</option>
               </select>
             </div>
 
             <!-- Chats Scroll Area -->
             <div class="chats-scroll" id="chatsListContainer">
-              <div style="text-align: center; color: var(--text-muted); padding: 2rem 1rem; font-size: 0.9rem;">
+              <div class="chats-empty-state">
                 Select a connected session to view chats
               </div>
             </div>
