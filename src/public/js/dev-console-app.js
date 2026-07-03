@@ -1,5 +1,8 @@
 /**
  * Developer Console — API reference renderer + Try It executor.
+ *
+ * NOTE: dev-console.html no longer loads this script (minimal integration guide only).
+ * Kept for potential future full-reference UI revival. Manifest: api-endpoints.manifest.json
  */
 
 (function () {
