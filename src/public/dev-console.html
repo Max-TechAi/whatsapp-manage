@@ -110,9 +110,91 @@
       max-width: 1400px;
       width: 100%;
       margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .dev-main-grid {
       display: grid;
       grid-template-columns: 280px 1fr;
       gap: 2rem;
+      align-items: start;
+    }
+
+    @media (max-width: 900px) {
+      .dev-main-grid { grid-template-columns: 1fr; }
+    }
+
+    .common-tasks-quick-start {
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(16, 185, 129, 0.06));
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      border-radius: 1rem;
+      padding: 1.5rem 1.75rem;
+    }
+
+    .common-tasks-quick-start > .card-title {
+      margin-bottom: 0.35rem;
+      font-size: 1.2rem;
+    }
+
+    .common-tasks-intro {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      line-height: 1.55;
+      margin-bottom: 1.25rem;
+      max-width: 72ch;
+    }
+
+    .task-block {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .task-block:last-child { margin-bottom: 0; }
+
+    .task-block h3 {
+      font-size: 1rem;
+      margin-bottom: 0.35rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .task-block p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.55;
+      margin-bottom: 0.75rem;
+    }
+
+    .task-ref-link {
+      display: inline-block;
+      margin-top: 0.65rem;
+      font-size: 0.82rem;
+      color: #818cf8;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      font-family: inherit;
+      text-decoration: underline;
+    }
+
+    .task-ref-link:hover { color: #a5b4fc; }
+
+    .full-reference-label {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin: 0.25rem 0 1rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--border);
     }
 
     .nav-panel {
@@ -495,6 +577,76 @@
   </header>
 
   <main>
+    <!-- Quick Start — Common Tasks (always visible, integration-focused) -->
+    <section id="commonTasksQuickStart" class="common-tasks-quick-start">
+      <div class="card-title">Quick Start — Common Tasks</div>
+      <p class="common-tasks-intro">
+        Use these two API calls to send WhatsApp messages from your CRM or website.
+        Create your account, link WhatsApp, and get your <strong>API key</strong> in the
+        <a href="/dashboard.html" style="color: #818cf8;">dashboard</a> (Team → API Keys) — that setup is browser-only, not shown here.
+      </p>
+
+      <div class="task-block">
+        <h3>
+          <span class="method method-post">POST</span>
+          <code class="endpoint-path">/api/messages</code>
+        </h3>
+        <p>Send a text message to one person or to a WhatsApp group. The message is queued and delivered through your linked WhatsApp number.</p>
+        <pre class="doc-pre">curl -X POST "https://YOUR_HOST/api/messages" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "YOUR_SESSION_ID",
+    "recipientJid": "RECIPIENT_JID_OR_GROUP_ID",
+    "body": "YOUR_MESSAGE_TEXT"
+  }'</pre>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
+          <strong>recipientJid:</strong> for a person use their number with <code>@s.whatsapp.net</code> (e.g. <code>966500000000@s.whatsapp.net</code>).
+          For a group, use the group <code>id</code> from the groups list below (it already ends with <code>@g.us</code>).
+        </p>
+        <p style="font-size: 0.85rem; color: var(--text-muted);"><strong>Example response (202):</strong></p>
+        <pre class="doc-pre">{
+  "success": true,
+  "message": "Message queued for sending",
+  "data": {
+    "jobId": "sess-...-msg-...",
+    "chatId": "uuid-of-chat-thread",
+    "waChatJid": "966500000000@s.whatsapp.net"
+  }
+}</pre>
+        <button type="button" class="task-ref-link" onclick="DevConsole.scrollToEndpoint('messages-send')">Full reference: POST /api/messages →</button>
+      </div>
+
+      <div class="task-block">
+        <h3>
+          <span class="method method-get">GET</span>
+          <code class="endpoint-path">/api/sessions/:id/groups</code>
+        </h3>
+        <p>List WhatsApp groups on a linked session so you can copy the correct group ID for sending messages.</p>
+        <pre class="doc-pre">curl -X GET "https://YOUR_HOST/api/sessions/YOUR_SESSION_ID/groups" \
+  -H "Authorization: Bearer YOUR_API_KEY"</pre>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
+          Each group’s <strong>id</strong> field (e.g. <code>120363123456789012@g.us</code>) is what you pass as
+          <strong>recipientJid</strong> when sending a message to that group.
+        </p>
+        <p style="font-size: 0.85rem; color: var(--text-muted);"><strong>Example response (200):</strong></p>
+        <pre class="doc-pre">{
+  "success": true,
+  "data": [
+    {
+      "id": "120363123456789012@g.us",
+      "subject": "Sales Team",
+      "participantsCount": 12
+    }
+  ]
+}</pre>
+        <button type="button" class="task-ref-link" onclick="DevConsole.scrollToEndpoint('sessions-groups')">Full reference: GET /api/sessions/:id/groups →</button>
+      </div>
+    </section>
+
+    <p class="full-reference-label">Full API reference (all endpoints)</p>
+
+    <div class="dev-main-grid">
     <!-- Left Navigation -->
     <div class="nav-panel">
       <input type="search" id="endpointSearch" class="doc-search" placeholder="Search endpoints…" oninput="filterEndpointNav(this.value)">
@@ -662,6 +814,7 @@
       </div><!-- /playgroundSection -->
 
     </div>
+    </div><!-- /dev-main-grid -->
   </main>
 
   <script src="/js/dev-console-app.js"></script>

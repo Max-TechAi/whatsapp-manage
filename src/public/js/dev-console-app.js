@@ -230,10 +230,14 @@ X-API-Key: wa_live_...                # API key (alternative)</pre>
   }
 
   function scrollToEndpoint(id) {
-    switchModule('messages');
+    const moduleByEndpoint = {
+      'messages-send': 'messages',
+      'sessions-groups': 'sessions',
+    };
+    switchModule(moduleByEndpoint[id] || 'messages');
     setTimeout(() => {
       document.getElementById(`ep-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
+    }, 150);
   }
 
   function switchModule(moduleId) {
@@ -305,7 +309,15 @@ X-API-Key: wa_live_...                # API key (alternative)</pre>
     }
     renderSidebar();
     initCredentialBar();
-    switchModule('quickstart');
+    // Leave full reference collapsed until user picks a sidebar module
+    document.getElementById('endpointDocsContainer').style.display = 'none';
+    document.getElementById('quickStartSection').style.display = 'none';
+    document.getElementById('playgroundSection').style.display = 'none';
+    const title = document.getElementById('moduleTitle');
+    if (title) {
+      title.textContent = 'Select a module in the sidebar';
+      title.style.display = 'block';
+    }
   }
 
   window.DevConsole = {
