@@ -15,6 +15,7 @@ import makeWASocket, {
   DisconnectReason,
   Browsers,
   fetchLatestBaileysVersion,
+  BufferJSON,
 } from '@whiskeysockets/baileys';
 import type { WASocket, BaileysEventMap, WAMessage } from '@whiskeysockets/baileys';
 import * as QRCode from 'qrcode';
@@ -54,6 +55,7 @@ import { sessions, sessionKeys, messages, chats } from '../../db/schema.js';
 import { redis, workerRedis } from '../../config/redis.js';
 import { logger } from '../../observability/logger.js';
 import { usePostgresAuthState } from './session.auth-state.js';
+import { decryptJSON } from '../../security/encryption.js';
 import { SessionEventType, normalizeJid } from './session.events.js';
 import type { ActiveSession, SessionStatus, SessionDestroyResult, WhatsAppSession } from './session.types.js';
 import { saveLidMapping, resolveLidJid } from './lid-mapping.js';
@@ -773,7 +775,7 @@ class SessionManager {
           }
 
           const neverPaired = await this.isNeverPairedSession(sessionId);
-          if (neverPaired) {
+          if (neverPaired && !isRestartRequired && statusCode === DisconnectReason.connectionClosed) {
             await this.clearPartialAuthForNeverPairedSession(sessionId);
           }
 
@@ -787,7 +789,10 @@ class SessionManager {
             active.lastRetry = new Date();
           }
 
-          await this.updateSessionStatus(sessionId, 'disconnected');
+          await this.updateSessionStatus(
+            sessionId,
+            isRestartRequired ? 'connecting' : 'disconnected',
+          );
 
           logger.warn('WhatsApp connection closed — scheduling reconnection', {
             sessionId,
@@ -1315,6 +1320,10 @@ class SessionManager {
     const neverPaired = !row.lastConnectedAt && !row.phoneNumber;
     if (!neverPaired) return;
 
+    if (row.authCreds && this.authCredsHaveRegisteredIdentity(row.authCreds as string)) {
+      return;
+    }
+
     await db.delete(sessionKeys).where(eq(sessionKeys.sessionId, sessionId));
 
     if (row.authCreds) {
@@ -1326,6 +1335,19 @@ class SessionManager {
       logger.info('Cleared partial auth credentials for never-paired session', {
         sessionId,
       });
+    }
+  }
+
+  /** True when stored creds include a paired WhatsApp identity (post-QR scan). */
+  private authCredsHaveRegisteredIdentity(authCreds: string): boolean {
+    try {
+      const decrypted = decryptJSON(authCreds);
+      const creds = JSON.parse(JSON.stringify(decrypted), BufferJSON.reviver) as {
+        me?: { id?: string };
+      };
+      return !!creds.me?.id;
+    } catch {
+      return false;
     }
   }
 
