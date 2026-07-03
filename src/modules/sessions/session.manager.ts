@@ -292,28 +292,19 @@ class SessionManager {
       // Get latest Baileys version for maximum compatibility
       const { version } = await fetchLatestBaileysVersion();
 
-      // Read session pairing/history state before opening the socket
+      // Read historySyncCompleted from session metadata to prevent Baileys from requesting history again
       const [sessionRecord] = await db
-        .select({
-          metadata: sessions.metadata,
-          lastConnectedAt: sessions.lastConnectedAt,
-          phoneNumber: sessions.phoneNumber,
-        })
+        .select({ metadata: sessions.metadata })
         .from(sessions)
         .where(eq(sessions.id, sessionId))
         .limit(1);
       const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
       const historySyncCompleted = !!metadata.historySyncCompleted;
-      const neverPaired = !sessionRecord?.lastConnectedAt && !sessionRecord?.phoneNumber;
-      // History sync before first pairing can cause immediate 428 disconnects (no QR)
-      const enableHistorySync = !neverPaired && !historySyncCompleted;
 
       logger.info('Initializing Baileys socket', {
         sessionId,
         baileysVersion: version.join('.'),
         historySyncCompleted,
-        neverPaired,
-        enableHistorySync,
       });
 
       // Create the Baileys socket with production-optimized settings
@@ -326,8 +317,8 @@ class SessionManager {
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
         connectTimeoutMs: 60_000,
-        syncFullHistory: enableHistorySync,
-        shouldSyncHistoryMessage: () => enableHistorySync,
+        syncFullHistory: !historySyncCompleted,
+        shouldSyncHistoryMessage: () => !historySyncCompleted,
       });
 
       // Wire up all Baileys event handlers
