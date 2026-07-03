@@ -456,10 +456,14 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Enqueue destroy command so runner cleans up if online
-    await eventBus.publishSessionControl(sessionId, 'destroy').catch(() => {});
+    // Attempt WhatsApp unlink + runner cleanup BEFORE dropping lock / DB rows.
+    // Skip the wait when no runner owns the session (already offline).
+    const sessionOwner = await redis.get(`session:${sessionId}:owner`).catch(() => null);
+    const destroyResult = sessionOwner
+      ? await eventBus.publishSessionDestroyAndWait(sessionId)
+      : { whatsAppUnlinkAttempted: false, whatsAppUnlinkSucceeded: true };
 
-    // Delete ownership lock immediately to force self-termination if runner missed command
+    // Ensure lock is cleared even if destroy job missed or runner was unreachable
     await redis.del(`session:${sessionId}:owner`).catch(() => {});
 
     // Remove MinIO blobs + media_files rows BEFORE session CASCADE deletes messages
@@ -472,6 +476,11 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)));
 
     const summaryParts = ['Session deleted permanently'];
+    if (destroyResult.whatsAppUnlinkAttempted && !destroyResult.whatsAppUnlinkSucceeded) {
+      summaryParts.push(
+        'WhatsApp unlink may not have completed — manually remove this device from Linked Devices on your phone if it still appears',
+      );
+    }
     if (mediaCleanup.deleted > 0 || mediaCleanup.failed > 0) {
       summaryParts.push(
         `${mediaCleanup.deleted} media file(s) removed`,
@@ -501,6 +510,8 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       data: {
         mediaFilesDeleted: mediaCleanup.deleted,
         mediaFilesDeleteFailed: mediaCleanup.failed,
+        whatsAppUnlinkAttempted: destroyResult.whatsAppUnlinkAttempted,
+        whatsAppUnlinkSucceeded: destroyResult.whatsAppUnlinkSucceeded,
       },
     });
   } catch (error) {

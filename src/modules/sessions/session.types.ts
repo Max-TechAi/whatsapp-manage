@@ -68,6 +68,14 @@ export interface ActiveSession {
   presenceInterval?: NodeJS.Timeout;
 }
 
+/** Result of tearing down a session (used by DELETE /api/sessions/:id). */
+export interface SessionDestroyResult {
+  /** True when logout() was called on a live Baileys socket */
+  whatsAppUnlinkAttempted: boolean;
+  /** False when logout was attempted but failed/timed out; true when not needed or succeeded */
+  whatsAppUnlinkSucceeded: boolean;
+}
+
 /**
  * Request body for creating a new session.
  */

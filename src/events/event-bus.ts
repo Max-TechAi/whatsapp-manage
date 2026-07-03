@@ -6,6 +6,7 @@
 import { Queue, QueueEvents } from 'bullmq';
 import { queueRedis, redis } from '../config/redis.js';
 import { logger } from '../observability/logger.js';
+import type { SessionDestroyResult } from '../modules/sessions/session.types.js';
 
 /**
  * Helper to generate a safe inbound message jobId for BullMQ.
@@ -235,6 +236,53 @@ export class EventBus {
         },
       }
     );
+  }
+
+  /**
+   * Publish session destroy and wait for the runner to finish (including WhatsApp logout).
+   * Returns a neutral result on timeout when no runner processed the job.
+   */
+  async publishSessionDestroyAndWait(
+    sessionId: string,
+    timeoutMs = 15_000,
+  ): Promise<SessionDestroyResult> {
+    const queueName = `queue-session-${sessionId}-control`;
+    const queue = this.getDynamicQueue(queueName);
+
+    const job = await queue.add(
+      'destroy',
+      { sessionId, action: 'destroy', payload: {}, enqueuedAt: new Date().toISOString() },
+      {
+        attempts: 1,
+        backoff: { type: 'fixed', delay: 2000 },
+      },
+    );
+
+    const events = this.getQueueEvents(queueName);
+
+    try {
+      const returnValue = await job.waitUntilFinished(events, timeoutMs);
+      if (returnValue && typeof returnValue === 'object') {
+        return returnValue as SessionDestroyResult;
+      }
+    } catch (err) {
+      logger.warn('Session destroy control job did not finish in time', {
+        sessionId,
+        jobId: job.id,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
+
+    return { whatsAppUnlinkAttempted: false, whatsAppUnlinkSucceeded: false };
+  }
+
+  private getQueueEvents(queueName: string): QueueEvents {
+    let events = this.queueEvents.get(queueName);
+    if (!events) {
+      events = new QueueEvents(queueName, { connection: queueRedis.duplicate() as any });
+      this.queueEvents.set(queueName, events);
+    }
+    return events;
   }
 
   /**

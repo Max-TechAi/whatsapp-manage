@@ -55,7 +55,7 @@ import { redis, workerRedis } from '../../config/redis.js';
 import { logger } from '../../observability/logger.js';
 import { usePostgresAuthState } from './session.auth-state.js';
 import { SessionEventType, normalizeJid } from './session.events.js';
-import type { ActiveSession, SessionStatus, WhatsAppSession } from './session.types.js';
+import type { ActiveSession, SessionStatus, SessionDestroyResult, WhatsAppSession } from './session.types.js';
 import { saveLidMapping, resolveLidJid } from './lid-mapping.js';
 import { eventBus, STREAMS } from '../../events/event-bus.js';
 
@@ -348,14 +348,24 @@ class SessionManager {
    * and deletes all associated signal protocol keys.
    *
    * @param sessionId - Session to destroy
+   * @param options.unlinkFromWhatsApp - When true (DELETE flow only), call Baileys logout()
+   *   to send remove-companion-device to WhatsApp before closing the socket.
    */
-  async destroySession(sessionId: string): Promise<void> {
+  async destroySession(
+    sessionId: string,
+    options: { unlinkFromWhatsApp?: boolean } = {},
+  ): Promise<SessionDestroyResult> {
+    const destroyResult: SessionDestroyResult = {
+      whatsAppUnlinkAttempted: false,
+      whatsAppUnlinkSucceeded: true,
+    };
+
     // Add guard to prevent invalid/null UUID check crashes in PostgreSQL
     if (!isValidUuid(sessionId)) {
       logger.warn('destroySession skipped for invalid sessionId', { sessionId, stack: new Error().stack });
-      return;
+      return destroyResult;
     }
-    logger.info('Destroying session', { sessionId });
+    logger.info('Destroying session', { sessionId, unlinkFromWhatsApp: !!options.unlinkFromWhatsApp });
 
     // Clear reconnection and sync timeouts
     const reconnectTimeout = this.pendingReconnects.get(sessionId);
@@ -365,25 +375,31 @@ class SessionManager {
     }
     this.clearSyncTimeout(sessionId);
 
-    // Close the socket if active
+    // Unlink from WhatsApp / close the socket if active
     const active = this.activeSessions.get(sessionId);
-    if (active) {
+    if (active?.socket) {
+      if (options.unlinkFromWhatsApp) {
+        destroyResult.whatsAppUnlinkAttempted = true;
+        destroyResult.whatsAppUnlinkSucceeded = await this.unlinkSessionFromWhatsApp(
+          sessionId,
+          active.socket,
+        );
+      }
+
       try {
-        active.socket.ev.removeAllListeners('connection.update');
-        active.socket.ev.removeAllListeners('creds.update');
-        active.socket.ev.removeAllListeners('messages.upsert');
-        active.socket.ev.removeAllListeners('call');
-        active.socket.ev.removeAllListeners('messages.update');
-        active.socket.ev.removeAllListeners('message-receipt.update');
-        active.socket.ev.removeAllListeners('messaging-history.set');
-        active.socket.end(undefined);
+        this.detachSocketListeners(active.socket);
+        if (!options.unlinkFromWhatsApp || !destroyResult.whatsAppUnlinkSucceeded) {
+          active.socket.end(undefined);
+        }
       } catch (error) {
         logger.warn('Error closing socket during destroy', {
           sessionId,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
       }
-      this.removeActiveSession(sessionId);
+
+      this.clearPresenceKeepAlive(active);
+      this.activeSessions.delete(sessionId);
     }
 
     // Update DB status
@@ -419,6 +435,42 @@ class SessionManager {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+
+    return destroyResult;
+  }
+
+  /**
+   * Send WhatsApp remove-companion-device via Baileys logout().
+   * Distinct from socket.end() — notifies the phone to drop this linked device.
+   */
+  private async unlinkSessionFromWhatsApp(sessionId: string, socket: WASocket): Promise<boolean> {
+    const LOGOUT_TIMEOUT_MS = 10_000;
+    try {
+      await Promise.race([
+        socket.logout(),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('WhatsApp logout timed out')), LOGOUT_TIMEOUT_MS);
+        }),
+      ]);
+      logger.info('WhatsApp companion device unlinked via logout()', { sessionId });
+      return true;
+    } catch (error) {
+      logger.warn('WhatsApp logout() failed during session destroy', {
+        sessionId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return false;
+    }
+  }
+
+  private detachSocketListeners(socket: WASocket): void {
+    socket.ev.removeAllListeners('connection.update');
+    socket.ev.removeAllListeners('creds.update');
+    socket.ev.removeAllListeners('messages.upsert');
+    socket.ev.removeAllListeners('call');
+    socket.ev.removeAllListeners('messages.update');
+    socket.ev.removeAllListeners('message-receipt.update');
+    socket.ev.removeAllListeners('messaging-history.set');
   }
 
   /**
@@ -1991,7 +2043,7 @@ class SessionManager {
           await this.forceTerminateSocket(sessionId);
           await this.initializeSocket(sessionId, orgId);
         } else if (action === 'destroy') {
-          await this.destroySession(sessionId);
+          return await this.destroySession(sessionId, { unlinkFromWhatsApp: true });
         } else if (action === 'reset-contact-session') {
           const active = this.activeSessions.get(sessionId);
           if (active && active.socket) {
