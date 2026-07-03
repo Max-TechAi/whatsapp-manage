@@ -45,6 +45,7 @@ export type SessionStatus =
   | 'connecting'
   | 'connected'
   | 'disconnected'
+  | 'connection_failed'
   | 'banned';
 
 /**

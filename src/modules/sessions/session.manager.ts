@@ -122,6 +122,9 @@ class SessionManager {
   /** Map of sessionId → scheduled reconnect Timeout */
   private pendingReconnects: Map<string, NodeJS.Timeout> = new Map();
 
+  /** Map of sessionId → consecutive reconnect attempts (persists across socket instances) */
+  private sessionRetryCounts: Map<string, number> = new Map();
+
   /** Map of sessionId → consecutive saveCreds failures */
   private saveCredsFailures: Map<string, number> = new Map();
 
@@ -374,6 +377,8 @@ class SessionManager {
       this.pendingReconnects.delete(sessionId);
     }
     this.clearSyncTimeout(sessionId);
+
+    this.clearSessionRetryCount(sessionId);
 
     // Unlink from WhatsApp / close the socket if active
     const active = this.activeSessions.get(sessionId);
@@ -629,10 +634,10 @@ class SessionManager {
       if (connection === 'open') {
         const active = this.activeSessions.get(sessionId);
         if (active) {
-          active.retryCount = 0;
           active.lastRetry = null;
           this.setupPresenceKeepAlive(active);
         }
+        this.clearSessionRetryCount(sessionId);
 
         // Clear any pending reconnects
         const reconnectTimeout = this.pendingReconnects.get(sessionId);
@@ -696,6 +701,8 @@ class SessionManager {
         const isBanned = statusCode === 401;
 
         if (isLoggedOut || isBanned) {
+          this.clearSessionRetryCount(sessionId);
+
           // Terminal state — user logged out or account banned
           const terminalStatus: SessionStatus = isBanned ? 'banned' : 'disconnected';
 
@@ -739,77 +746,69 @@ class SessionManager {
           });
         } else {
           // Retryable disconnection — attempt reconnection with backoff
-          const active = this.activeSessions.get(sessionId);
-          const retryCount = active ? active.retryCount + 1 : 1;
+          const retryCount = this.incrementSessionRetryCount(sessionId);
 
-          if (retryCount <= MAX_RETRIES) {
-            const delay = this.computeReconnectDelayMs(retryCount);
-
-            if (active) {
-              active.retryCount = retryCount;
-              active.lastRetry = new Date();
-            }
-
-            await this.updateSessionStatus(sessionId, 'disconnected');
-
-            logger.info('Scheduling reconnection', {
-              sessionId,
-              retryCount,
-              delayMs: delay,
-              statusCode,
-            });
-
-            // Deduplicate reconnection schedule
-            if (this.pendingReconnects.has(sessionId)) {
-              logger.info('Reconnection already scheduled for session', { sessionId });
-              return;
-            }
-
-            // Schedule reconnection after backoff delay
-            const timeout = setTimeout(async () => {
-              try {
-                this.pendingReconnects.delete(sessionId);
-                
-                // End the old socket and remove its event listeners to prevent any background reconnects/leaks,
-                // but DO NOT clear lock renewal or watchdog yet, as they need to remain active in case initialization hangs.
-                const active = this.activeSessions.get(sessionId);
-                if (active) {
-                  try {
-                    active.socket.ev.removeAllListeners('connection.update');
-                    active.socket.ev.removeAllListeners('creds.update');
-                    active.socket.ev.removeAllListeners('messages.upsert');
-                    active.socket.ev.removeAllListeners('call');
-                    active.socket.ev.removeAllListeners('messages.update');
-                    active.socket.ev.removeAllListeners('message-receipt.update');
-                    active.socket.ev.removeAllListeners('messaging-history.set');
-                    active.socket.end(undefined);
-                  } catch (err) {
-                    logger.warn('Error closing stale socket during reconnect', { sessionId, error: (err as Error).message });
-                  }
-                  this.activeSessions.delete(sessionId);
-                }
-
-                await this.initializeSocket(sessionId, orgId);
-              } catch (error) {
-                logger.error('Reconnection failed', {
-                  sessionId,
-                  retryCount,
-                  error:
-                    error instanceof Error ? error.message : 'Unknown error',
-                });
-              }
-            }, delay);
-            this.pendingReconnects.set(sessionId, timeout);
-          } else {
-            // Exhausted retries
-            await this.updateSessionStatus(sessionId, 'disconnected');
-            this.removeActiveSession(sessionId);
-
-            logger.error('Max reconnection attempts reached', {
-              sessionId,
-              maxRetries: MAX_RETRIES,
-            });
+          if (retryCount > MAX_RETRIES) {
+            await this.terminateSessionDueToMaxRetries(sessionId, orgId, statusCode, retryCount);
+            return;
           }
+
+          const delay = this.computeReconnectDelayMs(retryCount);
+          const active = this.activeSessions.get(sessionId);
+          if (active) {
+            active.lastRetry = new Date();
+          }
+
+          await this.updateSessionStatus(sessionId, 'disconnected');
+
+          logger.info('Scheduling reconnection', {
+            sessionId,
+            retryCount,
+            delayMs: delay,
+            statusCode,
+          });
+
+          // Deduplicate reconnection schedule
+          if (this.pendingReconnects.has(sessionId)) {
+            logger.info('Reconnection already scheduled for session', { sessionId });
+            return;
+          }
+
+          // Schedule reconnection after backoff delay
+          const timeout = setTimeout(async () => {
+            try {
+              this.pendingReconnects.delete(sessionId);
+
+              // End the old socket and remove its event listeners to prevent any background reconnects/leaks,
+              // but DO NOT clear lock renewal or watchdog yet, as they need to remain active in case initialization hangs.
+              const active = this.activeSessions.get(sessionId);
+              if (active) {
+                try {
+                  active.socket.ev.removeAllListeners('connection.update');
+                  active.socket.ev.removeAllListeners('creds.update');
+                  active.socket.ev.removeAllListeners('messages.upsert');
+                  active.socket.ev.removeAllListeners('call');
+                  active.socket.ev.removeAllListeners('messages.update');
+                  active.socket.ev.removeAllListeners('message-receipt.update');
+                  active.socket.ev.removeAllListeners('messaging-history.set');
+                  active.socket.end(undefined);
+                } catch (err) {
+                  logger.warn('Error closing stale socket during reconnect', { sessionId, error: (err as Error).message });
+                }
+                this.activeSessions.delete(sessionId);
+              }
+
+              await this.initializeSocket(sessionId, orgId);
+            } catch (error) {
+              logger.error('Reconnection failed', {
+                sessionId,
+                retryCount,
+                error:
+                  error instanceof Error ? error.message : 'Unknown error',
+              });
+            }
+          }, delay);
+          this.pendingReconnects.set(sessionId, timeout);
         }
       }
     });
@@ -1247,6 +1246,134 @@ class SessionManager {
     const flooredDelay = Math.max(MIN_RECONNECT_DELAY_MS, baseDelay);
     const jitter = 0.8 + Math.random() * 0.4;
     return Math.round(flooredDelay * jitter);
+  }
+
+  private getSessionRetryCount(sessionId: string): number {
+    return this.sessionRetryCounts.get(sessionId) ?? 0;
+  }
+
+  private incrementSessionRetryCount(sessionId: string): number {
+    const next = this.getSessionRetryCount(sessionId) + 1;
+    this.sessionRetryCounts.set(sessionId, next);
+    return next;
+  }
+
+  private clearSessionRetryCount(sessionId: string): void {
+    this.sessionRetryCounts.delete(sessionId);
+  }
+
+  /**
+   * Stop retrying after MAX_RETRIES consecutive disconnects.
+   * Clears partial auth state when the session never paired successfully.
+   */
+  private async terminateSessionDueToMaxRetries(
+    sessionId: string,
+    orgId: string,
+    statusCode: number | undefined,
+    retryCount: number,
+  ): Promise<void> {
+    if (!isValidUuid(sessionId)) return;
+
+    const reconnectTimeout = this.pendingReconnects.get(sessionId);
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      this.pendingReconnects.delete(sessionId);
+    }
+
+    logger.error('Max reconnection attempts reached — giving up', {
+      sessionId,
+      orgId,
+      retryCount,
+      maxRetries: MAX_RETRIES,
+      statusCode,
+    });
+
+    const [sessionRow] = await db
+      .select({
+        lastConnectedAt: sessions.lastConnectedAt,
+        phoneNumber: sessions.phoneNumber,
+        metadata: sessions.metadata,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+
+    const neverPaired = !sessionRow?.lastConnectedAt && !sessionRow?.phoneNumber;
+    const errorPayload = {
+      connectionFailed: true,
+      connectionFailedAt: new Date().toISOString(),
+      lastDisconnectStatusCode: statusCode ?? null,
+      connectionRetryCount: retryCount,
+    };
+    const metadata = {
+      ...((sessionRow?.metadata || {}) as Record<string, unknown>),
+      ...errorPayload,
+    };
+
+    await db
+      .update(sessions)
+      .set({
+        status: 'connection_failed',
+        qrCode: null,
+        ...(neverPaired ? { authCreds: null } : {}),
+        metadata,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessions.id, sessionId));
+
+    if (neverPaired) {
+      try {
+        await db.delete(sessionKeys).where(eq(sessionKeys.sessionId, sessionId));
+        logger.warn('Cleared partial auth state for never-paired session after max retries', {
+          sessionId,
+        });
+      } catch (err) {
+        logger.error('Failed to clear session keys after max retries', {
+          sessionId,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    await eventBus.publishToStream(STREAMS.SESSIONS, 'session:status', {
+      sessionId,
+      orgId,
+      status: 'connection_failed',
+      connectionFailed: true,
+      message:
+        'Could not connect to WhatsApp after multiple attempts. Use Restart on the Sessions tab and try again.',
+    });
+
+    this.clearSessionRetryCount(sessionId);
+    await this.forceTerminateSocket(sessionId);
+  }
+
+  /**
+   * Reset retry counters and connection_failed metadata before a manual restart.
+   */
+  private async prepareSessionForManualRestart(sessionId: string): Promise<void> {
+    this.clearSessionRetryCount(sessionId);
+
+    const [sessionRow] = await db
+      .select({ metadata: sessions.metadata })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+
+    const metadata = { ...((sessionRow?.metadata || {}) as Record<string, unknown>) };
+    delete metadata.connectionFailed;
+    delete metadata.connectionFailedAt;
+    delete metadata.lastDisconnectStatusCode;
+    delete metadata.connectionRetryCount;
+
+    await db
+      .update(sessions)
+      .set({
+        status: 'initializing',
+        metadata,
+        updatedAt: new Date(),
+      })
+      .where(eq(sessions.id, sessionId));
   }
 
   /**
@@ -2040,6 +2167,7 @@ class SessionManager {
         logger.info('Dynamic control worker processing job', { jobId: job.id, sessionId, action });
         
         if (action === 'restart') {
+          await this.prepareSessionForManualRestart(sessionId);
           await this.forceTerminateSocket(sessionId);
           await this.initializeSocket(sessionId, orgId);
         } else if (action === 'destroy') {

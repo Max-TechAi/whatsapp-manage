@@ -70,7 +70,7 @@ async function runReconciliation(): Promise<void> {
 
     for (const session of sessionsToReconcile) {
       const metadata = (session.metadata || {}) as Record<string, unknown>;
-      if (metadata.authStateError) {
+      if (metadata.authStateError || metadata.connectionFailed) {
         continue;
       }
 

@@ -503,7 +503,7 @@ function renderSessionsTable(sessions) {
     else if (s.status === 'qr_pending') statusClass += ' qr_pending';
     else statusClass += ' disconnected';
 
-    const showQrButton = s.status === 'qr_pending' || s.status === 'initializing' || s.status === 'disconnected';
+    const showQrButton = s.status === 'qr_pending' || s.status === 'initializing' || s.status === 'disconnected' || s.status === 'connection_failed';
 
     return `
       <tr>
@@ -636,6 +636,15 @@ async function checkQrConnectionStatus() {
       if (status === 'connected') {
         setQrModalStatus('WhatsApp Connected Successfully!', 'success');
         setTimeout(closeQrModal, 1500);
+      } else if (status === 'connection_failed') {
+        setQrModalStatus(
+          'Connection failed after multiple attempts. Close this dialog, click Restart on the session, then try Get QR again.',
+          'error',
+        );
+        if (qrPollInterval) {
+          clearInterval(qrPollInterval);
+          qrPollInterval = null;
+        }
       } else {
         setQrModalStatus('Waiting for WhatsApp backend initialization...', 'info');
       }
@@ -2187,6 +2196,17 @@ function handleWsEvent(data) {
   if (type === 'session:status') {
     loadSessions();
     if (currentQrSessionId === sessionId) {
+      if (data.status === 'connection_failed' || data.connectionFailed) {
+        setQrModalStatus(
+          data.message || 'Connection failed after multiple attempts. Use Restart on the Sessions tab and try again.',
+          'error',
+        );
+        if (qrPollInterval) {
+          clearInterval(qrPollInterval);
+          qrPollInterval = null;
+        }
+        return;
+      }
       checkQrConnectionStatus();
     }
   }

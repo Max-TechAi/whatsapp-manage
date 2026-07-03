@@ -1723,6 +1723,10 @@ tr:last-child td {
   color: var(--accent-green);
 }
 
+.modal-status--error {
+  color: var(--danger, #ef4444);
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
