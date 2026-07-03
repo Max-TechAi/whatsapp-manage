@@ -74,6 +74,9 @@ const MAX_RETRY_DELAY_MS = 300_000;
 /** Minimum first reconnect delay (ms) — avoids aggressive 1s retry */
 const MIN_RECONNECT_DELAY_MS = 3000;
 
+/** Minimum reconnect delay for never-paired sessions (ms) — reduces 428 rate-limit loops */
+const NEVER_PAIRED_RECONNECT_DELAY_MS = 8000;
+
 /** Consecutive saveCreds failures before terminating session */
 const SAVE_CREDS_MAX_FAILURES = 3;
 
@@ -287,19 +290,28 @@ class SessionManager {
       // Get latest Baileys version for maximum compatibility
       const { version } = await fetchLatestBaileysVersion();
 
-      // Read historySyncCompleted from session metadata to prevent Baileys from requesting history again
+      // Read session pairing/history state before opening the socket
       const [sessionRecord] = await db
-        .select({ metadata: sessions.metadata })
+        .select({
+          metadata: sessions.metadata,
+          lastConnectedAt: sessions.lastConnectedAt,
+          phoneNumber: sessions.phoneNumber,
+        })
         .from(sessions)
         .where(eq(sessions.id, sessionId))
         .limit(1);
       const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
       const historySyncCompleted = !!metadata.historySyncCompleted;
+      const neverPaired = !sessionRecord?.lastConnectedAt && !sessionRecord?.phoneNumber;
+      // History sync before first pairing can cause immediate 428 disconnects (no QR)
+      const enableHistorySync = !neverPaired && !historySyncCompleted;
 
       logger.info('Initializing Baileys socket', {
         sessionId,
         baileysVersion: version.join('.'),
         historySyncCompleted,
+        neverPaired,
+        enableHistorySync,
       });
 
       // Create the Baileys socket with production-optimized settings
@@ -311,8 +323,9 @@ class SessionManager {
         printQRInTerminal: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
-        syncFullHistory: !historySyncCompleted,
-        shouldSyncHistoryMessage: () => !historySyncCompleted,
+        connectTimeoutMs: 60_000,
+        syncFullHistory: enableHistorySync,
+        shouldSyncHistoryMessage: () => enableHistorySync,
       });
 
       // Wire up all Baileys event handlers
@@ -759,7 +772,16 @@ class SessionManager {
             return;
           }
 
-          const delay = isRestartRequired ? 0 : this.computeReconnectDelayMs(retryCount);
+          const neverPaired = await this.isNeverPairedSession(sessionId);
+          if (neverPaired) {
+            await this.clearPartialAuthForNeverPairedSession(sessionId);
+          }
+
+          let delay = isRestartRequired ? 0 : this.computeReconnectDelayMs(retryCount);
+          if (neverPaired && statusCode === DisconnectReason.connectionClosed) {
+            delay = Math.max(delay, NEVER_PAIRED_RECONNECT_DELAY_MS);
+          }
+
           const active = this.activeSessions.get(sessionId);
           if (active) {
             active.lastRetry = new Date();
@@ -767,11 +789,13 @@ class SessionManager {
 
           await this.updateSessionStatus(sessionId, 'disconnected');
 
-          logger.info('Scheduling reconnection', {
+          logger.warn('WhatsApp connection closed — scheduling reconnection', {
             sessionId,
+            statusCode,
+            reason: (lastDisconnect?.error as Boom)?.message,
             retryCount,
             delayMs: delay,
-            statusCode,
+            neverPaired,
           });
 
           // Deduplicate reconnection schedule
@@ -822,6 +846,10 @@ class SessionManager {
     // ── Credential Updates ────────────────────────────────────────────
 
     socket.ev.on('creds.update', async () => {
+      if (this.activeSessions.get(sessionId)?.socket !== socket) {
+        return;
+      }
+
       try {
         await saveCreds();
         this.saveCredsFailures.delete(sessionId);
@@ -1258,6 +1286,19 @@ class SessionManager {
    * Never-paired sessions can accumulate partial auth_creds/session_keys after
    * failed connects; Baileys then skips QR and retries login indefinitely.
    */
+  private async isNeverPairedSession(sessionId: string): Promise<boolean> {
+    const [row] = await db
+      .select({
+        lastConnectedAt: sessions.lastConnectedAt,
+        phoneNumber: sessions.phoneNumber,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+
+    return !row?.lastConnectedAt && !row?.phoneNumber;
+  }
+
   private async clearPartialAuthForNeverPairedSession(sessionId: string): Promise<void> {
     const [row] = await db
       .select({
@@ -1282,7 +1323,7 @@ class SessionManager {
         .set({ authCreds: null, qrCode: null, updatedAt: new Date() })
         .where(eq(sessions.id, sessionId));
 
-      logger.info('Cleared partial auth credentials for never-paired session before socket init', {
+      logger.info('Cleared partial auth credentials for never-paired session', {
         sessionId,
       });
     }
