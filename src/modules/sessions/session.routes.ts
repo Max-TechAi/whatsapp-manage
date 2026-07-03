@@ -19,13 +19,14 @@ import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 
 import { db } from '../../config/database.js';
-import { sessions, chats } from '../../db/schema.js';
+import { sessions, chats, messages, mediaFiles } from '../../db/schema.js';
 import { authenticate } from '../auth/auth.middleware.js';
 import { sessionManager, updateSyncProgress, isValidUuid } from './session.manager.js';
 import { logger } from '../../observability/logger.js';
 import { redis } from '../../config/redis.js';
 import { resolveLidJid } from './lid-mapping.js';
 import { eventBus } from '../../events/event-bus.js';
+import { mediaService } from '../media/media.service.js';
 import type { SessionStatus } from './session.types.js';
 
 /** Request body schema for session creation */
@@ -461,14 +462,46 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
     // Delete ownership lock immediately to force self-termination if runner missed command
     await redis.del(`session:${sessionId}:owner`).catch(() => {});
 
+    // Remove MinIO blobs + media_files rows BEFORE session CASCADE deletes messages
+    // (after CASCADE, message_id is SET NULL and session linkage is lost)
+    const mediaCleanup = await deleteSessionMediaFiles(sessionId, orgId);
+
     // Delete the session record itself (cascades to signal keys, chats, messages)
     await db
       .delete(sessions)
       .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)));
 
+    const summaryParts = ['Session deleted permanently'];
+    if (mediaCleanup.deleted > 0 || mediaCleanup.failed > 0) {
+      summaryParts.push(
+        `${mediaCleanup.deleted} media file(s) removed`,
+        mediaCleanup.failed > 0 ? `${mediaCleanup.failed} media file(s) failed to delete from storage` : '',
+      );
+    }
+    const message = summaryParts.filter(Boolean).join('; ');
+
+    if (mediaCleanup.failed > 0) {
+      logger.warn('Session deleted with partial media cleanup failures', {
+        sessionId,
+        orgId,
+        mediaFilesDeleted: mediaCleanup.deleted,
+        mediaFilesDeleteFailed: mediaCleanup.failed,
+      });
+    } else if (mediaCleanup.deleted > 0) {
+      logger.info('Session deleted with media cleanup', {
+        sessionId,
+        orgId,
+        mediaFilesDeleted: mediaCleanup.deleted,
+      });
+    }
+
     res.status(200).json({
       success: true,
-      message: 'Session deleted permanently',
+      message,
+      data: {
+        mediaFilesDeleted: mediaCleanup.deleted,
+        mediaFilesDeleteFailed: mediaCleanup.failed,
+      },
     });
   } catch (error) {
     logger.error('Failed to delete session', {
@@ -689,3 +722,39 @@ router.get('/:id/lid-mappings', async (req: Request, res: Response): Promise<voi
 });
 
 export default router;
+
+/**
+ * Delete all media files linked to messages in a session (MinIO + DB).
+ * Must run before the session row is deleted so message joins still work.
+ */
+async function deleteSessionMediaFiles(
+  sessionId: string,
+  orgId: string,
+): Promise<{ deleted: number; failed: number }> {
+  const rows = await db
+    .select({ id: mediaFiles.id })
+    .from(mediaFiles)
+    .innerJoin(messages, eq(mediaFiles.messageId, messages.id))
+    .where(and(eq(messages.sessionId, sessionId), eq(messages.orgId, orgId)));
+
+  const uniqueFileIds = [...new Set(rows.map((row) => row.id))];
+  let deleted = 0;
+  let failed = 0;
+
+  for (const fileId of uniqueFileIds) {
+    try {
+      await mediaService.deleteFile(fileId);
+      deleted++;
+    } catch (err) {
+      failed++;
+      logger.warn('Failed to delete media file during session deletion', {
+        sessionId,
+        orgId,
+        fileId,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
+  }
+
+  return { deleted, failed };
+}

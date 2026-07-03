@@ -16,6 +16,8 @@
     "db:migrate:prod": "node dist/db/migrate.js",
     "db:cleanup-lid": "tsx --env-file=.env src/scripts/cleanup-lid-duplicates.ts",
     "db:cleanup-lid:prod": "node dist/scripts/cleanup-lid-duplicates.js",
+    "db:cleanup-orphaned-media": "tsx --env-file=.env src/scripts/cleanup-orphaned-media.ts",
+    "db:cleanup-orphaned-media:prod": "node dist/scripts/cleanup-orphaned-media.js",
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
