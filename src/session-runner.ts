@@ -66,7 +66,7 @@ async function runReconciliation(): Promise<void> {
     const sessionsToReconcile = await db
       .select({ id: sessions.id, orgId: sessions.orgId, status: sessions.status, metadata: sessions.metadata })
       .from(sessions)
-      .where(inArray(sessions.status, ['connected', 'disconnected', 'connecting', 'qr_pending']));
+      .where(inArray(sessions.status, ['connected', 'disconnected', 'connecting', 'qr_pending', 'initializing']));
 
     for (const session of sessionsToReconcile) {
       const metadata = (session.metadata || {}) as Record<string, unknown>;

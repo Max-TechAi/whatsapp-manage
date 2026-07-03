@@ -592,10 +592,22 @@ function setQrModalStatus(text, variant = 'info') {
   el.className = `modal-status modal-status--${variant}`;
 }
 
+function resetQrModalImage() {
+  const img = document.getElementById('qrModalImage');
+  img.removeAttribute('src');
+  img.hidden = true;
+}
+
+function showQrModalImage(dataUrl) {
+  const img = document.getElementById('qrModalImage');
+  img.src = dataUrl;
+  img.hidden = false;
+}
+
 function openQrModal(sessionId, sessionName) {
   currentQrSessionId = sessionId;
   document.getElementById('qrModalTitle').textContent = `Link ${sessionName}`;
-  document.getElementById('qrModalImage').src = '';
+  resetQrModalImage();
   setQrModalStatus('Generating QR code...', 'info');
   document.getElementById('qrModalOverlay').classList.add('active');
 
@@ -622,16 +634,18 @@ async function checkQrConnectionStatus() {
 
   try {
     const response = await fetch(`/api/sessions/${currentQrSessionId}/qr`, {
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { 'Authorization': `Bearer ${token}` },
+      cache: 'no-store',
     });
     
     if (response.status === 204) {
       // Connected or QR not ready yet
       const sessionResponse = await fetch(`/api/sessions/${currentQrSessionId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${token}` },
+        cache: 'no-store',
       });
       const sessionData = await sessionResponse.json();
-      const status = sessionData.data.status;
+      const status = sessionData.data?.liveStatus ?? sessionData.data?.status;
 
       if (status === 'connected') {
         setQrModalStatus('WhatsApp Connected Successfully!', 'success');
@@ -653,7 +667,7 @@ async function checkQrConnectionStatus() {
 
     const resData = await response.json();
     if (resData.success && resData.data.qr) {
-      document.getElementById('qrModalImage').src = resData.data.qr;
+      showQrModalImage(resData.data.qr);
       setQrModalStatus('Waiting for scan...', 'info');
     }
   } catch (err) {

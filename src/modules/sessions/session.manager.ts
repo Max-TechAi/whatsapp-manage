@@ -278,6 +278,9 @@ class SessionManager {
         this.removeActiveSession(sessionId);
       }
 
+      // Partial creds from a failed pairing block QR emission — wipe before loading auth state
+      await this.clearPartialAuthForNeverPairedSession(sessionId);
+
       // Load encrypted auth state from database
       const { state, saveCreds } = await usePostgresAuthState(sessionId);
 
@@ -746,14 +749,17 @@ class SessionManager {
           });
         } else {
           // Retryable disconnection — attempt reconnection with backoff
-          const retryCount = this.incrementSessionRetryCount(sessionId);
+          const isRestartRequired = statusCode === DisconnectReason.restartRequired;
+          const retryCount = isRestartRequired
+            ? this.getSessionRetryCount(sessionId)
+            : this.incrementSessionRetryCount(sessionId);
 
-          if (retryCount > MAX_RETRIES) {
+          if (!isRestartRequired && retryCount > MAX_RETRIES) {
             await this.terminateSessionDueToMaxRetries(sessionId, orgId, statusCode, retryCount);
             return;
           }
 
-          const delay = this.computeReconnectDelayMs(retryCount);
+          const delay = isRestartRequired ? 0 : this.computeReconnectDelayMs(retryCount);
           const active = this.activeSessions.get(sessionId);
           if (active) {
             active.lastRetry = new Date();
@@ -1246,6 +1252,40 @@ class SessionManager {
     const flooredDelay = Math.max(MIN_RECONNECT_DELAY_MS, baseDelay);
     const jitter = 0.8 + Math.random() * 0.4;
     return Math.round(flooredDelay * jitter);
+  }
+
+  /**
+   * Never-paired sessions can accumulate partial auth_creds/session_keys after
+   * failed connects; Baileys then skips QR and retries login indefinitely.
+   */
+  private async clearPartialAuthForNeverPairedSession(sessionId: string): Promise<void> {
+    const [row] = await db
+      .select({
+        lastConnectedAt: sessions.lastConnectedAt,
+        phoneNumber: sessions.phoneNumber,
+        authCreds: sessions.authCreds,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .limit(1);
+
+    if (!row) return;
+
+    const neverPaired = !row.lastConnectedAt && !row.phoneNumber;
+    if (!neverPaired) return;
+
+    await db.delete(sessionKeys).where(eq(sessionKeys.sessionId, sessionId));
+
+    if (row.authCreds) {
+      await db
+        .update(sessions)
+        .set({ authCreds: null, qrCode: null, updatedAt: new Date() })
+        .where(eq(sessions.id, sessionId));
+
+      logger.info('Cleared partial auth credentials for never-paired session before socket init', {
+        sessionId,
+      });
+    }
   }
 
   private getSessionRetryCount(sessionId: string): number {

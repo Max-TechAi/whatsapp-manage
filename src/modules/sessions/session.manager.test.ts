@@ -7,6 +7,7 @@ import { redis } from '../../config/redis.js';
 vi.mock('../../config/database.js', () => {
   const dbMock = {
     update: vi.fn(),
+    delete: vi.fn(),
     set: vi.fn(),
     where: vi.fn(),
     select: vi.fn(),
@@ -108,6 +109,7 @@ describe('SessionManager Watchdog Timer', () => {
 
     // Re-apply database mock implementations before each test with type assertions
     vi.mocked((db as any).update).mockReturnValue(db as any);
+    vi.mocked((db as any).delete).mockReturnValue(db as any);
     vi.mocked((db as any).set).mockReturnValue(db as any);
     vi.mocked((db as any).where).mockReturnValue(db as any);
     vi.mocked((db as any).select).mockReturnValue(db as any);
@@ -121,8 +123,15 @@ describe('SessionManager Watchdog Timer', () => {
       if (callCount === 1) {
         // First select in restoreAllSessions returns the list of sessions
         return Promise.resolve([{ id: sessionId, orgId: orgId }]).then(onFulfilled);
+      } else if (callCount === 2) {
+        // clearPartialAuthForNeverPairedSession — paired session, skip wipe
+        return Promise.resolve([{
+          lastConnectedAt: new Date(),
+          phoneNumber: '1234567890',
+          authCreds: null,
+        }]).then(onFulfilled);
       } else {
-        // Second select in initializeSocket returns session metadata
+        // initializeSocket metadata select
         return Promise.resolve([{ metadata: { historySyncCompleted: true } }]).then(onFulfilled);
       }
     };

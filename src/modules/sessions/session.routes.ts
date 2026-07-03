@@ -29,6 +29,19 @@ import { eventBus } from '../../events/event-bus.js';
 import { mediaService } from '../media/media.service.js';
 import type { SessionStatus } from './session.types.js';
 
+const TRANSITIONAL_SESSION_STATUSES: SessionStatus[] = ['initializing', 'qr_pending', 'connecting'];
+
+function setNoStore(res: Response): void {
+  res.set('Cache-Control', 'no-store');
+}
+
+function resolveLiveStatus(dbStatus: SessionStatus, hasRunnerOwner: boolean): SessionStatus {
+  if (hasRunnerOwner || TRANSITIONAL_SESSION_STATUSES.includes(dbStatus)) {
+    return dbStatus;
+  }
+  return 'disconnected';
+}
+
 /** Request body schema for session creation */
 const createSessionSchema = z.object({
   sessionName: z
@@ -263,8 +276,10 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 
     const sessionData = session[0];
     const owner = await redis.get(`session:${sessionId}:owner`).catch(() => null);
-    const liveStatus: SessionStatus = owner ? (sessionData.status as SessionStatus) : 'disconnected';
+    const dbStatus = sessionData.status as SessionStatus;
+    const liveStatus = resolveLiveStatus(dbStatus, !!owner);
 
+    setNoStore(res);
     res.status(200).json({
       success: true,
       data: {
@@ -308,6 +323,7 @@ router.get('/:id/qr', async (req: Request, res: Response): Promise<void> => {
 
     // If already connected or no QR available, return 204
     if (status === 'connected' || !qrCode) {
+      setNoStore(res);
       res.status(204).json({
         success: true,
         data: {
@@ -319,6 +335,7 @@ router.get('/:id/qr', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    setNoStore(res);
     res.status(200).json({
       success: true,
       data: {
