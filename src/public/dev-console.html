@@ -238,19 +238,23 @@
       <div class="task-block">
         <h3>
           <span class="method method-post">POST</span>
-          <code class="endpoint-path">/api/messages</code>
+          <code class="endpoint-path">/api/send-message</code>
         </h3>
         <p>Send a text message to one person or to a WhatsApp group. The message is queued and delivered through your linked WhatsApp number.</p>
-        <pre class="doc-pre">curl -X POST "https://YOUR_HOST/api/messages" \
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+          <code>POST /api/messages</code> is an equivalent alias — same handler, same behavior.
+        </p>
+        <pre class="doc-pre">curl -X POST "https://YOUR_HOST/api/send-message" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "sessionId": "YOUR_SESSION_ID",
-    "recipientJid": "RECIPIENT_JID_OR_GROUP_ID",
+    "recipientJid": "966500000000",
     "body": "YOUR_MESSAGE_TEXT"
   }'</pre>
         <p style="font-size: 0.85rem; color: var(--text-muted);">
-          <strong>recipientJid:</strong> for a person use their number with <code>@s.whatsapp.net</code> (e.g. <code>966500000000@s.whatsapp.net</code>).
+          <strong>recipientJid:</strong> for a person, you can use just their phone number (e.g. <code>966500000000</code> or <code>+966500000000</code>)
+          OR the full format <code>966500000000@s.whatsapp.net</code>.
           For a group, use the group <code>id</code> from the groups list below (it already ends with <code>@g.us</code>).
         </p>
         <p style="font-size: 0.85rem; color: var(--text-muted);"><strong>Example response (202):</strong></p>

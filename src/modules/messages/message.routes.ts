@@ -2,7 +2,7 @@
  * Message Routes — REST API for message operations.
  */
 
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { messageService } from './message.service.js';
 import { messageSyncService } from './message.sync.js';
@@ -21,34 +21,53 @@ export const messageRouter = Router();
 // All routes require authentication
 messageRouter.use(authenticate);
 
+const sendMessageBodySchema = z.object({
+  sessionId: z.string().uuid(),
+  recipientJid: z
+    .string()
+    .min(1)
+    .transform(normalizeRecipientJid)
+    .refine((jid) => jid.indexOf('@') > 0, {
+      message: 'recipientJid must be a valid phone number or WhatsApp JID',
+    }),
+  body: z.string().optional(),
+  messageType: z.enum(['text', 'image', 'video', 'audio', 'document']).default('text'),
+  mediaUrl: z.string().url().optional(),
+  mediaMimeType: z.string().optional(),
+  mediaSize: z.number().optional(),
+  filename: z.string().optional(),
+  quotedMessageId: z.string().uuid().optional(),
+  forwardMessageId: z.string().uuid().optional(),
+});
+
 /**
- * POST /api/messages
+ * Normalize recipientJid for outbound messages.
+ * Full JIDs (containing @) are unchanged. Raw phone numbers get digits-only + @s.whatsapp.net.
+ */
+export function normalizeRecipientJid(recipientJid: string): string {
+  const trimmed = recipientJid.trim();
+  if (trimmed.includes('@')) {
+    return trimmed;
+  }
+  const digits = trimmed.replace(/\D/g, '');
+  return digits ? `${digits}@s.whatsapp.net` : trimmed;
+}
+
+/**
+ * POST /api/messages  |  POST /api/send-message (alias)
  * Send/queue a message to a WhatsApp JID or phone number.
  */
-messageRouter.post('/', async (req, res) => {
+export async function sendMessageHandler(req: Request, res: Response) {
   try {
     const orgId = req.user!.orgId;
-    const schema = z.object({
-      sessionId: z.string().uuid(),
-      recipientJid: z.string().min(1),
-      body: z.string().optional(),
-      messageType: z.enum(['text', 'image', 'video', 'audio', 'document']).default('text'),
-      mediaUrl: z.string().url().optional(),
-      mediaMimeType: z.string().optional(),
-      mediaSize: z.number().optional(),
-      filename: z.string().optional(),
-      quotedMessageId: z.string().uuid().optional(),
-      forwardMessageId: z.string().uuid().optional(),
-    });
-
-    const parsed = schema.safeParse(req.body);
+    const parsed = sendMessageBodySchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: 'Invalid message request parameters', details: parsed.error.flatten() });
     }
 
     const {
       sessionId,
-      recipientJid,
+      recipientJid: waChatJid,
       body,
       messageType,
       mediaUrl,
@@ -93,12 +112,6 @@ messageRouter.post('/', async (req, res) => {
       if (!access) {
         return res.status(403).json({ error: 'Access denied: you do not have permission for this WhatsApp session' });
       }
-    }
-
-    // Standardize recipient JID (e.g. 966500000000 -> 966500000000@s.whatsapp.net)
-    let waChatJid = recipientJid.trim();
-    if (!waChatJid.includes('@')) {
-      waChatJid = `${waChatJid}@s.whatsapp.net`;
     }
 
     // Ensure the chat thread exists in the database
@@ -189,7 +202,9 @@ messageRouter.post('/', async (req, res) => {
     logger.error('Failed to queue outbound message', { error: (err as Error).message });
     return res.status(500).json({ error: 'Failed to queue message' });
   }
-});
+}
+
+messageRouter.post('/', sendMessageHandler);
 
 /**
  * GET /api/chats/:chatId/messages
