@@ -37,7 +37,7 @@
         <button id="navBtnStats" type="button" class="nav-link" onclick="switchTab('stats')" aria-label="Employee Stats" title="Employee Stats" style="display: none;">
           <i class="ti ti-chart-bar" aria-hidden="true"></i>
         </button>
-        <button id="navBtnDevConsole" type="button" class="nav-link" onclick="window.location.href='/dev-console.html'" aria-label="Dev Console" title="Dev Console" style="display: none;">
+        <button id="navBtnDevConsole" type="button" class="nav-link" onclick="window.location.href='/dev-console.html'" aria-label="Dev Console" title="Developer Console">
           <i class="ti ti-terminal-2" aria-hidden="true"></i>
         </button>
       </nav>
@@ -381,6 +381,37 @@
             </div>
           </div>
         </div>
+
+        <div class="card card--spaced">
+          <div class="card-title-bar">
+            <span class="card-title-text"><i class="ti ti-key" aria-hidden="true"></i> API Keys</span>
+            <button type="button" class="btn btn-sm" onclick="openCreateApiKeyModal()">Generate API Key</button>
+          </div>
+          <p class="card-hint">Long-lived credentials for server-to-server integrations (CRM, websites). Keys inherit your account permissions.</p>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Prefix</th>
+                  <th>Created</th>
+                  <th>Last Used</th>
+                  <th>Expires</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="apiKeysListBody">
+                <tr>
+                  <td colspan="7" class="table-empty-cell">Loading API keys...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="card-hint" style="margin-top: 0.75rem;">
+            Test integrations in the <a href="/dev-console.html" style="color: var(--accent-blue);">Developer Console</a>.
+          </p>
+        </div>
       </div>
 
       <!-- ─── STATISTICS TAB ──────────────────────────────────── -->
@@ -604,6 +635,53 @@
           <button type="submit" class="btn">Save Changes</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Create API Key Modal -->
+  <div id="createApiKeyModal" class="app-modal">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 class="modal-title">Generate API Key</h3>
+        <button type="button" class="modal-close-btn" onclick="closeCreateApiKeyModal()" aria-label="Close">&times;</button>
+      </div>
+      <form id="createApiKeyForm" onsubmit="handleCreateApiKey(event)">
+        <div class="input-group input-group--compact">
+          <label for="apiKeyNameInput">Key name</label>
+          <input type="text" id="apiKeyNameInput" placeholder="e.g. Production CRM" required maxlength="100">
+        </div>
+        <div class="input-group input-group--compact">
+          <label for="apiKeyExpirySelect">Expiration</label>
+          <select id="apiKeyExpirySelect" class="form-select">
+            <option value="never" selected>Never expires</option>
+            <option value="90d">90 days</option>
+            <option value="1y">1 year</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeCreateApiKeyModal()">Cancel</button>
+          <button type="submit" class="btn" id="createApiKeySubmitBtn">Generate</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Reveal API Key Modal (one-time) -->
+  <div id="revealApiKeyModal" class="app-modal">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 class="modal-title">Save your API key</h3>
+        <button type="button" class="modal-close-btn" onclick="closeRevealApiKeyModal()" aria-label="Close">&times;</button>
+      </div>
+      <p class="modal-subtitle" style="color: var(--accent-orange);">This key is shown only once. Copy it now and store it securely.</p>
+      <div class="input-group input-group--compact">
+        <label>API Key</label>
+        <textarea id="revealedApiKeyText" class="modal-textarea" rows="3" readonly style="font-family: monospace; font-size: 0.85rem;"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="copyRevealedApiKey()">Copy to clipboard</button>
+        <button type="button" class="btn" onclick="closeRevealApiKeyModal()">I have saved it</button>
+      </div>
     </div>
   </div>
 

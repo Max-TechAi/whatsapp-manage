@@ -407,6 +407,78 @@
       align-items: center;
       gap: 0.75rem;
     }
+
+    .cred-bar {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    .cred-bar select, .cred-bar input {
+      max-width: 280px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.85rem;
+    }
+
+    .module-nav-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.65rem 1rem;
+      border-radius: 0.5rem;
+      text-align: left;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+    }
+
+    .module-nav-btn:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+    .module-nav-btn.active {
+      background: rgba(99, 102, 241, 0.12);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.25);
+    }
+
+    .endpoint-card {
+      background: rgba(0,0,0,0.15);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .endpoint-header { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .method { font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 4px; }
+    .method-get { background: rgba(16,185,129,0.15); color: #34d399; }
+    .method-post { background: rgba(99,102,241,0.15); color: #818cf8; }
+    .method-patch { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .method-delete { background: rgba(239,68,68,0.15); color: #f87171; }
+    .method-put { background: rgba(56,189,248,0.15); color: #38bdf8; }
+    .endpoint-path { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+    .endpoint-summary { color: var(--text-muted); margin-bottom: 0.75rem; font-size: 0.9rem; }
+    .endpoint-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+    @media (max-width: 900px) { .endpoint-grid { grid-template-columns: 1fr; } }
+    .doc-pre, .try-result {
+      background: #020617;
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 0.75rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .doc-meta, .doc-notes { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+    .endpoint-docs h4, .endpoint-try h4 { font-size: 0.9rem; margin: 0.75rem 0 0.5rem; color: var(--text-muted); }
+    .endpoint-docs h5 { font-size: 0.8rem; margin: 0.5rem 0; color: var(--text-muted); }
+    #moduleTitle { font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem; }
+    .doc-search { margin-bottom: 1rem; width: 100%; }
   </style>
 </head>
 <body>
@@ -425,28 +497,41 @@
   <main>
     <!-- Left Navigation -->
     <div class="nav-panel">
-      <button class="nav-btn active" onclick="switchTab('auth')">🔐 Authentication</button>
-      <button class="nav-btn" onclick="switchTab('sessions')">📱 Manage Sessions</button>
-      <button class="nav-btn" onclick="switchTab('messages')">✉️ Send Messages</button>
-      <button class="nav-btn" onclick="switchTab('terminal')">🖥️ Real-time WebSockets</button>
+      <input type="search" id="endpointSearch" class="doc-search" placeholder="Search endpoints…" oninput="filterEndpointNav(this.value)">
+      <div id="moduleNav"></div>
       <button class="nav-btn" onclick="window.location.href='/dashboard.html'" style="margin-top: auto; background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.2); color: #818cf8;">🔙 Return to Dashboard</button>
     </div>
 
     <!-- Right Panels -->
     <div class="content-panel">
+      <div class="cred-bar card" style="padding: 1rem;">
+        <label style="font-size: 0.85rem; color: var(--text-muted);">Try-it credential:</label>
+        <select id="credModeSelect">
+          <option value="jwt">Session JWT (dashboard login)</option>
+          <option value="api_key">API Key (wa_live_…)</option>
+        </select>
+        <input type="password" id="apiKeyPasteInput" placeholder="Paste API key for testing" style="display:none; flex:1; min-width:200px;">
+      </div>
 
-      <!-- 🔐 AUTH TAB -->
-      <div id="tab-auth" class="tab-content active">
+      <div id="quickStartSection" style="display:none;"></div>
+      <h2 id="moduleTitle" style="display:none;"></h2>
+      <div id="endpointDocsContainer" style="display:none;"></div>
+
+      <div id="playgroundSection" style="display:none;">
         <div class="card" id="tokenCard">
-          <div class="card-title">Active Token (Session storage)</div>
+          <div class="card-title">Active JWT (session storage)</div>
           <p class="token-display" id="tokenDisplay"></p>
-          <div style="margin-top: 1rem; display: flex; gap: 1rem;">
+          <div style="margin-top: 1rem; display: flex; gap: 1rem; flex-wrap: wrap;">
             <button onclick="clearToken()" class="btn btn-danger">Logout / Clear Token</button>
             <button onclick="connectWS()" class="btn btn-secondary">Reconnect WS</button>
-            <button onclick="window.location.href='/dashboard.html'" class="btn">Return to Dashboard</button>
           </div>
         </div>
-      </div>
+
+        <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <button class="nav-btn" onclick="switchTab('sessions')" style="width:auto;">📱 Sessions</button>
+          <button class="nav-btn" onclick="switchTab('messages')" style="width:auto;">✉️ Messages</button>
+          <button class="nav-btn" onclick="switchTab('terminal')" style="width:auto;">🖥️ WebSocket</button>
+        </div>
 
       <!-- 📱 SESSIONS TAB -->
       <div id="tab-sessions" class="tab-content">
@@ -574,39 +659,50 @@
         </div>
       </div>
 
+      </div><!-- /playgroundSection -->
+
     </div>
   </main>
 
+  <script src="/js/dev-console-app.js"></script>
   <script>
     let token = localStorage.getItem('token') || '';
     let ws = null;
     let qrPollInterval = null;
 
-    // Synchronous Auth & Admin Guard
-    let isAdmin = false;
+    // Require dashboard login (any org member — admin or agent)
+    let isAuthenticated = false;
+    let userRole = 'agent';
     if (!token) {
-      alert('Access Denied: Unauthenticated. Redirecting to login.');
+      alert('Please log in via the dashboard first.');
       window.location.href = '/';
     } else {
       try {
         const payload = JSON.parse(atob(token.split('.')[1]));
-        if (payload.role !== 'admin') {
-          alert('Access Denied: Admin role required.');
-          window.location.href = '/';
-        } else {
-          isAdmin = true;
-        }
+        userRole = payload.role || 'agent';
+        isAuthenticated = true;
       } catch (e) {
         console.error('Failed to parse token payload', e);
-        alert('Access Denied: Invalid authentication token.');
+        alert('Invalid authentication token.');
         localStorage.removeItem('token');
         window.location.href = '/';
       }
     }
 
+    function filterEndpointNav(query) {
+      const q = query.toLowerCase().trim();
+      document.querySelectorAll('.module-nav-btn').forEach((btn) => {
+        if (!q) {
+          btn.style.display = 'block';
+          return;
+        }
+        btn.style.display = btn.textContent.toLowerCase().includes(q) ? 'block' : 'none';
+      });
+    }
+
     // Initialize UI on load
     window.addEventListener('load', () => {
-      if (!isAdmin) return;
+      if (!isAuthenticated) return;
       checkAuthStatus();
       connectWS();
       refreshActiveSessions();
@@ -622,6 +718,7 @@
     });
 
     function switchTab(tabId) {
+      if (window.DevConsole) DevConsole.switchModule('playground');
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
       document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
       
@@ -905,7 +1002,7 @@
         const data = await response.json();
 
         if (response.ok) {
-          logTerminal('MESSAGING', `Message sent successfully! Message JID: ${data.data?.waMessageId || 'Sent'}`, 'var(--accent)');
+          logTerminal('MESSAGING', `Message queued! jobId: ${data.data?.jobId || 'queued'}`, 'var(--accent)');
           document.getElementById('msgBody').value = '';
         } else {
           logTerminal('MESSAGING_ERROR', data.error || 'Failed to send message', 'var(--danger)');

@@ -3,13 +3,15 @@ import { redis } from '../config/redis.js';
 import { getEnv } from '../config/env.js';
 import { logger } from '../observability/logger.js';
 import { verifyToken } from '../modules/auth/auth.service.js';
+import { classifyCredential, extractAuthCredential } from '../modules/auth/auth-credential.js';
+import { verifyApiKeyAndResolveUser } from '../modules/api-keys/api-key.service.js';
 
 interface RateLimitConfig {
   windowMs: number;
   max: number;
   keyPrefix: string;
-  /** When true, skip counting this request (still runs next()) */
   skip?: (req: Request) => boolean;
+  resolveBucket?: (req: Request) => { identifier: string; max: number; keyPrefix: string };
 }
 
 /** POST /api/chats/:id/presence/subscribe — already gated by M2 Redis cooldown */
@@ -21,34 +23,39 @@ export function isPresenceSubscribeRequest(req: Request): boolean {
 }
 
 /**
- * Lightweight middleware that optionally decodes a JWT token if present.
- * Populates req.user with the payload so the rate limiter can use it.
- * Fails silently for public routes / missing tokens, leaving req.user undefined.
+ * Optionally decode JWT or API key for rate-limit bucketing (fails silently).
  */
-export function decodeOptionalAuth(req: Request, res: Response, next: NextFunction): void {
+export async function decodeOptionalAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   try {
-    let token: string | undefined;
-    const authHeader = req.headers.authorization;
-
-    if (authHeader?.startsWith('Bearer ')) {
-      token = authHeader.slice(7); // Strip 'Bearer '
-    } else if (req.query.token) {
-      token = req.query.token as string;
+    const token = extractAuthCredential(req);
+    if (!token) {
+      next();
+      return;
     }
 
-    if (token) {
+    const method = classifyCredential(token);
+    if (method === 'api_key') {
+      const resolved = await verifyApiKeyAndResolveUser(token);
+      if (resolved) {
+        req.user = resolved.user;
+        req.apiKeyId = resolved.apiKeyId;
+        req.authMethod = 'api_key';
+      }
+    } else {
       const payload = verifyToken(token);
       req.user = payload;
+      req.authMethod = 'jwt';
     }
-  } catch (err) {
-    // Fail silently: downstream auth middleware will handle throwing 401
+  } catch {
+    // Downstream authenticate middleware returns 401 when required
   }
   next();
 }
 
-/**
- * Custom sliding window rate limiter using Redis sorted sets.
- */
 export function createRateLimiter(config: RateLimitConfig) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (config.skip?.(req)) {
@@ -56,21 +63,23 @@ export function createRateLimiter(config: RateLimitConfig) {
       return;
     }
 
-    // If auth middleware has run, scope by orgId/userId. Otherwise by IP.
-    const identifier = req.user ? `${req.user.orgId}:${req.user.userId}` : req.ip;
-    const key = `ratelimit:${config.keyPrefix}:${identifier}`;
+    const bucket = config.resolveBucket
+      ? config.resolveBucket(req)
+      : {
+          identifier: req.user ? `${req.user.orgId}:${req.user.userId}` : (req.ip ?? 'unknown'),
+          max: config.max,
+          keyPrefix: config.keyPrefix,
+        };
+
+    const key = `ratelimit:${bucket.keyPrefix}:${bucket.identifier}`;
     const now = Date.now();
     const clearBefore = now - config.windowMs;
 
     try {
       const multi = redis.multi();
-      // Remove timestamps older than the window
       multi.zremrangebyscore(key, 0, clearBefore);
-      // Add current timestamp
       multi.zadd(key, now, now.toString());
-      // Get count of requests in current window
       multi.zcard(key);
-      // Refresh key TTL to window size
       multi.pexpire(key, config.windowMs);
 
       const results = await multi.exec();
@@ -78,23 +87,22 @@ export function createRateLimiter(config: RateLimitConfig) {
         throw new Error('Redis transaction returned null');
       }
 
-      // zcard result is at index 2 (third command in multi)
       const countResult = results[2];
       const count = typeof countResult[1] === 'number' ? countResult[1] : parseInt(countResult[1] as string, 10);
 
-      const remaining = Math.max(0, config.max - count);
+      const remaining = Math.max(0, bucket.max - count);
       const resetTime = now + config.windowMs;
 
-      res.setHeader('X-RateLimit-Limit', config.max);
+      res.setHeader('X-RateLimit-Limit', bucket.max);
       res.setHeader('X-RateLimit-Remaining', remaining);
       res.setHeader('X-RateLimit-Reset', Math.ceil(resetTime / 1000));
 
-      if (count > config.max) {
+      if (count > bucket.max) {
         logger.warn('Rate limit exceeded', {
-          identifier,
-          prefix: config.keyPrefix,
+          identifier: bucket.identifier,
+          prefix: bucket.keyPrefix,
           count,
-          limit: config.max,
+          limit: bucket.max,
         });
         res.status(429).json({
           error: 'Too many requests, please try again later.',
@@ -104,7 +112,6 @@ export function createRateLimiter(config: RateLimitConfig) {
 
       next();
     } catch (err) {
-      // Fail open if Redis is down, but log the error
       logger.error('Rate limiter Redis error', { error: (err as Error).message });
       next();
     }
@@ -113,16 +120,36 @@ export function createRateLimiter(config: RateLimitConfig) {
 
 const env = getEnv();
 
-// Specific rate limit middleware instances
 export const authRateLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000, // 15 mins
+  windowMs: 15 * 60 * 1000,
   max: env.RATE_LIMIT_AUTH,
   keyPrefix: 'auth',
 });
 
 export const apiRateLimiter = createRateLimiter({
-  windowMs: 1 * 60 * 1000, // 1 min
+  windowMs: 1 * 60 * 1000,
   max: env.RATE_LIMIT_API,
   keyPrefix: 'api',
   skip: isPresenceSubscribeRequest,
+  resolveBucket: (req) => {
+    if (req.authMethod === 'api_key' && req.apiKeyId && req.user) {
+      return {
+        identifier: `${req.user.orgId}:${req.apiKeyId}`,
+        max: env.RATE_LIMIT_API_KEY,
+        keyPrefix: 'api-key',
+      };
+    }
+    if (req.user) {
+      return {
+        identifier: `${req.user.orgId}:${req.user.userId}`,
+        max: env.RATE_LIMIT_API,
+        keyPrefix: 'api',
+      };
+    }
+    return {
+      identifier: req.ip ?? 'unknown',
+      max: env.RATE_LIMIT_API,
+      keyPrefix: 'api',
+    };
+  },
 });

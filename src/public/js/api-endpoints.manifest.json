@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "rateLimits": {
+    "jwtPerMinute": 100,
+    "apiKeyPerMinute": 300,
+    "authPer15Min": 5,
+    "waMessagesPerMinute": 20
+  },
+  "modules": [
+    {
+      "id": "quickstart",
+      "label": "Quick Start",
+      "endpoints": []
+    },
+    {
+      "id": "auth",
+      "label": "Authentication",
+      "endpoints": [
+        { "id": "auth-register", "method": "POST", "path": "/api/auth/register", "auth": "none", "summary": "Register org + admin user", "body": { "email": { "type": "string", "required": true }, "password": { "type": "string", "required": true }, "displayName": { "type": "string", "required": true }, "orgName": { "type": "string", "required": true } }, "exampleResponse": { "user": {}, "tokens": { "accessToken": "...", "refreshToken": "..." } } },
+        { "id": "auth-login", "method": "POST", "path": "/api/auth/login", "auth": "none", "summary": "Login with email/password", "body": { "email": { "type": "string", "required": true }, "password": { "type": "string", "required": true } }, "exampleResponse": { "user": {}, "tokens": { "accessToken": "..." } } },
+        { "id": "auth-refresh", "method": "POST", "path": "/api/auth/refresh", "auth": "none", "summary": "Refresh JWT pair", "body": { "refreshToken": { "type": "string", "required": true } } },
+        { "id": "auth-me", "method": "GET", "path": "/api/auth/me", "auth": "jwt", "summary": "Current user profile" },
+        { "id": "auth-verify-email", "method": "GET", "path": "/api/auth/verify-email", "auth": "none", "summary": "Verify email (query token)", "query": { "token": { "type": "string", "required": true } } },
+        { "id": "auth-resend", "method": "POST", "path": "/api/auth/resend-verification", "auth": "none", "summary": "Resend verification email", "body": { "email": { "type": "string", "required": true } } },
+        { "id": "auth-invite-password", "method": "POST", "path": "/api/auth/set-password-from-invite", "auth": "none", "summary": "Set password from invite token", "body": { "token": { "type": "string", "required": true }, "password": { "type": "string", "required": true } } }
+      ]
+    },
+    {
+      "id": "orgs",
+      "label": "Organization & Team",
+      "endpoints": [
+        { "id": "orgs-get", "method": "GET", "path": "/api/orgs", "auth": "jwt", "roles": ["admin"], "summary": "Get organization" },
+        { "id": "orgs-patch", "method": "PATCH", "path": "/api/orgs", "auth": "jwt", "roles": ["admin"], "summary": "Update organization", "body": { "name": { "type": "string" }, "settings": { "type": "json" } } },
+        { "id": "orgs-members-list", "method": "GET", "path": "/api/orgs/members", "auth": "jwt", "roles": ["admin"], "summary": "List team members" },
+        { "id": "orgs-members-invite", "method": "POST", "path": "/api/orgs/members", "auth": "jwt", "roles": ["admin"], "summary": "Invite member", "body": { "email": { "type": "string", "required": true }, "role": { "type": "enum", "options": ["admin", "agent"] } } },
+        { "id": "orgs-members-delete", "method": "DELETE", "path": "/api/orgs/members/:userId", "auth": "jwt", "roles": ["admin"], "summary": "Remove member", "pathParams": { "userId": { "type": "uuid", "required": true } } },
+        { "id": "orgs-members-patch", "method": "PATCH", "path": "/api/orgs/members/:userId", "auth": "jwt", "roles": ["admin"], "summary": "Update member", "pathParams": { "userId": { "type": "uuid", "required": true } }, "body": { "displayName": { "type": "string" }, "role": { "type": "enum", "options": ["admin", "agent"] }, "isActive": { "type": "boolean" } } },
+        { "id": "orgs-permissions-get", "method": "GET", "path": "/api/orgs/members/:userId/permissions", "auth": "jwt", "roles": ["admin"], "pathParams": { "userId": { "type": "uuid", "required": true } } },
+        { "id": "orgs-permissions-put", "method": "PUT", "path": "/api/orgs/members/:userId/permissions", "auth": "jwt", "roles": ["admin"], "pathParams": { "userId": { "type": "uuid", "required": true } }, "body": { "hasAllSessionsAccess": { "type": "boolean", "required": true }, "sessionIds": { "type": "json", "required": true } } },
+        { "id": "orgs-stats", "method": "GET", "path": "/api/orgs/statistics", "auth": "jwt", "roles": ["admin"], "summary": "Employee statistics", "query": { "sessionId": { "type": "uuid" }, "dateRange": { "type": "enum", "options": ["today", "this_week", "this_month", "all_time"] } } },
+        { "id": "orgs-api-keys-list", "method": "GET", "path": "/api/orgs/api-keys", "auth": "jwt", "roles": ["admin"], "summary": "List API keys (JWT only)" },
+        { "id": "orgs-api-keys-create", "method": "POST", "path": "/api/orgs/api-keys", "auth": "jwt", "roles": ["admin"], "summary": "Create API key — plaintext returned once", "body": { "name": { "type": "string", "required": true }, "expiresAt": { "type": "string", "description": "ISO datetime or null" } } },
+        { "id": "orgs-api-keys-revoke", "method": "DELETE", "path": "/api/orgs/api-keys/:id", "auth": "jwt", "roles": ["admin"], "pathParams": { "id": { "type": "uuid", "required": true } } }
+      ]
+    },
+    {
+      "id": "sessions",
+      "label": "Sessions",
+      "endpoints": [
+        { "id": "sessions-list", "method": "GET", "path": "/api/sessions", "auth": "both", "summary": "List WhatsApp sessions" },
+        { "id": "sessions-create", "method": "POST", "path": "/api/sessions", "auth": "both", "summary": "Create session", "body": { "sessionName": { "type": "string", "required": true } } },
+        { "id": "sessions-get", "method": "GET", "path": "/api/sessions/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "sessions-qr", "method": "GET", "path": "/api/sessions/:id/qr", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "notes": "204 when already connected" },
+        { "id": "sessions-groups", "method": "GET", "path": "/api/sessions/:id/groups", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "sessions-restart", "method": "POST", "path": "/api/sessions/:id/restart", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "sessions-delete", "method": "DELETE", "path": "/api/sessions/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "sessions-sync-status", "method": "GET", "path": "/api/sessions/:id/sync-status", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "sessions-sync-retry", "method": "POST", "path": "/api/sessions/:id/sync-retry", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "sessions-reset-contact", "method": "POST", "path": "/api/sessions/:id/reset-contact-session", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "body": { "contactJid": { "type": "string", "required": true } } },
+        { "id": "sessions-lid-mappings", "method": "GET", "path": "/api/sessions/:id/lid-mappings", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } }
+      ]
+    },
+    {
+      "id": "messages",
+      "label": "Messages",
+      "endpoints": [
+        { "id": "messages-send", "method": "POST", "path": "/api/messages", "auth": "both", "summary": "Queue outbound message (202)", "body": { "sessionId": { "type": "uuid", "required": true }, "recipientJid": { "type": "string", "required": true }, "body": { "type": "string" }, "messageType": { "type": "enum", "options": ["text", "image", "video", "audio", "document"], "default": "text" }, "mediaUrl": { "type": "string" }, "quotedMessageId": { "type": "uuid" }, "forwardMessageId": { "type": "uuid" } }, "exampleResponse": { "success": true, "data": { "jobId": "...", "chatId": "...", "waChatJid": "..." } } },
+        { "id": "messages-list", "method": "GET", "path": "/api/messages/chats/:chatId/messages", "auth": "both", "pathParams": { "chatId": { "type": "uuid", "required": true } }, "query": { "limit": { "type": "number", "default": "50" }, "cursor": { "type": "string" } } },
+        { "id": "messages-fetch-history", "method": "POST", "path": "/api/messages/chats/:chatId/fetch-history", "auth": "both", "pathParams": { "chatId": { "type": "uuid", "required": true } } },
+        { "id": "messages-search", "method": "GET", "path": "/api/messages/search", "auth": "both", "query": { "q": { "type": "string", "required": true }, "sessionId": { "type": "uuid" }, "limit": { "type": "number" } } },
+        { "id": "messages-get", "method": "GET", "path": "/api/messages/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "messages-star", "method": "PATCH", "path": "/api/messages/:id/star", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "body": { "starred": { "type": "boolean", "required": true } } },
+        { "id": "messages-delete", "method": "DELETE", "path": "/api/messages/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "messages-sync-progress", "method": "GET", "path": "/api/messages/sync/progress/:sessionId", "auth": "both", "pathParams": { "sessionId": { "type": "uuid", "required": true } } }
+      ]
+    },
+    {
+      "id": "chats",
+      "label": "Chats",
+      "endpoints": [
+        { "id": "chats-unified", "method": "GET", "path": "/api/chats/unified", "auth": "both", "query": { "sessionId": { "type": "uuid" }, "limit": { "type": "number", "default": "50" } } },
+        { "id": "chats-read-events", "method": "GET", "path": "/api/chats/read-events", "auth": "jwt", "roles": ["admin"], "query": { "limit": { "type": "number" }, "sessionId": { "type": "uuid" }, "chatId": { "type": "uuid" } } },
+        { "id": "chats-list", "method": "GET", "path": "/api/chats", "auth": "both", "query": { "sessionId": { "type": "uuid", "required": true }, "archived": { "type": "boolean" }, "limit": { "type": "number" } } },
+        { "id": "chats-get", "method": "GET", "path": "/api/chats/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "chats-patch", "method": "PATCH", "path": "/api/chats/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "body": { "isArchived": { "type": "boolean" }, "isMuted": { "type": "boolean" } } },
+        { "id": "chats-presence", "method": "GET", "path": "/api/chats/:id/presence", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "chats-presence-sub", "method": "POST", "path": "/api/chats/:id/presence/subscribe", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "chats-read", "method": "POST", "path": "/api/chats/:id/read", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "body": { "reason": { "type": "string", "required": true } } },
+        { "id": "chats-delete", "method": "DELETE", "path": "/api/chats/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "chats-assign", "method": "POST", "path": "/api/chats/:id/assign", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "body": { "userId": { "type": "uuid" } } },
+        { "id": "chats-assignees", "method": "GET", "path": "/api/chats/:id/eligible-assignees", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } }
+      ]
+    },
+    {
+      "id": "contacts",
+      "label": "Contacts",
+      "endpoints": [
+        { "id": "contacts-list", "method": "GET", "path": "/api/contacts", "auth": "both", "query": { "sessionId": { "type": "uuid" }, "search": { "type": "string" }, "limit": { "type": "number" } } },
+        { "id": "contacts-get", "method": "GET", "path": "/api/contacts/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "contacts-patch", "method": "PATCH", "path": "/api/contacts/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "body": { "displayName": { "type": "string" } } },
+        { "id": "contacts-delete", "method": "DELETE", "path": "/api/contacts/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } }
+      ]
+    },
+    {
+      "id": "media",
+      "label": "Media",
+      "endpoints": [
+        { "id": "media-stream", "method": "GET", "path": "/api/media/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "query": { "download": { "type": "boolean" }, "filename": { "type": "string" } } },
+        { "id": "media-thumb", "method": "GET", "path": "/api/media/:id/thumbnail", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "media-url", "method": "GET", "path": "/api/media/:id/url", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } }, "query": { "expiresIn": { "type": "number" } } },
+        { "id": "media-transcode", "method": "GET", "path": "/api/media/:id/transcode", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "media-retry", "method": "POST", "path": "/api/media/messages/:messageId/retry", "auth": "both", "pathParams": { "messageId": { "type": "uuid", "required": true } } },
+        { "id": "media-upload", "method": "POST", "path": "/api/media/upload", "auth": "both", "summary": "Raw body upload — headers: x-session-id, x-filename, content-type" },
+        { "id": "media-delete", "method": "DELETE", "path": "/api/media/:id", "auth": "both", "pathParams": { "id": { "type": "uuid", "required": true } } }
+      ]
+    },
+    {
+      "id": "webhooks",
+      "label": "Webhooks",
+      "endpoints": [
+        { "id": "webhooks-create", "method": "POST", "path": "/api/webhooks", "auth": "jwt", "roles": ["admin"], "body": { "url": { "type": "string", "required": true }, "events": { "type": "json", "required": true } } },
+        { "id": "webhooks-list", "method": "GET", "path": "/api/webhooks", "auth": "jwt", "roles": ["admin"] },
+        { "id": "webhooks-get", "method": "GET", "path": "/api/webhooks/:id", "auth": "jwt", "roles": ["admin"], "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "webhooks-patch", "method": "PATCH", "path": "/api/webhooks/:id", "auth": "jwt", "roles": ["admin"], "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "webhooks-test", "method": "POST", "path": "/api/webhooks/:id/test", "auth": "jwt", "roles": ["admin"], "pathParams": { "id": { "type": "uuid", "required": true } } },
+        { "id": "webhooks-delete", "method": "DELETE", "path": "/api/webhooks/:id", "auth": "jwt", "roles": ["admin"], "pathParams": { "id": { "type": "uuid", "required": true } } }
+      ]
+    },
+    {
+      "id": "infra",
+      "label": "Infrastructure",
+      "endpoints": [
+        { "id": "health", "method": "GET", "path": "/health", "auth": "none", "summary": "Health check" },
+        { "id": "metrics", "method": "GET", "path": "/metrics", "auth": "none", "summary": "Prometheus metrics" }
+      ]
+    }
+  ]
+}

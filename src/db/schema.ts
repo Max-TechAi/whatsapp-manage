@@ -78,6 +78,35 @@ export const users = pgTable(
   ],
 );
 
+// ─── 2b. API Keys ───────────────────────────────────────────────────────────────
+
+/** Long-lived server-to-server credentials scoped to an organization. */
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: uuid('org_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 100 }).notNull(),
+    /** Display prefix e.g. wa_live_xK8p9mN2 — used for lookup */
+    keyPrefix: varchar('key_prefix', { length: 24 }).notNull(),
+    /** HMAC-SHA256 hash of full key — never store plaintext */
+    keyHash: varchar('key_hash', { length: 64 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('uq_api_keys_key_prefix').on(table.keyPrefix),
+    index('idx_api_keys_org_id').on(table.orgId),
+  ],
+);
+
 // ─── 3. Sessions ────────────────────────────────────────────────────────────────
 
 /**
@@ -509,6 +538,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   webhooks: many(webhooks),
   auditLogs: many(auditLogs),
   chatReadEvents: many(chatReadEvents),
+  apiKeys: many(apiKeys),
 }));
 
 /** User belongs to an org, can own sessions, and appear in audit logs. */
@@ -523,6 +553,18 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   sessionAccess: many(userSessionAccess),
   assignedChats: many(chats),
   sentMessages: many(messages),
+  createdApiKeys: many(apiKeys),
+}));
+
+export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [apiKeys.orgId],
+    references: [organizations.id],
+  }),
+  createdBy: one(users, {
+    fields: [apiKeys.createdByUserId],
+    references: [users.id],
+  }),
 }));
 
 /** Session belongs to an org and user; has keys, contacts, chats, messages, audit logs. */

@@ -11,6 +11,8 @@ export interface JwtPayload {
   emailVerified: boolean;
 }
 
+export type AuthMethod = 'jwt' | 'api_key';
+
 /**
  * Access + refresh token pair returned after authentication.
  */

@@ -331,15 +331,16 @@ if (!token) {
       if (banner) banner.style.display = 'flex';
     }
 
-    // Show team settings, employee stats, and dev console link for admin
+    // Show team settings and employee stats for admin
     if (userRole === 'admin') {
       const navBtnTeam = document.getElementById('navBtnTeam');
       if (navBtnTeam) navBtnTeam.style.display = 'flex';
       const navBtnStats = document.getElementById('navBtnStats');
       if (navBtnStats) navBtnStats.style.display = 'flex';
-      const navBtnDevConsole = document.getElementById('navBtnDevConsole');
-      if (navBtnDevConsole) navBtnDevConsole.style.display = 'flex';
     }
+    // Developer console for all authenticated org members
+    const navBtnDevConsole = document.getElementById('navBtnDevConsole');
+    if (navBtnDevConsole) navBtnDevConsole.style.display = 'flex';
   } catch (e) {
     console.error('Failed to parse token payload', e);
     localStorage.removeItem('token');
@@ -356,6 +357,7 @@ function initDashboard() {
   loadWebhooks();
   if (userRole === 'admin') {
     loadTeamMembers();
+    loadApiKeys();
   }
   // Initialize desktop notification permission state (shows prompt or blocked banner as needed)
   initNotifications();
@@ -387,6 +389,7 @@ function switchTab(tabId) {
   if (tabId === 'sessions') loadSessions();
   if (tabId === 'webhooks') loadWebhooks();
   if (tabId === 'team') loadTeamMembers();
+  if (tabId === 'team' && userRole === 'admin') loadApiKeys();
   if (tabId === 'stats') {
     loadStats();
     loadReadEvents();
@@ -3024,6 +3027,147 @@ async function handleSaveMember(e) {
   }
 }
 
+// ─── API KEYS ─────────────────────────────────────────────────
+async function loadApiKeys() {
+  if (userRole !== 'admin') return;
+  const tbody = document.getElementById('apiKeysListBody');
+  if (!tbody) return;
+  try {
+    const res = await fetch('/api/orgs/api-keys', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      tbody.innerHTML = `<tr><td colspan="7" class="table-empty-cell">${escapeHtml(data.error || 'Failed to load API keys')}</td></tr>`;
+      return;
+    }
+    renderApiKeysTable(data.data || []);
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" class="table-empty-cell">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function renderApiKeysTable(keys) {
+  const tbody = document.getElementById('apiKeysListBody');
+  if (!tbody) return;
+  if (!keys.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="table-empty-cell">No API keys yet. Generate one for server-to-server access.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = keys.map((k) => {
+    const revoked = !!k.revokedAt;
+    const expired = k.expiresAt && new Date(k.expiresAt) < new Date();
+    const status = revoked ? 'Revoked' : (expired ? 'Expired' : 'Active');
+    const statusClass = revoked || expired ? 'badge-danger' : 'badge-accent';
+    return `
+      <tr>
+        <td>${escapeHtml(k.name)}</td>
+        <td><code>${escapeHtml(k.keyPrefix)}…</code></td>
+        <td>${formatDateShort(k.createdAt)}</td>
+        <td>${k.lastUsedAt ? formatDateShort(k.lastUsedAt) : '—'}</td>
+        <td>${k.expiresAt ? formatDateShort(k.expiresAt) : 'Never'}</td>
+        <td><span class="badge ${statusClass}">${status}</span></td>
+        <td>
+          ${!revoked ? `<button type="button" class="btn btn-danger btn-table-action" onclick="revokeApiKey('${k.id}')">Revoke</button>` : '—'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function formatDateShort(iso) {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+function openCreateApiKeyModal() {
+  document.getElementById('createApiKeyModal')?.classList.add('active');
+  document.getElementById('apiKeyNameInput')?.focus();
+}
+
+function closeCreateApiKeyModal() {
+  document.getElementById('createApiKeyModal')?.classList.remove('active');
+  document.getElementById('createApiKeyForm')?.reset();
+}
+
+function closeRevealApiKeyModal() {
+  document.getElementById('revealApiKeyModal')?.classList.remove('active');
+  document.getElementById('revealedApiKeyText').value = '';
+  loadApiKeys();
+}
+
+async function copyRevealedApiKey() {
+  const el = document.getElementById('revealedApiKeyText');
+  if (!el?.value) return;
+  try {
+    await navigator.clipboard.writeText(el.value);
+    alert('API key copied to clipboard.');
+  } catch {
+    el.select();
+    document.execCommand('copy');
+  }
+}
+
+async function handleCreateApiKey(event) {
+  event.preventDefault();
+  const btn = document.getElementById('createApiKeySubmitBtn');
+  const name = document.getElementById('apiKeyNameInput')?.value?.trim();
+  const expiry = document.getElementById('apiKeyExpirySelect')?.value || 'never';
+  if (!name) return;
+
+  let expiresAt = null;
+  if (expiry === '90d') {
+    expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+  } else if (expiry === '1y') {
+    expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+  try {
+    const res = await fetch('/api/orgs/api-keys', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ name, expiresAt }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Failed to create API key');
+      return;
+    }
+    closeCreateApiKeyModal();
+    document.getElementById('revealedApiKeyText').value = data.plaintext || '';
+    document.getElementById('revealApiKeyModal')?.classList.add('active');
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
+  }
+}
+
+async function revokeApiKey(keyId) {
+  if (!confirm('Revoke this API key? Integrations using it will stop working immediately.')) return;
+  try {
+    const res = await fetch(`/api/orgs/api-keys/${keyId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Failed to revoke API key');
+      return;
+    }
+    loadApiKeys();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 window.handleInviteMember = handleInviteMember;
 window.openTeamModal = openTeamModal;
 window.closeTeamModal = closeTeamModal;
@@ -3032,6 +3176,12 @@ window.toggleEditRoleSettings = toggleEditRoleSettings;
 window.toggleAllSessionsCheckbox = toggleAllSessionsCheckbox;
 window.handleSaveMember = handleSaveMember;
 window.handleAssignChatChange = handleAssignChatChange;
+window.openCreateApiKeyModal = openCreateApiKeyModal;
+window.closeCreateApiKeyModal = closeCreateApiKeyModal;
+window.closeRevealApiKeyModal = closeRevealApiKeyModal;
+window.copyRevealedApiKey = copyRevealedApiKey;
+window.handleCreateApiKey = handleCreateApiKey;
+window.revokeApiKey = revokeApiKey;
 
 async function handleResendVerification() {
   try {

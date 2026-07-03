@@ -1,95 +1,97 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyToken } from './auth.service.js';
 import { logger } from '../../observability/logger.js';
-import type { JwtPayload } from './auth.types.js';
+import type { JwtPayload, AuthMethod } from './auth.types.js';
 import { db } from '../../config/database.js';
 import { users } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { redis } from '../../config/redis.js';
-
-/* ------------------------------------------------------------------ */
-/*  Augment Express Request with authenticated user payload            */
-/* ------------------------------------------------------------------ */
+import { classifyCredential, extractAuthCredential } from './auth-credential.js';
+import { verifyApiKeyAndResolveUser } from '../api-keys/api-key.service.js';
 
 declare global {
   namespace Express {
     interface Request {
       user?: JwtPayload;
+      authMethod?: AuthMethod;
+      apiKeyId?: string;
     }
   }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Middleware                                                          */
-/* ------------------------------------------------------------------ */
+async function loadUserFromDb(userId: string): Promise<{
+  id: string;
+  role: 'admin' | 'agent';
+  isActive: boolean;
+  hasAllSessionsAccess: boolean;
+} | null> {
+  const cacheKey = `user_auth:${userId}`;
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (err) {
+    logger.warn('Failed to fetch auth from cache', { error: (err as Error).message });
+  }
+
+  const [user] = await db
+    .select({
+      id: users.id,
+      role: users.role,
+      isActive: users.isActive,
+      hasAllSessionsAccess: users.hasAllSessionsAccess,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (user) {
+    try {
+      await redis.setex(cacheKey, 30, JSON.stringify(user));
+    } catch (err) {
+      logger.warn('Failed to store auth in cache', { error: (err as Error).message });
+    }
+  }
+
+  return user ?? null;
+}
 
 /**
- * Authenticate incoming requests via Bearer token.
- * Extracts the JWT from the Authorization header, verifies it,
- * and attaches the decoded payload to `req.user`.
- *
- * Returns 401 if the token is missing or invalid.
+ * Authenticate via JWT Bearer token or API key (Bearer wa_live_... or X-API-Key).
  */
 export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    let token: string | undefined;
-    const authHeader = req.headers.authorization;
-
-    if (authHeader?.startsWith('Bearer ')) {
-      token = authHeader.slice(7); // Strip 'Bearer '
-    } else if (req.query.token) {
-      token = req.query.token as string;
-    }
+    const token = extractAuthCredential(req);
 
     if (!token) {
       res.status(401).json({ error: 'Missing or malformed authorization credentials' });
       return;
     }
 
+    const method = classifyCredential(token);
+    req.authMethod = method;
+
+    if (method === 'api_key') {
+      const resolved = await verifyApiKeyAndResolveUser(token);
+      if (!resolved) {
+        res.status(401).json({ error: 'Invalid or expired API key' });
+        return;
+      }
+      req.user = resolved.user;
+      req.apiKeyId = resolved.apiKeyId;
+      next();
+      return;
+    }
+
     const payload = verifyToken(token);
-
-    const cacheKey = `user_auth:${payload.userId}`;
-    let dbUser: { id: string; role: 'admin' | 'agent'; isActive: boolean; hasAllSessionsAccess: boolean } | null = null;
-
-    try {
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        dbUser = JSON.parse(cached);
-      }
-    } catch (err) {
-      logger.warn('Failed to fetch auth from cache', { error: (err as Error).message });
-    }
-
-    if (!dbUser) {
-      // Fetch latest user status and permissions from database
-      const [user] = await db
-        .select({
-          id: users.id,
-          role: users.role,
-          isActive: users.isActive,
-          hasAllSessionsAccess: users.hasAllSessionsAccess,
-        })
-        .from(users)
-        .where(eq(users.id, payload.userId))
-        .limit(1);
-
-      if (user) {
-        dbUser = user;
-        try {
-          // Cache user auth details for 30 seconds
-          await redis.setex(cacheKey, 30, JSON.stringify(user));
-        } catch (err) {
-          logger.warn('Failed to store auth in cache', { error: (err as Error).message });
-        }
-      }
-    }
+    const dbUser = await loadUserFromDb(payload.userId);
 
     if (!dbUser || !dbUser.isActive) {
       res.status(401).json({ error: 'User account is deactivated or does not exist' });
       return;
     }
 
-    // Attach user payload with fresh role and access flags from DB
     req.user = {
       ...payload,
       role: dbUser.role,
@@ -107,16 +109,17 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   }
 }
 
-/**
- * Require the authenticated user to have one of the specified roles.
- * Must be placed after `authenticate` in the middleware chain.
- *
- * @param roles - Allowed roles (e.g. 'admin', 'agent')
- * @returns Express middleware
- *
- * @example
- * router.use(authenticate, requireRole('admin'));
- */
+/** Reject API-key-authenticated requests (management endpoints require JWT). */
+export function requireJwt(req: Request, res: Response, next: NextFunction): void {
+  if (req.authMethod === 'api_key') {
+    res.status(403).json({
+      error: 'This endpoint requires dashboard login (JWT). API keys cannot be used here.',
+    });
+    return;
+  }
+  next();
+}
+
 export function requireRole(...roles: string[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
@@ -138,13 +141,6 @@ export function requireRole(...roles: string[]) {
   };
 }
 
-/**
- * Ensure the authenticated user's orgId matches the `orgId` route parameter.
- * Prevents cross-tenant data access when routes include `:orgId`.
- * Must be placed after `authenticate` in the middleware chain.
- *
- * If no `:orgId` param is present on the route, this middleware passes through.
- */
 export function requireOrg(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
@@ -153,7 +149,6 @@ export function requireOrg(req: Request, res: Response, next: NextFunction): voi
 
   const routeOrgId = req.params.orgId;
 
-  // If route doesn't have an orgId param, allow through
   if (!routeOrgId) {
     next();
     return;

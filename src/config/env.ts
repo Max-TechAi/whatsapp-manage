@@ -51,6 +51,7 @@ const envSchema = z.object({
   // Rate Limiting
   RATE_LIMIT_AUTH: z.coerce.number().int().default(5),
   RATE_LIMIT_API: z.coerce.number().int().default(100),
+  RATE_LIMIT_API_KEY: z.coerce.number().int().default(300),
   RATE_LIMIT_WA_MESSAGES: z.coerce.number().int().default(20),
 
   // WhatsApp outbound send pacing (ban-risk mitigation):

@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { authenticate, requireRole } from '../auth/auth.middleware.js';
+import { authenticate, requireRole, requireJwt } from '../auth/auth.middleware.js';
 import * as orgService from './org.service.js';
+import * as apiKeyService from '../api-keys/api-key.service.js';
 import { logger } from '../../observability/logger.js';
 import { wsServer } from '../../websocket/ws-server.js';
 import { generateInvitationToken } from '../auth/auth.service.js';
@@ -24,6 +25,11 @@ const updateOrgSchema = z.object({
 const inviteMemberSchema = z.object({
   email: z.string().email('Invalid email address'),
   role: z.enum(['admin', 'agent']).default('agent'),
+});
+
+const createApiKeySchema = z.object({
+  name: z.string().min(1).max(100),
+  expiresAt: z.string().datetime().optional().nullable(),
 });
 
 /* ------------------------------------------------------------------ */
@@ -295,6 +301,80 @@ orgRouter.put('/members/:userId/permissions', async (req: Request, res: Response
       return;
     }
     logger.error('Failed to update permissions', {
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * GET /api-keys
+ * List API keys for the organization (JWT only).
+ */
+orgRouter.get('/api-keys', requireJwt, async (req: Request, res: Response) => {
+  try {
+    const keys = await apiKeyService.listApiKeys(req.user!.orgId);
+    res.status(200).json({ success: true, data: keys });
+  } catch (error) {
+    logger.error('Failed to list API keys', {
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api-keys
+ * Create a new API key — plaintext returned once (JWT only).
+ */
+orgRouter.post('/api-keys', requireJwt, async (req: Request, res: Response) => {
+  try {
+    const parsed = createApiKeySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const expiresAt = parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null;
+    const result = await apiKeyService.createApiKey(
+      req.user!.orgId,
+      req.user!.userId,
+      parsed.data.name,
+      expiresAt,
+    );
+
+    res.status(201).json({
+      success: true,
+      data: result.key,
+      plaintext: result.plaintext,
+      message: 'Copy this API key now. It will not be shown again.',
+    });
+  } catch (error) {
+    logger.error('Failed to create API key', {
+      error: error instanceof Error ? error.message : 'Unknown',
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * DELETE /api-keys/:id
+ * Revoke an API key (JWT only).
+ */
+orgRouter.delete('/api-keys/:id', requireJwt, async (req: Request, res: Response) => {
+  try {
+    const keyId = req.params.id as string;
+    const revoked = await apiKeyService.revokeApiKey(req.user!.orgId, keyId);
+    if (!revoked) {
+      res.status(404).json({ error: 'API key not found or already revoked' });
+      return;
+    }
+    res.status(200).json({ success: true, message: 'API key revoked' });
+  } catch (error) {
+    logger.error('Failed to revoke API key', {
       error: error instanceof Error ? error.message : 'Unknown',
     });
     res.status(500).json({ error: 'Internal server error' });
