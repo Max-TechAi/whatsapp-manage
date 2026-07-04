@@ -3,9 +3,38 @@ import { decodeOptionalAuth, createRateLimiter } from './rate-limiter.js';
 import { verifyToken } from '../modules/auth/auth.service.js';
 import { redis } from '../config/redis.js';
 
+// Mock config/env.js so importing rate-limiter doesn't require full env
+vi.mock('../config/env.js', () => ({
+  env: {
+    RATE_LIMIT_AUTH: 5,
+    RATE_LIMIT_API: 100,
+    RATE_LIMIT_API_KEY: 300,
+  },
+  getEnv: () => ({
+    RATE_LIMIT_AUTH: 5,
+    RATE_LIMIT_API: 100,
+    RATE_LIMIT_API_KEY: 300,
+  }),
+}));
+
 // Mock auth.service.js
 vi.mock('../modules/auth/auth.service.js', () => ({
   verifyToken: vi.fn(),
+}));
+
+// Mock api-key service used by decodeOptionalAuth
+vi.mock('../modules/api-keys/api-key.service.js', () => ({
+  verifyApiKeyAndResolveUser: vi.fn(),
+}));
+
+// Mock auth-credential helpers
+vi.mock('../modules/auth/auth-credential.js', () => ({
+  classifyCredential: vi.fn(() => 'jwt'),
+  extractAuthCredential: vi.fn((req: { headers?: { authorization?: string } }) => {
+    const auth = req.headers?.authorization;
+    if (auth?.startsWith('Bearer ')) return auth.slice(7);
+    return null;
+  }),
 }));
 
 // Mock config/redis.js
@@ -25,6 +54,7 @@ vi.mock('../config/redis.js', () => {
   return {
     redis: {
       multi: vi.fn().mockReturnValue(mockMulti),
+      zrange: vi.fn().mockResolvedValue([]),
     },
   };
 });

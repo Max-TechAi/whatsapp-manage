@@ -10,6 +10,10 @@ interface RateLimitConfig {
   windowMs: number;
   max: number;
   keyPrefix: string;
+  /** Optional machine-readable reason included in 429 responses */
+  reason?: string;
+  /** Optional human-readable error message for 429 responses */
+  errorMessage?: string;
   skip?: (req: Request) => boolean;
   resolveBucket?: (req: Request) => { identifier: string; max: number; keyPrefix: string };
 }
@@ -98,14 +102,35 @@ export function createRateLimiter(config: RateLimitConfig) {
       res.setHeader('X-RateLimit-Reset', Math.ceil(resetTime / 1000));
 
       if (count > bucket.max) {
+        let retryAfterSeconds = Math.ceil(config.windowMs / 1000);
+        try {
+          const oldest = await redis.zrange(key, 0, 0, 'WITHSCORES');
+          if (oldest.length >= 2) {
+            const oldestScore = parseInt(oldest[1], 10);
+            if (!Number.isNaN(oldestScore)) {
+              retryAfterSeconds = Math.max(
+                1,
+                Math.ceil((oldestScore + config.windowMs - now) / 1000),
+              );
+            }
+          }
+        } catch {
+          // Fall back to full window length
+        }
+
         logger.warn('Rate limit exceeded', {
           identifier: bucket.identifier,
           prefix: bucket.keyPrefix,
           count,
           limit: bucket.max,
+          reason: config.reason,
+          retryAfterSeconds,
         });
+        res.setHeader('Retry-After', retryAfterSeconds.toString());
         res.status(429).json({
-          error: 'Too many requests, please try again later.',
+          error: config.errorMessage ?? 'Too many requests, please try again later.',
+          retryAfterSeconds,
+          ...(config.reason ? { reason: config.reason } : {}),
         });
         return;
       }
@@ -153,3 +178,55 @@ export const apiRateLimiter = createRateLimiter({
     };
   },
 });
+
+/** Org-scoped: max 3 new session pairings per hour */
+export const sessionPairingHourlyLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  keyPrefix: 'session-pairing-hourly',
+  reason: 'session_pairing_cooldown',
+  errorMessage:
+    'Too many new WhatsApp pairings. Wait before adding another number (limit: 3 per hour).',
+  resolveBucket: (req) => ({
+    identifier: req.user?.orgId ?? req.ip ?? 'unknown',
+    max: 3,
+    keyPrefix: 'session-pairing-hourly',
+  }),
+});
+
+/** Org-scoped: max 1 new session pairing every 3 minutes (burst) */
+export const sessionPairingBurstLimiter = createRateLimiter({
+  windowMs: 3 * 60 * 1000,
+  max: 1,
+  keyPrefix: 'session-pairing-burst',
+  reason: 'session_pairing_cooldown',
+  errorMessage:
+    'Please wait a few minutes between new WhatsApp pairings to avoid restrictions.',
+  resolveBucket: (req) => ({
+    identifier: req.user?.orgId ?? req.ip ?? 'unknown',
+    max: 1,
+    keyPrefix: 'session-pairing-burst',
+  }),
+});
+
+/** Org-scoped: max 5 session deletes per 15 minutes */
+export const sessionDeleteLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyPrefix: 'session-delete',
+  reason: 'session_delete_cooldown',
+  errorMessage:
+    'Too many session deletions. Wait before deleting another session (limit: 5 per 15 minutes).',
+  resolveBucket: (req) => ({
+    identifier: req.user?.orgId ?? req.ip ?? 'unknown',
+    max: 5,
+    keyPrefix: 'session-delete',
+  }),
+});
+
+/** Redis key set on DELETE; blocks new pairing creates for 2 minutes */
+export const PAIRING_COOLDOWN_AFTER_DELETE_TTL_SEC = 120;
+
+export function pairingCooldownAfterDeleteKey(orgId: string): string {
+  return `pairing:cooldown-after-delete:${orgId}`;
+}

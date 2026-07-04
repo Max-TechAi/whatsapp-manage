@@ -76,8 +76,21 @@ const MAX_RETRY_DELAY_MS = 300_000;
 /** Minimum first reconnect delay (ms) — avoids aggressive 1s retry */
 const MIN_RECONNECT_DELAY_MS = 3000;
 
-/** Minimum reconnect delay for never-paired sessions (ms) — reduces 428 rate-limit loops */
-const NEVER_PAIRED_RECONNECT_DELAY_MS = 8000;
+/**
+ * Escalating backoff for never-paired sessions hitting 428 (connectionClosed).
+ * Index 0 = 1st 428, … index 3 = 4th. A 5th 428 terminates with connection_failed.
+ */
+const NEVER_PAIRED_428_DELAYS_MS = [
+  30_000,
+  2 * 60_000,
+  5 * 60_000,
+  15 * 60_000,
+] as const;
+
+const NEVER_PAIRED_428_MAX_ATTEMPTS = NEVER_PAIRED_428_DELAYS_MS.length + 1;
+
+const NEVER_PAIRED_428_TERMINAL_MESSAGE =
+  'WhatsApp may be temporarily restricting new pairings. Wait 30+ minutes before trying again.';
 
 /** Consecutive saveCreds failures before terminating session */
 const SAVE_CREDS_MAX_FAILURES = 3;
@@ -129,6 +142,9 @@ class SessionManager {
 
   /** Map of sessionId → consecutive reconnect attempts (persists across socket instances) */
   private sessionRetryCounts: Map<string, number> = new Map();
+
+  /** Map of sessionId → consecutive 428s while never-paired (persists across socket instances) */
+  private neverPaired428Counts: Map<string, number> = new Map();
 
   /** Map of sessionId → consecutive saveCreds failures */
   private saveCredsFailures: Map<string, number> = new Map();
@@ -388,21 +404,31 @@ class SessionManager {
     this.clearSyncTimeout(sessionId);
 
     this.clearSessionRetryCount(sessionId);
+    this.clearNeverPaired428Count(sessionId);
 
     // Unlink from WhatsApp / close the socket if active
     const active = this.activeSessions.get(sessionId);
     if (active?.socket) {
+      // Only logout() when the session was previously paired — never-paired
+      // sessions have no linked device on the phone, and logout() adds WA traffic.
+      let shouldLogout = false;
       if (options.unlinkFromWhatsApp) {
-        destroyResult.whatsAppUnlinkAttempted = true;
-        destroyResult.whatsAppUnlinkSucceeded = await this.unlinkSessionFromWhatsApp(
-          sessionId,
-          active.socket,
-        );
+        const neverPaired = await this.isNeverPairedSession(sessionId);
+        if (neverPaired) {
+          logger.info('Skipping logout() for never-paired session on DELETE', { sessionId });
+        } else {
+          shouldLogout = true;
+          destroyResult.whatsAppUnlinkAttempted = true;
+          destroyResult.whatsAppUnlinkSucceeded = await this.unlinkSessionFromWhatsApp(
+            sessionId,
+            active.socket,
+          );
+        }
       }
 
       try {
         this.detachSocketListeners(active.socket);
-        if (!options.unlinkFromWhatsApp || !destroyResult.whatsAppUnlinkSucceeded) {
+        if (!shouldLogout || !destroyResult.whatsAppUnlinkSucceeded) {
           active.socket.end(undefined);
         }
       } catch (error) {
@@ -647,6 +673,7 @@ class SessionManager {
           this.setupPresenceKeepAlive(active);
         }
         this.clearSessionRetryCount(sessionId);
+        this.clearNeverPaired428Count(sessionId);
 
         // Clear any pending reconnects
         const reconnectTimeout = this.pendingReconnects.get(sessionId);
@@ -711,6 +738,7 @@ class SessionManager {
 
         if (isLoggedOut || isBanned) {
           this.clearSessionRetryCount(sessionId);
+          this.clearNeverPaired428Count(sessionId);
 
           // Terminal state — user logged out or account banned
           const terminalStatus: SessionStatus = isBanned ? 'banned' : 'disconnected';
@@ -756,6 +784,85 @@ class SessionManager {
         } else {
           // Retryable disconnection — attempt reconnection with backoff
           const isRestartRequired = statusCode === DisconnectReason.restartRequired;
+          const isConnectionClosed = statusCode === DisconnectReason.connectionClosed;
+          const neverPaired = await this.isNeverPairedSession(sessionId);
+
+          // Never-paired + 428: escalating backoff (minutes), terminate on 5th attempt.
+          // Do not use this curve for 515 restartRequired or already-paired reconnects.
+          if (neverPaired && !isRestartRequired && isConnectionClosed) {
+            const neverPaired428Count = this.incrementNeverPaired428Count(sessionId);
+            await this.clearPartialAuthForNeverPairedSession(sessionId);
+
+            if (neverPaired428Count >= NEVER_PAIRED_428_MAX_ATTEMPTS) {
+              await this.terminateSessionDueToMaxRetries(
+                sessionId,
+                orgId,
+                statusCode,
+                neverPaired428Count,
+                { message: NEVER_PAIRED_428_TERMINAL_MESSAGE },
+              );
+              return;
+            }
+
+            const delay = NEVER_PAIRED_428_DELAYS_MS[neverPaired428Count - 1] ?? 15 * 60_000;
+            const active = this.activeSessions.get(sessionId);
+            if (active) {
+              active.lastRetry = new Date();
+            }
+
+            await this.updateSessionStatus(sessionId, 'disconnected');
+
+            logger.warn('WhatsApp connection closed — scheduling reconnection', {
+              sessionId,
+              statusCode,
+              reason: (lastDisconnect?.error as Boom)?.message,
+              retryCount: neverPaired428Count,
+              neverPaired428Count,
+              delayMs: delay,
+              neverPaired: true,
+            });
+
+            if (this.pendingReconnects.has(sessionId)) {
+              logger.info('Reconnection already scheduled for session', { sessionId });
+              return;
+            }
+
+            const timeout = setTimeout(async () => {
+              try {
+                this.pendingReconnects.delete(sessionId);
+                const activeSocket = this.activeSessions.get(sessionId);
+                if (activeSocket) {
+                  try {
+                    activeSocket.socket.ev.removeAllListeners('connection.update');
+                    activeSocket.socket.ev.removeAllListeners('creds.update');
+                    activeSocket.socket.ev.removeAllListeners('messages.upsert');
+                    activeSocket.socket.ev.removeAllListeners('call');
+                    activeSocket.socket.ev.removeAllListeners('messages.update');
+                    activeSocket.socket.ev.removeAllListeners('message-receipt.update');
+                    activeSocket.socket.ev.removeAllListeners('messaging-history.set');
+                    activeSocket.socket.end(undefined);
+                  } catch (err) {
+                    logger.warn('Error closing stale socket during reconnect', {
+                      sessionId,
+                      error: (err as Error).message,
+                    });
+                  }
+                  this.activeSessions.delete(sessionId);
+                }
+                await this.initializeSocket(sessionId, orgId);
+              } catch (error) {
+                logger.error('Reconnection failed', {
+                  sessionId,
+                  retryCount: neverPaired428Count,
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                });
+              }
+            }, delay);
+
+            this.pendingReconnects.set(sessionId, timeout);
+            return;
+          }
+
           const retryCount = isRestartRequired
             ? this.getSessionRetryCount(sessionId)
             : this.incrementSessionRetryCount(sessionId);
@@ -765,15 +872,7 @@ class SessionManager {
             return;
           }
 
-          const neverPaired = await this.isNeverPairedSession(sessionId);
-          if (neverPaired && !isRestartRequired && statusCode === DisconnectReason.connectionClosed) {
-            await this.clearPartialAuthForNeverPairedSession(sessionId);
-          }
-
-          let delay = isRestartRequired ? 0 : this.computeReconnectDelayMs(retryCount);
-          if (neverPaired && statusCode === DisconnectReason.connectionClosed) {
-            delay = Math.max(delay, NEVER_PAIRED_RECONNECT_DELAY_MS);
-          }
+          const delay = isRestartRequired ? 0 : this.computeReconnectDelayMs(retryCount);
 
           const active = this.activeSessions.get(sessionId);
           if (active) {
@@ -1356,6 +1455,16 @@ class SessionManager {
     this.sessionRetryCounts.delete(sessionId);
   }
 
+  private incrementNeverPaired428Count(sessionId: string): number {
+    const next = (this.neverPaired428Counts.get(sessionId) ?? 0) + 1;
+    this.neverPaired428Counts.set(sessionId, next);
+    return next;
+  }
+
+  private clearNeverPaired428Count(sessionId: string): void {
+    this.neverPaired428Counts.delete(sessionId);
+  }
+
   /**
    * Stop retrying after MAX_RETRIES consecutive disconnects.
    * Clears partial auth state when the session never paired successfully.
@@ -1365,6 +1474,7 @@ class SessionManager {
     orgId: string,
     statusCode: number | undefined,
     retryCount: number,
+    options?: { message?: string },
   ): Promise<void> {
     if (!isValidUuid(sessionId)) return;
 
@@ -1374,12 +1484,17 @@ class SessionManager {
       this.pendingReconnects.delete(sessionId);
     }
 
+    const terminalMessage =
+      options?.message ??
+      'Could not connect to WhatsApp after multiple attempts. Use Restart on the Sessions tab and try again.';
+
     logger.error('Max reconnection attempts reached — giving up', {
       sessionId,
       orgId,
       retryCount,
       maxRetries: MAX_RETRIES,
       statusCode,
+      message: terminalMessage,
     });
 
     const [sessionRow] = await db
@@ -1398,6 +1513,7 @@ class SessionManager {
       connectionFailedAt: new Date().toISOString(),
       lastDisconnectStatusCode: statusCode ?? null,
       connectionRetryCount: retryCount,
+      connectionFailedMessage: terminalMessage,
     };
     const metadata = {
       ...((sessionRow?.metadata || {}) as Record<string, unknown>),
@@ -1434,11 +1550,11 @@ class SessionManager {
       orgId,
       status: 'connection_failed',
       connectionFailed: true,
-      message:
-        'Could not connect to WhatsApp after multiple attempts. Use Restart on the Sessions tab and try again.',
+      message: terminalMessage,
     });
 
     this.clearSessionRetryCount(sessionId);
+    this.clearNeverPaired428Count(sessionId);
     await this.forceTerminateSocket(sessionId);
   }
 
@@ -1447,6 +1563,7 @@ class SessionManager {
    */
   private async prepareSessionForManualRestart(sessionId: string): Promise<void> {
     this.clearSessionRetryCount(sessionId);
+    this.clearNeverPaired428Count(sessionId);
 
     const [sessionRow] = await db
       .select({ metadata: sessions.metadata })
@@ -1459,6 +1576,7 @@ class SessionManager {
     delete metadata.connectionFailedAt;
     delete metadata.lastDisconnectStatusCode;
     delete metadata.connectionRetryCount;
+    delete metadata.connectionFailedMessage;
 
     await db
       .update(sessions)

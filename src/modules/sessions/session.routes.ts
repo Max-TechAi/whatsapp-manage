@@ -14,7 +14,7 @@
  */
 
 import { Router } from 'express';
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { eq, and } from 'drizzle-orm';
 
@@ -28,6 +28,13 @@ import { resolveLidJid } from './lid-mapping.js';
 import { eventBus } from '../../events/event-bus.js';
 import { mediaService } from '../media/media.service.js';
 import type { SessionStatus } from './session.types.js';
+import {
+  sessionPairingBurstLimiter,
+  sessionPairingHourlyLimiter,
+  sessionDeleteLimiter,
+  pairingCooldownAfterDeleteKey,
+  PAIRING_COOLDOWN_AFTER_DELETE_TTL_SEC,
+} from '../../security/rate-limiter.js';
 
 const TRANSITIONAL_SESSION_STATUSES: SessionStatus[] = ['initializing', 'qr_pending', 'connecting'];
 
@@ -127,48 +134,91 @@ router.param('id', async (req, res, next, id) => {
 });
 
 // ─── POST / — Create a new session ────────────────────────────────────────
+// Pairing limits: block for 2 min after any org delete, then burst (1/3min) + hourly (3/hr).
+// Restart / GET / QR polling are not subject to these limiters.
 
-router.post('/', async (req: Request, res: Response): Promise<void> => {
+async function blockCreateAfterRecentDelete(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const orgId = req.user?.orgId;
+  if (!orgId) {
+    next();
+    return;
+  }
+
   try {
-    const parsed = createSessionSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: 'Validation failed',
-        details: parsed.error.flatten().fieldErrors,
+    const key = pairingCooldownAfterDeleteKey(orgId);
+    const ttlSec = await redis.ttl(key);
+    if (ttlSec > 0) {
+      const retryAfterSeconds = ttlSec;
+      res.setHeader('Retry-After', retryAfterSeconds.toString());
+      res.status(429).json({
+        error:
+          'A session was recently deleted. Wait a few minutes before creating a new pairing to avoid WhatsApp restrictions.',
+        retryAfterSeconds,
+        reason: 'session_pairing_cooldown',
       });
       return;
     }
-
-    const { sessionName } = parsed.data;
-    const { orgId, userId } = req.user!;
-
-    const session = await sessionManager.createSession(orgId, userId, sessionName);
-
-    logger.info('Session created via API', {
-      sessionId: session.id,
+  } catch (err) {
+    logger.error('Failed to check pairing cooldown after delete', {
       orgId,
+      error: err instanceof Error ? err.message : 'Unknown error',
     });
-
-    res.status(201).json({
-      success: true,
-      data: {
-        id: session.id,
-        sessionName: session.sessionName,
-        status: session.status,
-        phoneNumber: session.phoneNumber,
-        qrCode: session.qrCode,
-        lastConnectedAt: session.lastConnectedAt,
-        createdAt: session.createdAt,
-      },
-    });
-  } catch (error) {
-    logger.error('Failed to create session', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      orgId: req.user?.orgId,
-    });
-    res.status(500).json({ error: 'Failed to create session' });
   }
-});
+
+  next();
+}
+
+router.post(
+  '/',
+  blockCreateAfterRecentDelete,
+  sessionPairingBurstLimiter,
+  sessionPairingHourlyLimiter,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const parsed = createSessionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: 'Validation failed',
+          details: parsed.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const { sessionName } = parsed.data;
+      const { orgId, userId } = req.user!;
+
+      const session = await sessionManager.createSession(orgId, userId, sessionName);
+
+      logger.info('Session created via API', {
+        sessionId: session.id,
+        orgId,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          id: session.id,
+          sessionName: session.sessionName,
+          status: session.status,
+          phoneNumber: session.phoneNumber,
+          qrCode: session.qrCode,
+          lastConnectedAt: session.lastConnectedAt,
+          createdAt: session.createdAt,
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to create session', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        orgId: req.user?.orgId,
+      });
+      res.status(500).json({ error: 'Failed to create session' });
+    }
+  },
+);
 
 // ─── GET / — List all sessions for the organization ───────────────────────
 
@@ -456,7 +506,10 @@ router.post('/:id/restart', async (req: Request, res: Response): Promise<void> =
 
 // ─── DELETE /:id — Permanently destroy a session ──────────────────────────
 
-router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
+router.delete(
+  '/:id',
+  sessionDeleteLimiter,
+  async (req: Request, res: Response): Promise<void> => {
   try {
     const { orgId } = req.user!;
     const sessionId = req.params.id as string;
@@ -491,6 +544,21 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
     await db
       .delete(sessions)
       .where(and(eq(sessions.id, sessionId), eq(sessions.orgId, orgId)));
+
+    // Block new pairings for 2 minutes after any delete (WhatsApp abuse mitigation)
+    await redis
+      .set(
+        pairingCooldownAfterDeleteKey(orgId),
+        '1',
+        'EX',
+        PAIRING_COOLDOWN_AFTER_DELETE_TTL_SEC,
+      )
+      .catch((err) => {
+        logger.warn('Failed to set pairing cooldown after delete', {
+          orgId,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      });
 
     const summaryParts = ['Session deleted permanently'];
     if (destroyResult.whatsAppUnlinkAttempted && !destroyResult.whatsAppUnlinkSucceeded) {
