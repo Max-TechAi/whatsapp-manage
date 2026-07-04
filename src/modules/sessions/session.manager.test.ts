@@ -70,6 +70,10 @@ vi.mock('@whiskeysockets/baileys', () => {
       version: [6, 0, 0],
       isLatest: true,
     }),
+    fetchLatestWaWebVersion: () => Promise.resolve({
+      version: [2, 3000, 1042466098],
+      isLatest: true,
+    }),
   };
 });
 

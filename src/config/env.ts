@@ -59,6 +59,16 @@ const envSchema = z.object({
   WA_SEND_DELAY_MIN_MS: z.coerce.number().int().min(0).default(1000),
   WA_SEND_DELAY_MAX_MS: z.coerce.number().int().min(0).default(3000),
 
+  /**
+   * Optional manual WhatsApp Web protocol version (comma-separated triplet).
+   * Example: "2,3000,1042466098"
+   * When set, takes priority over fetchLatestWaWebVersion / fetchLatestBaileysVersion.
+   */
+  WA_VERSION_OVERRIDE: z
+    .string()
+    .regex(/^\d+,\d+,\d+$/, 'Must be a comma-separated triplet, e.g. 2,3000,1042466098')
+    .optional(),
+
   // SMTP Email Configuration
   SMTP_HOST: z.string().default('localhost'),
   SMTP_PORT: z.coerce.number().int().default(587),

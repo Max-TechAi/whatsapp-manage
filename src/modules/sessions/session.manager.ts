@@ -15,9 +15,10 @@ import makeWASocket, {
   DisconnectReason,
   Browsers,
   fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   BufferJSON,
 } from '@whiskeysockets/baileys';
-import type { WASocket, BaileysEventMap, WAMessage } from '@whiskeysockets/baileys';
+import type { WASocket, BaileysEventMap, WAMessage, WAVersion } from '@whiskeysockets/baileys';
 import * as QRCode from 'qrcode';
 import pino from 'pino';
 import { v4 as uuidv4 } from 'uuid';
@@ -94,6 +95,54 @@ const NEVER_PAIRED_428_TERMINAL_MESSAGE =
 
 /** Consecutive saveCreds failures before terminating session */
 const SAVE_CREDS_MAX_FAILURES = 3;
+
+/**
+ * Resolve the WhatsApp Web protocol version for makeWASocket.
+ *
+ * Priority:
+ * 1. WA_VERSION_OVERRIDE env (manual escape hatch)
+ * 2. fetchLatestWaWebVersion() — live client_revision from web.whatsapp.com/sw.js
+ * 3. fetchLatestBaileysVersion() — Baileys Defaults (can report isLatest:true while stale)
+ *
+ * See WhiskeySockets/Baileys#2679: stale [2,3000,1035194821] allows QR but blocks pairing.
+ */
+async function resolveWhatsAppVersion(): Promise<{ version: WAVersion; source: string }> {
+  const override = env.WA_VERSION_OVERRIDE;
+  if (override) {
+    const parts = override.split(',').map((part) => parseInt(part.trim(), 10));
+    if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+      const version = parts as unknown as WAVersion;
+      return { version, source: 'WA_VERSION_OVERRIDE' };
+    }
+    logger.warn('Invalid WA_VERSION_OVERRIDE ignored (expected "major,minor,revision")', {
+      override,
+    });
+  }
+
+  try {
+    const waWeb = await fetchLatestWaWebVersion();
+    if (waWeb.isLatest && Array.isArray(waWeb.version) && waWeb.version.length === 3) {
+      return { version: waWeb.version, source: 'fetchLatestWaWebVersion' };
+    }
+    const waWebError = (waWeb as { error?: unknown }).error;
+    logger.warn('fetchLatestWaWebVersion did not return a latest version — falling back', {
+      isLatest: waWeb.isLatest,
+      version: waWeb.version,
+      error: waWebError instanceof Error
+        ? waWebError.message
+        : typeof waWebError === 'object' && waWebError && 'message' in waWebError
+          ? String((waWebError as { message: unknown }).message)
+          : undefined,
+    });
+  } catch (err) {
+    logger.warn('fetchLatestWaWebVersion failed — falling back to fetchLatestBaileysVersion', {
+      error: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+
+  const baileys = await fetchLatestBaileysVersion();
+  return { version: baileys.version, source: 'fetchLatestBaileysVersion' };
+}
 
 /**
  * Validate that a given string is a valid UUID v4 format.
@@ -305,8 +354,8 @@ class SessionManager {
       // Load encrypted auth state from database
       const { state, saveCreds } = await usePostgresAuthState(sessionId);
 
-      // Get latest Baileys version for maximum compatibility
-      const { version } = await fetchLatestBaileysVersion();
+      // Prefer live WA Web client_revision over Baileys Defaults (can be stale — #2679)
+      const { version, source: versionSource } = await resolveWhatsAppVersion();
 
       // Read historySyncCompleted from session metadata to prevent Baileys from requesting history again
       const [sessionRecord] = await db
@@ -317,9 +366,19 @@ class SessionManager {
       const metadata = (sessionRecord?.metadata || {}) as Record<string, any>;
       const historySyncCompleted = !!metadata.historySyncCompleted;
 
+      const versionSourceLabel =
+        versionSource === 'WA_VERSION_OVERRIDE' ? versionSource : `${versionSource}()`;
+      logger.info(`Using WA version from ${versionSourceLabel}: [${version.join(',')}]`, {
+        sessionId,
+        versionSource,
+        baileysVersion: version.join('.'),
+        historySyncCompleted,
+      });
+
       logger.info('Initializing Baileys socket', {
         sessionId,
         baileysVersion: version.join('.'),
+        versionSource,
         historySyncCompleted,
       });
 
