@@ -386,7 +386,10 @@ class SessionManager {
       const socket = makeWASocket({
         auth: state,
         version,
-        browser: Browsers.macOS('Desktop'),
+        // WEB_BROWSER sub-platform (not DESKTOP) — fixes 428-before-QR pairing failure
+        // (Baileys #2677). Trade-off: automatic history-sync backfill may 403; use the
+        // existing per-chat "Sync older messages from phone" fallback when needed.
+        browser: Browsers.ubuntu('Chrome'),
         logger: pino({ level: 'silent' }) as any,
         printQRInTerminal: false,
         markOnlineOnConnect: false,
